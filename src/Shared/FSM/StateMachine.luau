@@ -1,5 +1,8 @@
 --!strict
-local LemonSignal = require(game:GetService("ReplicatedStorage").Packages.LemonSignal)
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local LemonSignal = require(ReplicatedStorage.Packages.LemonSignal)
+local Trove = require(ReplicatedStorage.Packages.Trove)
 
 export type StateMachine<State> = {
 	current: State,
@@ -17,8 +20,9 @@ function StateMachine.new<State>(
 	transitions: { [State]: { State } }
 ): StateMachine<State>
 	local self = setmetatable({}, StateMachine) :: any
+	self._trove = Trove.new()
 	self.current = initial
-	self.changed = LemonSignal.new()
+	self.changed = self._trove:Add(LemonSignal.new(), "Destroy")
 	self._transitions = transitions
 	return self
 end
@@ -47,7 +51,7 @@ function StateMachine:transition<State>(next: State): boolean
 end
 
 function StateMachine:destroy()
-	self.changed:DisconnectAll()
+	self._trove:Destroy()
 end
 
 return StateMachine

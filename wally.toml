@@ -6,3 +6,7 @@ realm = "shared"
 
 [dependencies]
 LemonSignal = "data-oriented-house/lemonsignal@^2.1"
+Trove = "sleitnick/trove@^1.8"
+Loader = "sleitnick/loader@^2.0"
+Promise = "evaera/promise@^4.0"
+TableUtil = "sleitnick/table-util@^1.2"

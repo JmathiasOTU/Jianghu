@@ -1,12 +1,7 @@
 --!strict
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local Services = script.Parent.Services
+local Loader = require(ReplicatedStorage.Packages.Loader)
 
-for _, module in ipairs(Services:GetChildren()) do
-	if module:IsA("ModuleScript") then
-		local service = require(module) :: any
-		if type(service) == "table" and service.Init then
-			service.Init()
-		end
-	end
-end
+local Services = Loader.LoadChildren(script.Parent.Services)
+Loader.SpawnAll(Services, "Init")

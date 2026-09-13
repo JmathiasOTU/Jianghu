@@ -9,7 +9,7 @@ This document is the standing set of design rules for Murim Ascent. It applies t
 
 ## 2. Global Rules
 
-- **Single entry point.** The client boots exclusively through `ClientBootstrap.luau`; the server boots exclusively through `ServiceBootstrap.luau`. No stray `LocalScript`/`Script` instances placed ad hoc in the Explorer.
+- **Single entry point.** The client boots exclusively through `ClientBootstrap.luau`; the server boots exclusively through `ServiceBootstrap.luau`. Both use `Loader.LoadChildren` to require every module in their respective `Controllers`/`Services` folder and `Loader.SpawnAll(modules, "Init")` to start them — no manual require loops, and no stray `LocalScript`/`Script` instances placed ad hoc in the Explorer. Every controller/service module returns a table exposing an `Init` function as its lifecycle entry point.
 - **Finite state machines everywhere.** Every stateful system (combat, movement, interactions) is governed by an explicit, decoupled FSM built on `LemonSignal`.
 - **Strict pub/sub decoupling.** Controllers never reach into each other directly. They subscribe to shared state modules and react to events.
 - **Data-driven, zero magic numbers.** No numeric literal (impulse vectors, durations, speeds, cooldowns) lives inline in functional code. Everything routes through centralized constants modules (`MovementConstants.luau`, `CombatConstants.luau`, etc.).
@@ -43,8 +43,8 @@ Parry is the most exploited and most defining system in this genre, and is held 
 
 - `os.clock()` only — never `tick()`.
 - Dense raycasts are throttled via delta-time accumulators, not run raw on every `RenderStepped`.
-- All event connections are explicitly `:Disconnect()`ed on death/respawn/cleanup.
-- Active `task.delay` threads are tracked in a registry and `task.cancel()`ed when superseded, to avoid GC pressure under input spam.
+- Every stateful object (FSMs, per-character controllers, per-session server state) owns a `Trove` instance. Connections, spawned threads, and promises are added to it via `Trove:Add`/`Trove:Connect`/`Trove:AddPromise` as they're created, never tracked by hand.
+- On death/respawn/cleanup, that object's `Trove:Destroy()` is called once — this disconnects every listener and cancels every pending thread/promise it owns in one call, which is what prevents the memory leaks and GC pressure this rule exists to avoid. A new `Trove` is created for the next life/session; troves are never reused across a cleanup boundary.
 
 ## 7. Style
 

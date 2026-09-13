@@ -16,6 +16,10 @@ This repository is undergoing a full architectural rework: movement, combat, and
 | Language | Luau (strict mode) |
 | Package Management | [Wally](https://wally.run/) |
 | Signals | [LemonSignal](https://github.com/Data-Oriented-House/LemonSignal) |
+| Bootstrapping | [Loader](https://sleitnick.github.io/RbxUtil/api/Loader) (single-entry-point service/controller loading) |
+| Lifecycle Cleanup | [Trove](https://sleitnick.github.io/RbxUtil/api/Trove) (connections, threads, promises) |
+| Async | [Promise](https://eryn.io/roblox-lua-promise/) |
+| Table Utilities | [TableUtil](https://sleitnick.github.io/RbxUtil/api/TableUtil) |
 | Linting | [Selene](https://kampfkarren.github.io/selene/) |
 | Formatting | [StyLua](https://github.com/JohnnyMorganz/StyLua) |
 | Rig Standard | R6 |

@@ -10,3 +10,7 @@ Trove = "sleitnick/trove@^1.8"
 Loader = "sleitnick/loader@^2.0"
 Promise = "evaera/promise@^4.0"
 TableUtil = "sleitnick/table-util@^1.2"
+Symbol = "sleitnick/symbol@^2.0"
+
+[server-dependencies]
+ProfileStore = "lm-loleris/profilestore@^1.0"

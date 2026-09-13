@@ -5,10 +5,14 @@
 *.rbxmx
 sourcemap.json
 
-# Wally packages (restored via `wally install`)
+# Wally packages (restored via `wally install`; wally.lock is committed for reproducible installs)
 Packages/
 DevPackages/
-Packages.lock
+ServerPackages/
+
+# Zap-generated networking code (regenerated via `zap network.zap`)
+src/Client/Network/network.luau
+src/Server/Network/network.luau
 
 # Tooling caches
 .aftman/

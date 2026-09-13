@@ -20,6 +20,9 @@ This repository is undergoing a full architectural rework: movement, combat, and
 | Lifecycle Cleanup | [Trove](https://sleitnick.github.io/RbxUtil/api/Trove) (connections, threads, promises) |
 | Async | [Promise](https://eryn.io/roblox-lua-promise/) |
 | Table Utilities | [TableUtil](https://sleitnick.github.io/RbxUtil/api/TableUtil) |
+| Enums / Identifiers | [Symbol](https://sleitnick.github.io/RbxUtil/api/Symbol) |
+| Networking | [Zap](https://zap.redblox.dev/) (typed, rate-limited, buffer-serialized remotes — code generated from `network.zap`) |
+| Persistence | [ProfileStore](https://github.com/MadStudioRoblox/ProfileStore) (session-locked, `UpdateAsync`-based) |
 | Linting | [Selene](https://kampfkarren.github.io/selene/) |
 | Formatting | [StyLua](https://github.com/JohnnyMorganz/StyLua) |
 | Rig Standard | R6 |
@@ -48,22 +51,27 @@ src/
 
 - [Rojo](https://rojo.space/docs/installation/) `>= 7.4`
 - [Wally](https://github.com/UpliftGames/wally) `>= 0.3`
-- [Aftman](https://github.com/LPGhatguy/aftman) (recommended, for toolchain management)
+- [Aftman](https://github.com/LPGhatguy/aftman) (recommended, for toolchain management — installs Rojo, Wally, Selene, StyLua, and Zap from `aftman.toml`)
 
 ### Setup
 
 ```bash
-# Install pinned CLI tooling (Rojo, Wally, Selene, StyLua)
+# Install pinned CLI tooling (Rojo, Wally, Selene, StyLua, Zap)
 aftman install
 
-# Install Luau dependencies
+# Install Luau dependencies (shared → Packages/, server-only → ServerPackages/)
 wally install
+
+# Generate typed network code from network.zap
+zap network.zap
 
 # Serve the project to Roblox Studio
 rojo serve
 ```
 
 Connect to the running Rojo server from the Rojo Studio plugin to sync `src/` into Studio.
+
+Remote events are never hand-written — every combat/movement remote is declared in [`network.zap`](network.zap) (see [Zap's event docs](https://zap.redblox.dev/config/events)) and regenerated with `zap network.zap` whenever that file changes. The generated `src/Client/Network/network.luau` and `src/Server/Network/network.luau` are build artifacts and are not committed.
 
 ### Linting & Formatting
 

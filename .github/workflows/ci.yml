@@ -19,11 +19,14 @@ jobs:
       - name: Install Wally packages
         run: wally install
 
+      - name: Generate Zap network code
+        run: zap network.zap
+
       - name: Selene lint
         run: selene src
 
       - name: StyLua format check
-        run: stylua --check src
+        run: stylua --check src --glob '!src/**/Network/network.luau'
 
   build:
     name: Rojo Build
@@ -37,6 +40,9 @@ jobs:
 
       - name: Install Wally packages
         run: wally install
+
+      - name: Generate Zap network code
+        run: zap network.zap
 
       - name: Build place file
         run: rojo build default.project.json --output build.rbxl

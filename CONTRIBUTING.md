@@ -8,8 +8,9 @@ Before opening a PR, read [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) in full
 
 1. Branch off `main` using `type/short-description` (e.g. `feat/wall-run-fsm`, `fix/parry-window-desync`).
 2. Keep PRs scoped to a single system or fix. Large multi-system PRs are hard to review against the architecture rules and will likely be asked to split.
-3. Run linting and formatting locally before pushing:
+3. Run codegen, linting, and formatting locally before pushing:
    ```bash
+   zap network.zap
    selene src
    stylua --check src
    ```
@@ -21,10 +22,12 @@ These are enforced in review without exception:
 
 - No hardcoded numeric tuning values in functional scripts — route through `Shared/Constants`.
 - No client-authoritative combat/movement outcome. The server must validate every state transition.
-- No `RemoteFunction` usage for combat or movement.
+- No hand-written `RemoteEvent`s and no `RemoteFunction` usage — all networking goes through events declared in `network.zap` and the code it generates.
+- No direct `DataStoreService` calls — all persistence goes through `ProfileStore`.
 - No GUI construction from code — UI scripts only `WaitForChild` into Studio-built instances.
 - No `tick()` — use `os.clock()`.
 - No stray `LocalScript`/`Script` instances outside the bootstrap-driven module tree.
+- No raw string FSM states — use `Symbol` values.
 
 ## Commit messages
 

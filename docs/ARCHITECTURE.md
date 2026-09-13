@@ -10,7 +10,7 @@ This document is the standing set of design rules for Murim Ascent. It applies t
 ## 2. Global Rules
 
 - **Single entry point.** The client boots exclusively through `ClientBootstrap.luau`; the server boots exclusively through `ServiceBootstrap.luau`. Both use `Loader.LoadChildren` to require every module in their respective `Controllers`/`Services` folder and `Loader.SpawnAll(modules, "Init")` to start them — no manual require loops, and no stray `LocalScript`/`Script` instances placed ad hoc in the Explorer. Every controller/service module returns a table exposing an `Init` function as its lifecycle entry point.
-- **Finite state machines everywhere.** Every stateful system (combat, movement, interactions) is governed by an explicit, decoupled FSM built on `LemonSignal`.
+- **Finite state machines everywhere.** Every stateful system (combat, movement, interactions) is governed by an explicit, decoupled FSM built on `LemonSignal`. FSM states are `Symbol` values (`Shared/FSM`), never raw strings — a typo in a string state name fails silently, a typo in a `Symbol` reference fails to compile/require.
 - **Strict pub/sub decoupling.** Controllers never reach into each other directly. They subscribe to shared state modules and react to events.
 - **Data-driven, zero magic numbers.** No numeric literal (impulse vectors, durations, speeds, cooldowns) lives inline in functional code. Everything routes through centralized constants modules (`MovementConstants.luau`, `CombatConstants.luau`, etc.).
 
@@ -37,7 +37,7 @@ Parry is the most exploited and most defining system in this genre, and is held 
 ## 5. Anti-Exploit
 
 - Statistically inhuman parry consistency is tracked and flagged independently of normal state validation.
-- Parry (and all combat/movement) `RemoteEvent`s are rate-limited at the remote layer, separate from any FSM cooldown, to stop macro/script spam.
+- Parry (and all combat/movement) events are rate-limited at the remote layer, separate from any FSM cooldown, to stop macro/script spam — enforced via the rate limit declared on the event in `network.zap`, not a hand-rolled check in the handler.
 
 ## 6. Performance & Memory
 
@@ -66,9 +66,9 @@ Server-side tolerances are never padded arbitrarily to paper over latency or des
 
 ## 10. Remote Communication
 
-- Every remote handler type-validates every argument before it touches game logic.
-- `RemoteEvent`s only — never `RemoteFunction`s, which can hang the server thread on a non-responding client.
-- Every player-initiated combat/movement remote is rate-limited independently of its game-logic cooldown.
+- **All remotes are declared in [`network.zap`](../network.zap) and consumed only through the generated `src/Client/Network/network.luau` / `src/Server/Network/network.luau` modules.** No raw `RemoteEvent` instances are created or fired by hand — Zap's generated API is the only interface to networking in this codebase, and it type-validates every argument by construction. `network.zap` is regenerated with `zap network.zap` any time it changes; the generated files are build artifacts and are not committed.
+- Fire-and-forget events only — never a synchronous request/response pattern (`RemoteFunction`, or a server-side `yield`/`Wait` on a client's reply), which can hang the server thread on a non-responding client.
+- Every player-initiated combat/movement event sets an explicit rate limit in its `network.zap` definition, independent of its game-logic cooldown.
 
 ## 11. Physics & Network Ownership
 
@@ -81,9 +81,8 @@ Any part whose position the server treats as ground truth (hitbox proxies, proje
 
 ## 13. Data Persistence
 
-- `UpdateAsync` only — never a `GetAsync`/`SetAsync` pair, which races across concurrent sessions.
-- DataStore writes retry with exponential backoff and a capped attempt count.
-- `game:BindToClose()` attempts a final save with a bounded timeout before shutdown.
+- **All player data goes through `ProfileStore` (`ServerPackages/ProfileStore`).** It is the only sanctioned interface to `DataStoreService` in this codebase — no service calls `GetAsync`/`SetAsync`/`UpdateAsync` directly. ProfileStore already provides `UpdateAsync`-based writes, session locking, retry-with-backoff, and a `BindToClose` final save; a hand-rolled DataStore call anywhere else in the codebase is a rule violation, not a stylistic choice.
+- Profile schema defaults are reconciled with `TableUtil.Reconcile`, never a manual key-by-key migration, so old profiles pick up new fields without a bespoke script per schema change.
 
 ## 14. World Streaming
 

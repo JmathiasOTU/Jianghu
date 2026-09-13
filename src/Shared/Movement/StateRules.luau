@@ -24,7 +24,7 @@ local Transitions: { [MovementState]: { MovementState } } = {
 		MovementStates.Sprint,
 		MovementStates.Airborne,
 	},
-	[MovementStates.Sprint] = { MovementStates.Run, MovementStates.Airborne },
+	[MovementStates.Sprint] = { MovementStates.Idle, MovementStates.Run, MovementStates.Airborne },
 	[MovementStates.Airborne] = { MovementStates.Idle, MovementStates.Walk, MovementStates.Run },
 }
 
@@ -58,6 +58,7 @@ local CanEnter: { [MovementState]: (context: MovementContext) -> boolean } = {
 local StateRules = {
 	Transitions = Transitions,
 	CanEnter = CanEnter,
+	HasMoveInput = hasMoveInput,
 }
 
 return StateRules

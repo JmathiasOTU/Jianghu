@@ -1,11 +1,16 @@
 --!strict
 
--- Speed/jump tiers (WalkSpeed, RunSpeed, SprintSpeed, JumpPower) are intentionally
--- absent until Step 2 gives them real, playtested values -- see docs/MOVEMENT.md §7
--- and commit a31e6d9 on why guessed numbers don't belong here.
+-- Speed/jump tiers below are a starting point ("Fast & fluid" preset, chosen
+-- 2026-09-13), not a final tuning pass -- retune after playtesting in Studio. See
+-- docs/MOVEMENT.md §7 and commit a31e6d9 on why these aren't guessed placeholders.
 local MovementConstants = {
 	RunDoubleTapWindowSeconds = 0.3,
 	SprintThresholdSeconds = 3,
+
+	WalkSpeed = 18,
+	RunSpeed = 28,
+	SprintSpeed = 40,
+	JumpPower = 55,
 }
 
 return MovementConstants

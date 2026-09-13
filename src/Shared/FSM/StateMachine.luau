@@ -7,9 +7,9 @@ local Trove = require(ReplicatedStorage.Packages.Trove)
 export type StateMachine<State, Context> = {
 	current: State,
 	changed: LemonSignal.Signal<State, State>,
-	requestTransition: (self: StateMachine<State, Context>, next: State, context: Context) -> boolean,
-	canTransition: (self: StateMachine<State, Context>, next: State, context: Context) -> boolean,
-	destroy: (self: StateMachine<State, Context>) -> (),
+	RequestTransition: (self: StateMachine<State, Context>, next: State, context: Context) -> boolean,
+	CanTransition: (self: StateMachine<State, Context>, next: State, context: Context) -> boolean,
+	Destroy: (self: StateMachine<State, Context>) -> (),
 }
 
 local StateMachine = {}
@@ -29,7 +29,10 @@ function StateMachine.new<State, Context>(
 	return self
 end
 
-function StateMachine:canTransition<State, Context>(next: State, context: Context): boolean
+function StateMachine:CanTransition<State, Context>(next: State, context: Context): boolean
+	if next == self.current then
+		return false
+	end
 	local allowed = self._transitions[self.current]
 	if not allowed then
 		return false
@@ -51,8 +54,8 @@ function StateMachine:canTransition<State, Context>(next: State, context: Contex
 	return true
 end
 
-function StateMachine:requestTransition<State, Context>(next: State, context: Context): boolean
-	if not self:canTransition(next, context) then
+function StateMachine:RequestTransition<State, Context>(next: State, context: Context): boolean
+	if not self:CanTransition(next, context) then
 		return false
 	end
 	local previous = self.current
@@ -61,7 +64,7 @@ function StateMachine:requestTransition<State, Context>(next: State, context: Co
 	return true
 end
 
-function StateMachine:destroy()
+function StateMachine:Destroy()
 	self._trove:Destroy()
 end
 

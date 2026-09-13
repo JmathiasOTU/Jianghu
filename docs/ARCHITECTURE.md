@@ -37,7 +37,7 @@ Parry is the most exploited and most defining system in this genre, and is held 
 ## 5. Anti-Exploit
 
 - Statistically inhuman parry consistency is tracked and flagged independently of normal state validation.
-- Parry (and all combat/movement) events are rate-limited at the remote layer, separate from any FSM cooldown, to stop macro/script spam — enforced via the rate limit declared on the event in `network.zap`, not a hand-rolled check in the handler.
+- Parry (and all combat/movement) events are rate-limited at the remote layer, separate from any FSM cooldown, to stop macro/script spam — enforced via the shared `RateLimiter` utility (`Shared/Util/RateLimiter.luau`) applied at the top of each remote handler, never a bespoke debounce duplicated per handler. Zap's `.zap` config has no native per-event rate-limit field, so this cannot be declared on the event itself — it's enforced in code, deliberately centralized in one utility instead of ad hoc per handler.
 
 ## 6. Performance & Memory
 
@@ -50,6 +50,7 @@ Parry is the most exploited and most defining system in this genre, and is held 
 
 - Strict Luau typing (`--!strict`) wherever applicable.
 - `PascalCase` for classes/services/controllers/enums, `camelCase` for locals/functions/constants, `_prefix` for private table members.
+- OOP-style methods on a class/object instance (e.g. `Trove:Add`, `fsm:RequestTransition`) are `PascalCase`, matching `Trove`/`LemonSignal`/`Loader` and every native Roblox `Instance` method — not the `camelCase` used for plain functions/locals. A file mixing `self._trove:Add(...)` and `self:destroy()` a few lines apart is a style bug to fix, not a judgment call to make per-file.
 - Tabs for indentation, 100-column soft limit, no semicolons.
 - `ipairs` for arrays, `pairs` for dictionaries — never mixed keys in one table.
 - Never yield the main thread; use `task.spawn`/`task.defer`/promises, and `pcall` or `success, result` returns for fallible calls.
@@ -68,7 +69,7 @@ Server-side tolerances are never padded arbitrarily to paper over latency or des
 
 - **All remotes are declared in [`network.zap`](../network.zap) and consumed only through the generated `src/Client/Network/network.luau` / `src/Server/Network/network.luau` modules.** No raw `RemoteEvent` instances are created or fired by hand — Zap's generated API is the only interface to networking in this codebase, and it type-validates every argument by construction. `network.zap` is regenerated with `zap network.zap` any time it changes; the generated files are build artifacts and are not committed.
 - Fire-and-forget events only — never a synchronous request/response pattern (`RemoteFunction`, or a server-side `yield`/`Wait` on a client's reply), which can hang the server thread on a non-responding client.
-- Every player-initiated combat/movement event sets an explicit rate limit in its `network.zap` definition, independent of its game-logic cooldown.
+- Every player-initiated combat/movement remote is gated by the shared `RateLimiter` utility (`Shared/Util/RateLimiter.luau`) in its handler, independent of its game-logic cooldown. `network.zap` has no field for this — see §5.
 
 ## 11. Physics & Network Ownership
 

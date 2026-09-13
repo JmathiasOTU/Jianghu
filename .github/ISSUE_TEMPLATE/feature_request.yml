@@ -1,0 +1,23 @@
+name: Feature Request
+description: Propose a new system or change.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What gap or need does this address?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: How should this work? Note any FSM states, constants, or remotes it would introduce.
+    validations:
+      required: true
+  - type: textarea
+    id: architecture
+    attributes:
+      label: Architecture impact
+      description: Does this fit within docs/ARCHITECTURE.md as-is, or does it require a rule change?

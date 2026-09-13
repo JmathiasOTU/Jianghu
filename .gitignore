@@ -1,0 +1,26 @@
+# Rojo / Roblox build artifacts
+*.rbxl
+*.rbxlx
+*.rbxm
+*.rbxmx
+sourcemap.json
+
+# Wally packages (restored via `wally install`)
+Packages/
+DevPackages/
+Packages.lock
+
+# Tooling caches
+.aftman/
+.stylua-cache/
+
+# Editor / OS
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json.example
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

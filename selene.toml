@@ -1,0 +1,7 @@
+std = "roblox"
+
+[lints]
+empty_if = "warn"
+if_same_then_else = "warn"
+suspicious_reverse_loop = "deny"
+unscoped_variables = "deny"

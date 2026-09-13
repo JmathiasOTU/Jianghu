@@ -1,0 +1,39 @@
+name: Bug Report
+description: Report a bug in movement, combat, or another system.
+labels: ["bug"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What happened, and what did you expect instead?
+    validations:
+      required: true
+  - type: dropdown
+    id: system
+    attributes:
+      label: System
+      options:
+        - Movement
+        - Parry / Combat
+        - Stagger / Posture
+        - Persistence
+        - UI
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction steps
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: input
+    id: ping
+    attributes:
+      label: Approximate ping (if combat/movement related)
+      placeholder: "e.g. 40ms"

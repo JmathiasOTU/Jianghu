@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  lint-and-format:
+    name: Lint & Format Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Aftman
+        uses: ok-nick/setup-aftman@v0.4.2
+
+      - name: Install Wally packages
+        run: wally install
+
+      - name: Selene lint
+        run: selene src
+
+      - name: StyLua format check
+        run: stylua --check src
+
+  build:
+    name: Rojo Build
+    runs-on: ubuntu-latest
+    needs: lint-and-format
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Aftman
+        uses: ok-nick/setup-aftman@v0.4.2
+
+      - name: Install Wally packages
+        run: wally install
+
+      - name: Build place file
+        run: rojo build default.project.json --output build.rbxl

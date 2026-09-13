@@ -1,0 +1,13 @@
+--!strict
+
+local CombatConstants = {
+	PARRY_WINDOW = 0.2,
+	PARRY_INPUT_RATE_LIMIT_HZ = 10,
+	STAGGER_MAX_POSTURE = 100,
+	STAGGER_BREAK_DURATION = 1.5,
+	HITSTOP_LIGHT = 0.05,
+	HITSTOP_HEAVY = 0.12,
+	FEINT_WINDOW = 0.3,
+}
+
+return CombatConstants

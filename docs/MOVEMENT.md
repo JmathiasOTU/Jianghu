@@ -809,6 +809,111 @@ per-target `pcall` isolation around the fade's property writes and
 `TweenService:Create` calls so one bad target can never silently take out every
 target after it in the loop again.
 
+**Extended 2026-09-14 — Movement/World/Tuning tabs, live tuning, noclip,
+waypoints, and richer history.** The flat panel above grew enough new
+functionality (below) that it needed real navigation —
+`Assets/UI/MovementDebugOverlay.model.json`'s `Panel` is now three collapsible
+tabs (`TabBar` + `TabContent.{MovementTab,WorldTab,TuningTab}`,
+`DebugOverlayController.setTab`) instead of one long scroll, and is draggable by
+its `TitleRow` (standard Roblox drag-by-titlebar: `InputBegan` on the title bar
+captures the press-start mouse position and the panel's own `Position`, a global
+`UserInputService.InputChanged` applies the accumulated delta every frame) —
+position is remembered for the session for free, since nothing resets
+`panel.Position` on close/reopen. `CombatSection` and its preceding `Divider3`
+are unchanged and untouched, and sit outside the tab system entirely (combat
+doesn't exist yet). The per-element transparency-tween fade (see the blank-panel
+writeup above) is unchanged — `collectFadeTargets` already walks every
+descendant regardless of which tab happens to be visible.
+
+- **Centralized dev-only gate.** Every dev-only remote now routes through one
+  wrapper, `DevToolsService.RegisterDevOnly(handler)`, instead of a copy-pasted
+  `DeveloperAllowlist.IsDeveloper` check at the top of each handler — extracted
+  *before* any remote past `RequestDevTeleport` existed, specifically so the
+  check can never be forgotten on remote N. `RequestDevTeleport`'s own handler
+  was migrated onto it first, as the proof it behaves identically; the noclip and
+  tuning remotes below were both built directly on it, never with their own
+  inline check.
+- **Movement tab — state history.** `Client/Controllers/Movement/DebugSnapshot.luau`
+  keeps a bounded ring buffer (`STATE_HISTORY_LIMIT = 10`) of the client FSM's
+  `fsm.changed` transitions with timestamps (`RecordTransition`/`GetStateHistory`),
+  populated by `Movement/init.luau` off its existing `fsm.changed` connection —
+  no new connection needed. Rendered under `ClientSection` as a small scrolling
+  list (`StateHistorySection`), most-recent-first, in a fixed 10-row pool
+  (`Row1..Row10`) the controller shows/hides rather than constructing at runtime.
+- **Movement tab — full velocity readout.** `DebugSnapshot`'s published snapshot
+  now carries the root part's real `AssemblyLinearVelocity`/`AssemblyAngularVelocity`
+  (`velocity`/`rotVelocity`) alongside the flattened horizontal `speed` it already
+  had (kept, not replaced — still the quickest single number to eyeball against a
+  state's speed tier). Two new rows under `ClientSection`.
+- **Movement tab — network claim log.** `DebugSnapshot.RecordClaim`/`GetClaimLog`
+  log the client's own `RequestMovementTransition` sends (Run/Sprint claims) in a
+  bounded ring buffer (`CLAIM_LOG_LIMIT = 8`), called from the same call site
+  `Movement/init.luau` already fires the claim from (`fireClaim`, shared by the
+  `fsm.changed` edge and the periodic resync). Deliberately no new ack/response
+  remote — `DebugOverlayController.reconcileClaimLog` infers accepted-vs-likely-
+  rejected by checking whether the existing `MovementDebugState` broadcast ever
+  reflects the claimed state within `CLAIM_REFLECT_TIMEOUT_SECONDS` (2s) of the
+  claim, mutating `ClaimLogEntry.reflected` on the shared history in place (`nil`
+  = pending, `true` = confirmed, `false` = timed out unconfirmed). Rendered under
+  a new `ClaimLogSection`, most-recent-first, flagging any entry still `false`.
+- **Movement tab — violation history.** `Shared/Util/ViolationTracker.luau`'s
+  `Violation` record now keeps a bounded `history` of individual recent entries
+  (`HISTORY_LIMIT = 5`), not just the running `count`/`lastAt` —
+  `MovementValidationService.enforceSpeedSanity` pushes the exact same
+  `flatDelta`/`maxDistance`/`elapsed` numbers `SPEED_SANITY_DEBUG_LOGGING` already
+  printed into that history instead of only ever printing them. `MovementDebugState`
+  (`network.zap`) now carries a bounded `violations` array alongside
+  `violationCount`, with `ageSeconds` computed fresh server-side on every
+  broadcast (`os.clock() - recordedAt`) since the two machines' clocks aren't
+  comparable. Rendered under a new `ViolationHistorySection` beneath
+  `ServerSection`.
+- **Tuning tab — live-tunable movement constants.** `Shared/Movement/MovementTuning.luau`
+  defines the live-tunable subset of `MovementConstants` (`RunDoubleTapWindowSeconds`/
+  `SprintThresholdSeconds`/`WalkSpeed`/`RunSpeed`/`SprintSpeed`/`JumpPower`/
+  `SprintForwardDeadzone`/`SpeedToleranceMultiplier`) plus per-name sanity bounds
+  (`IsValidValue`) and a defaults/override-merge helper (`Defaults`/`WithOverrides`).
+  `Server/State/MovementTuningState.luau` holds a per-player override table
+  (never global — there is no key that means "everyone");
+  `Server/Services/MovementTuningService.luau` is the dev-gated `RequestSetTuning`
+  handler (bounds-checked, `value == nil` clears) and broadcasts the session's
+  effective constants back down over `TuningState`. `StateRules.CanEnter`,
+  `MovementValidationService.buildContext`, and every client state module now
+  read `context.constants`/`TuningSnapshot.Get()` — this session's effective
+  values — instead of importing `MovementConstants` directly, so a live override
+  changes client feel and server enforcement identically and can never drift into
+  the exact false-positive rubber-banding class this doc's §5 investigation
+  already had to fix once. Overrides apply only to the tuning developer's own
+  session, take effect with no republish, and reset on `PlayerRemoving`. The
+  overlay's Tuning tab renders one row per name (current effective value, an
+  input box, Set/Clear buttons) and never computes or validates a value itself —
+  it only ever sends a claim, same trust model as every other dev-only remote.
+- **World tab — noclip/fly.** `RequestSetNoclip` (dev-gated) toggles
+  `Server/State/NoclipState.luau`, a per-player server-authorized record — never
+  a client-reported flag — that `MovementValidationService.enforceSpeedSanity`
+  exempts entirely while active (otherwise it would immediately rubber-band the
+  very tool that exists to move faster than any tier's cap). `DevToolsService`
+  also disables `CanCollide` on every character `BasePart` server-side (replicates
+  natively); the actual fly movement is driven client-side by
+  `Client/Controllers/Movement/NoclipController.luau` (Space/Ctrl for up/down,
+  `Humanoid.PlatformStand = true` while active so Roblox's own ground controller
+  doesn't fight the per-frame `CFrame` writes), since the player's own character
+  is already network-owned by that client for ordinary movement. Turning noclip
+  off re-fires `CharacterTeleported` (the same signal the dev-teleport tool
+  already uses) so `enforceSpeedSanity`'s baseline doesn't compare the
+  discontinuous re-entry position against wherever the player was flying. The
+  overlay's toggle button always requests the opposite of the last
+  SERVER-CONFIRMED state (`DebugSnapshot.Get().noclip`, itself fed from the
+  `NoclipState` broadcast), never a locally-guessed "what did I just click" flag.
+- **World tab — named waypoints.** Session-only, client-side, deliberately not
+  `ProfileStore`-backed — same "no reason to touch persistence for this"
+  reasoning as the panel's dragged position above. A plain local `name -> Vector3`
+  list inside `DebugOverlayController` (capped at 8, matching the fixed row pool
+  in `WaypointsSection.List`), with save-here and per-row jump/delete. Jumping
+  reuses `RequestDevTeleport` — no new teleport remote.
+
+None of the above touch `CombatSection` — still a deliberately empty, clearly
+labeled placeholder, unchanged from when §8 first shipped it.
+
 ---
 
 ## Deferred (designed earlier, not part of this build)

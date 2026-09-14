@@ -2,7 +2,6 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local MovementStates = require(ReplicatedStorage.Shared.FSM.MovementStates)
-local MovementConstants = require(ReplicatedStorage.Shared.Constants.MovementConstants)
 local MovementTypes = require(ReplicatedStorage.Shared.Types.MovementTypes)
 
 type MovementState = MovementStates.MovementState
@@ -45,9 +44,8 @@ local CanEnter: { [MovementState]: (context: MovementContext) -> boolean } = {
 	end,
 
 	[MovementStates.Sprint] = function(context: MovementContext): boolean
-		return context.grounded
-			and context.runDuration ~= nil
-			and (context.runDuration :: number) >= MovementConstants.SprintThresholdSeconds
+		local threshold = context.constants.SprintThresholdSeconds
+		return context.grounded and context.runDuration ~= nil and (context.runDuration :: number) >= threshold
 	end,
 
 	[MovementStates.Airborne] = function(context: MovementContext): boolean

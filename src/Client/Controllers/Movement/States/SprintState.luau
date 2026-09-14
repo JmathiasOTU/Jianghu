@@ -3,7 +3,6 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local MovementStates = require(ReplicatedStorage.Shared.FSM.MovementStates)
 local StateRules = require(ReplicatedStorage.Shared.Movement.StateRules)
-local MovementConstants = require(ReplicatedStorage.Shared.Constants.MovementConstants)
 
 local ClientMovementContextModule = require(script.Parent.Parent.ClientMovementContext)
 type ClientMovementContext = ClientMovementContextModule.ClientMovementContext
@@ -13,7 +12,7 @@ local SprintState = {}
 SprintState.CanEnter = StateRules.CanEnter[MovementStates.Sprint]
 
 function SprintState.Enter(context: ClientMovementContext)
-	context.characterMover:SetSpeed(MovementConstants.SprintSpeed)
+	context.characterMover:SetSpeed(context.constants.SprintSpeed)
 end
 
 -- Sprint vs. strafing (resolved 2026-09-13, docs/MOVEMENT.md §2): tolerates

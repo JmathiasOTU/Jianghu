@@ -5,8 +5,9 @@ local Workspace = game:GetService("Workspace")
 
 local LemonSignal = require(ReplicatedStorage.Packages.LemonSignal)
 local Trove = require(ReplicatedStorage.Packages.Trove)
-local MovementConstants = require(ReplicatedStorage.Shared.Constants.MovementConstants)
 local MovementTypes = require(ReplicatedStorage.Shared.Types.MovementTypes)
+
+local TuningSnapshot = require(script.Parent.TuningSnapshot)
 
 type MoveIntent = MovementTypes.MoveIntent
 
@@ -57,7 +58,7 @@ function InputController.new(): InputController
 				local now = os.clock()
 				if
 					self._lastWPressAt
-					and now - self._lastWPressAt <= MovementConstants.RunDoubleTapWindowSeconds
+					and now - self._lastWPressAt <= TuningSnapshot.Get().RunDoubleTapWindowSeconds
 				then
 					self.RunRequested:Fire()
 					self._lastWPressAt = nil

@@ -8,15 +8,19 @@ local MovementStates = require(ReplicatedStorage.Shared.FSM.MovementStates)
 local StateRules = require(ReplicatedStorage.Shared.Movement.StateRules)
 local MovementTypes = require(ReplicatedStorage.Shared.Types.MovementTypes)
 local MovementConstants = require(ReplicatedStorage.Shared.Constants.MovementConstants)
+local MovementTuning = require(ReplicatedStorage.Shared.Movement.MovementTuning)
 local DeveloperAllowlist = require(ReplicatedStorage.Shared.Constants.DeveloperAllowlist)
 local RateLimiter = require(ReplicatedStorage.Shared.Util.RateLimiter)
 local ViolationTracker = require(ReplicatedStorage.Shared.Util.ViolationTracker)
 
 local Network = require(script.Parent.Parent.Network.network)
 local CharacterTeleported = require(script.Parent.Parent.Events.CharacterTeleported)
+local MovementTuningState = require(script.Parent.Parent.State.MovementTuningState)
+local NoclipState = require(script.Parent.Parent.State.NoclipState)
 
 type MovementState = MovementStates.MovementState
 type MovementContext = MovementTypes.MovementContext
+type EffectiveMovementConstants = MovementTuning.EffectiveMovementConstants
 
 -- Symbol -> the plain string literal Network.MovementDebugState's payload needs
 -- (Zap enums are string unions, not Symbols) -- same lookup-table shape as
@@ -76,16 +80,19 @@ end
 -- is what makes this a real fix rather than trusting the client's own claim (see
 -- docs/MOVEMENT.md §5).
 --
--- Forward/backward use MovementConstants.SprintForwardDeadzone rather than a bare
--- `> 0`/`< 0` zero-crossing (hardened 2026-09-13): real WASD input only ever
--- produces a facing/MoveDirection angle of 0/45/90+ degrees, so the deadzone (0.5,
--- comfortably below cos 45° ≈ 0.707) never affects legitimate diagonal Sprint-
--- holding -- it only closes off a spoofed `MoveDirection` sitting at a razor-thin
--- positive angle (e.g. 89°) that used to satisfy `> 0` and dodge the Sprint->Run
--- demotion while moving almost entirely sideways.
+-- Forward/backward use a deadzone (this session's effective
+-- SprintForwardDeadzone, docs/MOVEMENT.md §8 -- MovementConstants' shipped
+-- 0.5 unless a developer is live-tuning it) rather than a bare `> 0`/`< 0`
+-- zero-crossing (hardened 2026-09-13): real WASD input only ever produces a
+-- facing/MoveDirection angle of 0/45/90+ degrees, so the shipped deadzone
+-- (comfortably below cos 45° ≈ 0.707) never affects legitimate diagonal
+-- Sprint-holding -- it only closes off a spoofed `MoveDirection` sitting at a
+-- razor-thin positive angle (e.g. 89°) that used to satisfy `> 0` and dodge
+-- the Sprint->Run demotion while moving almost entirely sideways.
 local function classifyMoveIntent(
 	facing: Vector3,
-	moveDirection: Vector3
+	moveDirection: Vector3,
+	deadzone: number
 ): (boolean, boolean, boolean, boolean)
 	local flatFacing = Vector3.new(facing.X, 0, facing.Z)
 	local flatMove = Vector3.new(moveDirection.X, 0, moveDirection.Z)
@@ -97,7 +104,6 @@ local function classifyMoveIntent(
 
 	local forwardComponent = flatFacing:Dot(flatMove)
 	local rightComponent = flatMove:Cross(flatFacing).Y
-	local deadzone = MovementConstants.SprintForwardDeadzone
 
 	return forwardComponent > deadzone,
 		forwardComponent < -deadzone,
@@ -105,14 +111,24 @@ local function classifyMoveIntent(
 		rightComponent > 0
 end
 
+-- `constants` is this session's EFFECTIVE tuning (docs/MOVEMENT.md §8) --
+-- read fresh from MovementTuningState on every call rather than cached on the
+-- session, so a live override change is picked up on the very next Heartbeat
+-- with no extra invalidation bookkeeping. StateRules.CanEnter (shared with the
+-- client) reads SprintThresholdSeconds off this same field, never off
+-- MovementConstants directly, so the two can never disagree about the number
+-- actually in effect for this player.
 local function buildContext(session: PlayerSession): MovementContext
+	local constants = MovementTuningState.GetEffective(session.player)
+
 	local runDuration = if session.fsm.current == MovementStates.Run and session.runEnteredAt
 		then os.clock() - (session.runEnteredAt :: number)
 		else nil
 
 	local moveDirection = session.humanoid.MoveDirection
 	local facing = session.rootPart.CFrame.LookVector
-	local forward, backward, strafeLeft, strafeRight = classifyMoveIntent(facing, moveDirection)
+	local forward, backward, strafeLeft, strafeRight =
+		classifyMoveIntent(facing, moveDirection, constants.SprintForwardDeadzone)
 
 	return {
 		moveIntent = {
@@ -124,6 +140,7 @@ local function buildContext(session: PlayerSession): MovementContext
 		},
 		grounded = isGrounded(session.humanoid:GetState()),
 		runDuration = runDuration,
+		constants = constants,
 	}
 end
 
@@ -251,13 +268,13 @@ end
 -- (`AirborneState.Enter` is a no-op, per `AirborneState.luau`) -- whatever tier was
 -- active at takeoff carries into the jump -- so it's capped at the ceiling
 -- (SprintSpeed) rather than guessing which tier the player jumped from.
-local function maxSpeedForState(state: MovementState): number
+local function maxSpeedForState(state: MovementState, constants: EffectiveMovementConstants): number
 	if state == MovementStates.Run then
-		return MovementConstants.RunSpeed
+		return constants.RunSpeed
 	elseif state == MovementStates.Sprint or state == MovementStates.Airborne then
-		return MovementConstants.SprintSpeed
+		return constants.SprintSpeed
 	end
-	return MovementConstants.WalkSpeed
+	return constants.WalkSpeed
 end
 
 -- Lightweight anti-noclip/speed-hack net (docs/MOVEMENT.md §5): not a full
@@ -269,7 +286,17 @@ end
 -- replication jitter long before it caught a real speed hack. Vertical (Y) motion
 -- is deliberately excluded -- falling/jumping isn't gated by any WalkSpeed tier,
 -- and this check has no business policing gravity.
-local function enforceSpeedSanity(session: PlayerSession)
+--
+-- Exempted entirely while `NoclipState.IsActive` (docs/MOVEMENT.md §8) -- the
+-- scouting tool's whole point is to move faster than any tier's cap allows, so
+-- without this exemption it would rubber-band the very thing it exists for.
+-- Checked against the SERVER's own authorized record, never a client-reported
+-- flag (docs/ARCHITECTURE.md §3) -- DevToolsService.luau is the only writer.
+local function enforceSpeedSanity(session: PlayerSession, constants: EffectiveMovementConstants)
+	if NoclipState.IsActive(session.player) then
+		return
+	end
+
 	local now = os.clock()
 	local elapsed = now - session.speedCheckAt
 	if elapsed < MovementConstants.SpeedCheckIntervalSeconds then
@@ -279,9 +306,9 @@ local function enforceSpeedSanity(session: PlayerSession)
 	local position = session.rootPart.Position
 	local previous = session.speedCheckPosition
 	local flatDelta = Vector3.new(position.X - previous.X, 0, position.Z - previous.Z)
-	local maxDistance = maxSpeedForState(session.fsm.current)
+	local maxDistance = maxSpeedForState(session.fsm.current, constants)
 		* elapsed
-		* MovementConstants.SpeedToleranceMultiplier
+		* constants.SpeedToleranceMultiplier
 
 	if flatDelta.Magnitude > maxDistance then
 		-- Unconditional (not gated behind SPEED_SANITY_DEBUG_LOGGING below): every
@@ -297,7 +324,16 @@ local function enforceSpeedSanity(session: PlayerSession)
 				elapsed
 			)
 		)
-		speedViolations:Record(session.player)
+		-- The detail captured here (docs/MOVEMENT.md §8) is exactly the same
+		-- flatDelta/maxDistance/elapsed data the print above already has --
+		-- ViolationTracker keeps a bounded history of it instead of only the
+		-- running count, so broadcastDebugState can show the overlay's last
+		-- few corrections, not just how many there have been.
+		speedViolations:Record(session.player, {
+			flatDelta = flatDelta.Magnitude,
+			maxDistance = maxDistance,
+			elapsed = elapsed,
+		})
 
 		local corrected = Vector3.new(previous.X, position.Y, previous.Z)
 		session.rootPart.CFrame = (session.rootPart.CFrame - position) + corrected
@@ -313,6 +349,12 @@ end
 -- client/server disagreement instead of only showing the client's own
 -- (self-reported) view -- that's the actual point of the panel. Restricted to
 -- developers so a normal player's client never even receives this traffic.
+--
+-- `violations` (docs/MOVEMENT.md §8) sends ViolationTracker's bounded history,
+-- not just the running count -- `ageSeconds` is computed fresh right here,
+-- every broadcast, from this server's own `os.clock()` rather than sending
+-- the raw recorded timestamp, since the two machines' clocks aren't
+-- comparable (unlike `elapsed`, which is already a duration, not a moment).
 local function broadcastDebugState(session: PlayerSession)
 	if not DeveloperAllowlist.IsDeveloper(session.player) then
 		return
@@ -320,11 +362,26 @@ local function broadcastDebugState(session: PlayerSession)
 
 	local context = buildContext(session)
 	local violation = speedViolations:Get(session.player)
+	local now = os.clock()
+
+	local violationEntries: { { flatDelta: number, maxDistance: number, elapsed: number, ageSeconds: number } } =
+		{}
+	if violation then
+		for _, entry in violation.history do
+			table.insert(violationEntries, {
+				flatDelta = entry.flatDelta,
+				maxDistance = entry.maxDistance,
+				elapsed = entry.elapsed,
+				ageSeconds = now - entry.at,
+			})
+		end
+	end
 
 	Network.MovementDebugState.Fire(session.player, {
 		state = DEBUG_STATE_NAMES[session.fsm.current],
 		runDuration = if context.runDuration then context.runDuration :: number else nil,
 		violationCount = if violation then violation.count else 0,
+		violations = violationEntries,
 	})
 end
 
@@ -390,7 +447,7 @@ local function onRequestMovementTransition(player: Player, claim: "Run" | "Sprin
 				string.format(
 					"[SpeedSanity] %s Sprint claim accepted, dwell overshoot=%.3fs",
 					player.Name,
-					(context.runDuration :: number) - MovementConstants.SprintThresholdSeconds
+					(context.runDuration :: number) - context.constants.SprintThresholdSeconds
 				)
 			)
 		end
@@ -421,7 +478,7 @@ function MovementValidationService.Init()
 	RunService.Heartbeat:Connect(function()
 		for _, session in sessions do
 			mirrorPassiveTransitions(session)
-			enforceSpeedSanity(session)
+			enforceSpeedSanity(session, MovementTuningState.GetEffective(session.player))
 			broadcastDebugState(session)
 		end
 	end)

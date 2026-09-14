@@ -12,6 +12,8 @@ local CharacterMover = require(script.CharacterMover)
 local InputController = require(script.InputController)
 local ClientMovementContextModule = require(script.ClientMovementContext)
 local DebugSnapshot = require(script.DebugSnapshot)
+local TuningSnapshot = require(script.TuningSnapshot)
+local NoclipController = require(script.NoclipController)
 local Network = require(script.Parent.Parent.Network.network)
 
 local FacingController = require(script.Presentation.FacingController)
@@ -82,7 +84,8 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 	local humanoid = character:WaitForChild("Humanoid") :: Humanoid
 	local rootPart = character:WaitForChild("HumanoidRootPart") :: BasePart
 
-	local characterMover = lifeTrove:Add(CharacterMover.new(humanoid))
+	local characterMover = lifeTrove:Add(CharacterMover.new(humanoid, TuningSnapshot.Get().JumpPower))
+	local noclip = lifeTrove:Add(NoclipController.new(humanoid, rootPart, input))
 	local fsm = lifeTrove:Add(
 		StateMachine.new(MovementStates.Idle, StateRules.Transitions, StateRules.CanEnter)
 	)
@@ -92,6 +95,36 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 	lifeTrove:Add(FacingController.new(humanoid, rootPart))
 	lifeTrove:Add(LocomotionAnimator.new(humanoid, rootPart, fsm, input))
 
+	-- Live tuning (docs/MOVEMENT.md §8): pushes the server's effective-constants
+	-- broadcast into TuningSnapshot and re-applies JumpPower immediately, since
+	-- unlike WalkSpeed/RunSpeed/SprintSpeed (only ever set on a state's own
+	-- Enter), JumpPower has no per-frame/per-transition write site of its own to
+	-- naturally pick up a changed value.
+	lifeTrove:Add(Network.TuningState.SetCallback(function(value)
+		TuningSnapshot.Set({
+			RunDoubleTapWindowSeconds = value.runDoubleTapWindowSeconds,
+			SprintThresholdSeconds = value.sprintThresholdSeconds,
+			WalkSpeed = value.walkSpeed,
+			RunSpeed = value.runSpeed,
+			SprintSpeed = value.sprintSpeed,
+			JumpPower = value.jumpPower,
+			SprintForwardDeadzone = value.sprintForwardDeadzone,
+			SpeedToleranceMultiplier = value.speedToleranceMultiplier,
+		})
+		characterMover:SetJumpPower(value.jumpPower)
+	end))
+
+	-- Noclip/fly (docs/MOVEMENT.md §8): the server is the sole authority on
+	-- whether this session is noclipping (Server/State/NoclipState.luau) --
+	-- this callback is what lets the local NoclipController actually start/stop
+	-- driving the character once the server confirms the toggle, never a
+	-- client-side guess ahead of that confirmation.
+	local noclipActive = false
+	lifeTrove:Add(Network.NoclipState.SetCallback(function(enabled: boolean)
+		noclipActive = enabled
+		noclip:SetActive(enabled)
+	end))
+
 	local function buildContext(): ClientMovementContext
 		local runDuration = if fsm.current == MovementStates.Run
 			then RunState.GetDuration()
@@ -100,6 +133,7 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 			moveIntent = input:GetMoveIntent(),
 			grounded = characterMover:IsGrounded(),
 			runDuration = runDuration,
+			constants = TuningSnapshot.Get(),
 			characterMover = characterMover,
 			fsm = fsm,
 		}
@@ -111,14 +145,23 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 
 	local lastClaimResyncAt = 0
 
+	local function fireClaim(claimName: "Run" | "Sprint")
+		Network.RequestMovementTransition.Fire(claimName)
+		DebugSnapshot.RecordClaim(claimName)
+		lastClaimResyncAt = os.clock()
+	end
+
 	lifeTrove:Connect(fsm.changed, function(next: MovementState, previous: MovementState)
 		States[previous].Exit(buildContext())
 		States[next].Enter(buildContext())
 
+		-- F4 debug overlay state history (docs/MOVEMENT.md §8): populated off
+		-- this existing `fsm.changed` connection, not a new one.
+		DebugSnapshot.RecordTransition(DEBUG_STATE_NAMES[next])
+
 		local claimName = NETWORK_CLAIM_NAMES[next]
 		if claimName then
-			Network.RequestMovementTransition.Fire(claimName)
-			lastClaimResyncAt = os.clock()
+			fireClaim(claimName)
 		end
 	end)
 
@@ -131,8 +174,7 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 
 		local claimName = NETWORK_CLAIM_NAMES[fsm.current]
 		if claimName and os.clock() - lastClaimResyncAt >= CLAIM_RESYNC_INTERVAL_SECONDS then
-			Network.RequestMovementTransition.Fire(claimName)
-			lastClaimResyncAt = os.clock()
+			fireClaim(claimName)
 		end
 
 		-- F4 debug overlay (docs/MOVEMENT.md) -- published every Heartbeat
@@ -140,11 +182,15 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 		-- context is rebuilt unconditionally; cheap enough (a few field reads, no
 		-- allocation-heavy work) not to bother gating on overlay visibility.
 		local velocity = rootPart.AssemblyLinearVelocity
+		local rotVelocity = rootPart.AssemblyAngularVelocity
 		DebugSnapshot.Set({
 			state = DEBUG_STATE_NAMES[fsm.current],
 			grounded = characterMover:IsGrounded(),
 			runDuration = if fsm.current == MovementStates.Run then RunState.GetDuration() else nil,
 			speed = Vector3.new(velocity.X, 0, velocity.Z).Magnitude,
+			velocity = velocity,
+			rotVelocity = rotVelocity,
+			noclip = noclipActive,
 		})
 	end)
 end

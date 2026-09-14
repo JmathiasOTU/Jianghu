@@ -45,6 +45,20 @@ event RequestMovementTransition = {
 -- FireAll -- see docs/MOVEMENT.md.
 type DebugMovementState = enum { "Idle", "Walk", "Run", "Sprint", "Airborne" }
 
+-- One recent speed-sanity correction (Shared/Util/ViolationTracker.luau's
+-- per-key history, docs/MOVEMENT.md §8) -- the same flatDelta/maxDistance/
+-- elapsed numbers SPEED_SANITY_DEBUG_LOGGING already prints server-side,
+-- captured into a record instead of only ever printed. `ageSeconds` is
+-- computed fresh server-side on every broadcast (`os.clock() - recordedAt`)
+-- rather than sending the raw `os.clock()` timestamp, since the two machines'
+-- clocks aren't comparable.
+type MovementViolationEntry = struct {
+	flatDelta: f32,
+	maxDistance: f32,
+	elapsed: f32,
+	ageSeconds: f32,
+}
+
 event MovementDebugState = {
 	from: Server,
 	type: Unreliable,
@@ -53,6 +67,7 @@ event MovementDebugState = {
 		state: DebugMovementState,
 		runDuration: f32?,
 		violationCount: u16,
+		violations: MovementViolationEntry[0..5],
 	},
 }
 
@@ -67,4 +82,79 @@ event RequestDevTeleport = {
 	type: Reliable,
 	call: SingleAsync,
 	data: vector,
+}
+
+-- Live movement tuning (F4 overlay "Tuning" tab, developer-only) -------------
+--
+-- Lets a developer override a subset of MovementConstants for their OWN
+-- session only, with no republish -- see Shared/Movement/MovementTuning.luau
+-- and Server/State/MovementTuningState.luau. `value: nil` clears the override,
+-- reverting that one name back to the shipped MovementConstants value.
+type TunableConstantName = enum {
+	"RunDoubleTapWindowSeconds",
+	"SprintThresholdSeconds",
+	"WalkSpeed",
+	"RunSpeed",
+	"SprintSpeed",
+	"JumpPower",
+	"SprintForwardDeadzone",
+	"SpeedToleranceMultiplier",
+}
+
+event RequestSetTuning = {
+	from: Client,
+	type: Reliable,
+	call: SingleAsync,
+	data: struct {
+		name: TunableConstantName,
+		value: f32?,
+	},
+}
+
+-- One-way broadcast of this session's EFFECTIVE constants (override merged
+-- over MovementConstants, or the raw constants if nothing is overridden) so
+-- client and server read back the exact same numbers -- a divergence here is
+-- exactly the class of bug the 2026-09-13 rubber-banding investigation
+-- (docs/MOVEMENT.md §5) had to fix once already. Struct field names are
+-- lowerCamel per this file's own convention (see MovementDebugState above);
+-- Server/Services/MovementTuningService.luau and
+-- Client/Controllers/Movement/TuningSnapshot.luau each do the one small
+-- name-case mapping to/from Shared/Movement/MovementTuning's PascalCase keys.
+event TuningState = {
+	from: Server,
+	type: Reliable,
+	call: SingleSync,
+	data: struct {
+		runDoubleTapWindowSeconds: f32,
+		sprintThresholdSeconds: f32,
+		walkSpeed: f32,
+		runSpeed: f32,
+		sprintSpeed: f32,
+		jumpPower: f32,
+		sprintForwardDeadzone: f32,
+		speedToleranceMultiplier: f32,
+	},
+}
+
+-- Noclip/fly scouting tool (F4 overlay, developer-only) ----------------------
+--
+-- Per-session toggle, server-authorized like every other dev tool here.
+-- Collision is disabled server-side (CanCollide replicates natively); the
+-- actual fly movement is driven client-side by
+-- Client/Controllers/Movement/NoclipController.luau, since the player's own
+-- character is already network-owned by that client for ordinary movement.
+-- MovementValidationService.enforceSpeedSanity exempts an active session via
+-- Server/State/NoclipState.luau rather than trusting a client-reported flag.
+event RequestSetNoclip = {
+	from: Client,
+	type: Reliable,
+	call: SingleAsync,
+	data: boolean,
+}
+
+event NoclipState = {
+	from: Server,
+	type: Reliable,
+	call: SingleSync,
+	data: boolean,
 }

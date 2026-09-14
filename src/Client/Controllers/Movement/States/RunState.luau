@@ -3,7 +3,6 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local MovementStates = require(ReplicatedStorage.Shared.FSM.MovementStates)
 local StateRules = require(ReplicatedStorage.Shared.Movement.StateRules)
-local MovementConstants = require(ReplicatedStorage.Shared.Constants.MovementConstants)
 
 local ClientMovementContextModule = require(script.Parent.Parent.ClientMovementContext)
 type ClientMovementContext = ClientMovementContextModule.ClientMovementContext
@@ -20,7 +19,7 @@ local enteredAt: number? = nil
 
 function RunState.Enter(context: ClientMovementContext)
 	enteredAt = os.clock()
-	context.characterMover:SetSpeed(MovementConstants.RunSpeed)
+	context.characterMover:SetSpeed(context.constants.RunSpeed)
 end
 
 -- "Continuously in Run for N seconds" reads as uninterrupted (docs/MOVEMENT.md §2):

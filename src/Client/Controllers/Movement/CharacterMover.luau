@@ -2,7 +2,6 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Trove = require(ReplicatedStorage.Packages.Trove)
-local MovementConstants = require(ReplicatedStorage.Shared.Constants.MovementConstants)
 
 local GROUNDED_STATES = {
 	[Enum.HumanoidStateType.Running] = true,
@@ -12,6 +11,7 @@ local GROUNDED_STATES = {
 
 export type CharacterMover = {
 	SetSpeed: (self: CharacterMover, speed: number) -> (),
+	SetJumpPower: (self: CharacterMover, jumpPower: number) -> (),
 	IsGrounded: (self: CharacterMover) -> boolean,
 	Destroy: (self: CharacterMover) -> (),
 }
@@ -26,7 +26,12 @@ CharacterMover.__index = CharacterMover
 -- are deliberately not here yet: nothing in Phase 1 needs to trigger a jump or
 -- freeze movement programmatically. Add them when a state actually needs to (e.g.
 -- a future forced-launch or stun), not speculatively now.
-function CharacterMover.new(humanoid: Humanoid): CharacterMover
+--
+-- `jumpPower` is passed in rather than read from MovementConstants directly
+-- (docs/MOVEMENT.md §8, live tuning) -- the caller (Movement/init.luau) sources
+-- it from TuningSnapshot, this session's effective value, and re-pushes any
+-- later change via SetJumpPower.
+function CharacterMover.new(humanoid: Humanoid, jumpPower: number): CharacterMover
 	local self = setmetatable({}, CharacterMover) :: any
 	self._trove = Trove.new()
 	self._humanoid = humanoid
@@ -36,13 +41,17 @@ function CharacterMover.new(humanoid: Humanoid): CharacterMover
 	-- (Shift Lock/first-person) vs. free-orbiting (docs/MOVEMENT.md §4, fixed
 	-- 2026-09-13). Forcing it off unconditionally broke normal camera orbiting.
 	humanoid.UseJumpPower = true
-	humanoid.JumpPower = MovementConstants.JumpPower
+	humanoid.JumpPower = jumpPower
 
 	return self
 end
 
 function CharacterMover:SetSpeed(speed: number)
 	self._humanoid.WalkSpeed = speed
+end
+
+function CharacterMover:SetJumpPower(jumpPower: number)
+	self._humanoid.JumpPower = jumpPower
 end
 
 function CharacterMover:IsGrounded(): boolean

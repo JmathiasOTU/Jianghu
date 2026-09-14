@@ -1,0 +1,40 @@
+{
+  "ClassName": "Folder",
+  "Children": [
+    {
+      "Name": "Idle",
+      "ClassName": "Animation",
+      "Properties": {
+        "AnimationId": ""
+      }
+    },
+    {
+      "Name": "Sprint",
+      "ClassName": "Animation",
+      "Properties": {
+        "AnimationId": ""
+      }
+    },
+    {
+      "Name": "Walk",
+      "ClassName": "Folder",
+      "Children": [
+        { "Name": "Forward", "ClassName": "Animation", "Properties": { "AnimationId": "" } },
+        { "Name": "ForwardRight", "ClassName": "Animation", "Properties": { "AnimationId": "" } },
+        { "Name": "Right", "ClassName": "Animation", "Properties": { "AnimationId": "" } },
+        { "Name": "BackRight", "ClassName": "Animation", "Properties": { "AnimationId": "" } },
+        { "Name": "Back", "ClassName": "Animation", "Properties": { "AnimationId": "" } },
+        { "Name": "BackLeft", "ClassName": "Animation", "Properties": { "AnimationId": "" } },
+        { "Name": "Left", "ClassName": "Animation", "Properties": { "AnimationId": "" } },
+        { "Name": "ForwardLeft", "ClassName": "Animation", "Properties": { "AnimationId": "" } }
+      ]
+    },
+    {
+      "Name": "Run",
+      "ClassName": "Animation",
+      "Properties": {
+        "AnimationId": ""
+      }
+    }
+  ]
+}

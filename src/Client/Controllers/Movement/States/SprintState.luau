@@ -17,13 +17,16 @@ function SprintState.Enter(context: ClientMovementContext)
 end
 
 -- Sprint vs. strafing (resolved 2026-09-13, docs/MOVEMENT.md §2): tolerates
--- forward-diagonal input, drops back to Run the moment the raw forward key is no
--- longer held -- covers backpedal, pure strafe, and fully releasing input alike,
--- since all three leave `forward` false. If input is fully zero, Run's own Update
--- demotes to Idle on the very next frame -- no special-casing needed here.
+-- forward-diagonal input, drops back to Run on backpedal or pure strafe. Checked
+-- separately from "no input at all" -> Idle (bug fixed 2026-09-13): Run.CanEnter
+-- requires nonzero move input, so releasing every key and attempting
+-- Sprint -> Run directly would fail CanEnter and leave the FSM stuck in Sprint --
+-- attempting Idle first, before checking `forward`, avoids that dead end.
 function SprintState.Update(_dt: number, context: ClientMovementContext)
 	if not context.grounded then
 		context.fsm:RequestTransition(MovementStates.Airborne, context)
+	elseif not StateRules.HasMoveInput(context) then
+		context.fsm:RequestTransition(MovementStates.Idle, context)
 	elseif not context.moveIntent.forward then
 		context.fsm:RequestTransition(MovementStates.Run, context)
 	end

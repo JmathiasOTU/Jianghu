@@ -59,7 +59,7 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 
 	-- Presentation: purely cosmetic, never touched by states or the FSM (they only
 	-- read it) -- docs/MOVEMENT.md §3/§4.
-	lifeTrove:Add(FacingController.new(rootPart))
+	lifeTrove:Add(FacingController.new(humanoid, rootPart))
 	lifeTrove:Add(LocomotionAnimator.new(humanoid, rootPart, fsm, input))
 
 	local function buildContext(): ClientMovementContext

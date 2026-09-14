@@ -8,10 +8,13 @@ None of these five are gated by stamina/Qinggong — that resource only matters 
 WallRun/ClimbVault/LedgeGrab/Slide, which aren't built yet. See **Deferred** at the
 bottom for a pointer, not a full spec.
 
-Movement is **strafe-style**: facing is decoupled from movement direction (you face
-wherever the camera/aim points; input direction relative to that facing selects
-among your 8 directional animations). Target feel: fast and fluid, momentum-
-preserving, generous air control.
+Movement is **strafe-style while the camera is locked to the character** (Shift
+Lock or first-person): facing decouples from movement direction, you face wherever
+the camera/aim points, and input direction relative to that facing selects among
+your 8 directional animations. In normal free-orbit third-person (not locked), the
+character auto-faces movement direction like default Roblox — see §4's Facing
+section, corrected 2026-09-13. Target feel: fast and fluid, momentum-preserving,
+generous air control.
 
 ## Implementation Status
 
@@ -19,7 +22,7 @@ preserving, generous air control.
 |---|---|---|
 | Shared scaffolding (Step 1) | Done — 2026-09-13 | `Shared/FSM/MovementStates.luau`, `Shared/FSM/StateMachine.luau`, `Shared/Constants/MovementConstants.luau`, `Shared/Types/MovementTypes.luau`, `Shared/Movement/StateRules.luau`, `network.zap`, `Shared/Util/RateLimiter.luau` |
 | Core states (Step 2) | Done — 2026-09-13 | `Client/Controllers/Movement/{init,CharacterMover,InputController,ClientMovementContext}.luau`, `Client/Controllers/Movement/States/*.luau`, `Server/Services/MovementValidationService.luau` |
-| Facing + animation (Step 3) | Logic done 2026-09-13, **animations still needed** | `Client/Controllers/Movement/Presentation/{FacingController,LocomotionAnimator}.luau`, `Shared/Constants/MovementAnimations.luau` |
+| Facing + animation (Step 3) | Logic done 2026-09-13, **animations still needed** | `Client/Controllers/Movement/Presentation/{FacingController,LocomotionAnimator}.luau`, `Assets/Animations/Movement.model.json` |
 | Exploit + perf pass (Step 4) | Not started | — |
 
 ---
@@ -129,6 +132,20 @@ server construct their FSM instances identically.
 `Sprint.CanEnter`'s real condition is therefore "mirrored as having been continuously
 in `Run` for ≥ threshold" — never "sprint key held," because there is no sprint key.
 
+**Bug fixed 2026-09-13 — Sprint never returned to Idle on a full stop.**
+`SprintState.Update` only ever attempted `Sprint -> Run` when `forward` went false,
+reasoning that `RunState.Update` would demote to `Idle` on the next frame if input
+was truly zero. That reasoning was wrong: `Run.CanEnter` itself requires nonzero
+move input, so releasing every key and attempting `Sprint -> Run` directly **fails
+`CanEnter`** — the transition never happens, and the FSM was stuck in `Sprint`
+indefinitely (only a jump, via the `Airborne` edge, could get out). Fixed by
+checking `not StateRules.HasMoveInput(context)` first and attempting `Idle`
+directly in that case, before the `forward` check — `Run` is only attempted when
+there's still *some* input (backpedal/strafe) for it to legally accept. The
+server's `MovementValidationService` mirror was never affected: its passive
+mirroring already attempted `Idle` directly whenever `Walk`/`Run`/`Sprint` had no
+input left, so this was a client-only bug.
+
 - **Airborne landing** (resolved 2026-09-13, refined while building Step 2):
   `AirborneState.Update` checks currently held input and transitions straight into
   `Idle` or `Walk` — never through an intermediate `Idle` frame first, and **never
@@ -165,6 +182,12 @@ diverge later.
 ## 3. Module Layout
 
 ```
+Assets/Animations/
+  Movement.model.json         -- Rojo-synced Animation instance tree: Idle/Run/Sprint
+                                  (single clips) plus Walk/{8 directions}, every
+                                  AnimationId blank until real animations exist --
+                                  mounted at ReplicatedStorage.Assets.Animations.Movement
+
 Shared/
   FSM/
     StateMachine.luau         -- generic LemonSignal-based FSM engine (extended, see above)
@@ -172,8 +195,6 @@ Shared/
   Constants/
     MovementConstants.luau    -- speeds, jump power, RunDoubleTapWindowSeconds,
                                   SprintThresholdSeconds — all numeric, nothing inline
-    MovementAnimations.luau   -- AnimationId slots for LocomotionAnimator, all nil
-                                  until real animations are uploaded (Step 3)
   Types/
     MovementTypes.luau        -- strict type defs: MoveIntent, MovementContext, etc.
   Movement/
@@ -203,11 +224,12 @@ Client/Controllers/
       FacingController.luau       -- aligns character orientation to camera/aim each
                                       frame, fully decoupled from movement direction;
                                       done 2026-09-13, no external assets needed
-      LocomotionAnimator.luau     -- picks/blends among the 8 directional Walk/Run
-                                      anims from (facing-relative input angle, current
-                                      state); reads the FSM and InputController, writes
-                                      to neither; logic done 2026-09-13, waiting on
-                                      real AnimationIds in MovementAnimations.luau
+      LocomotionAnimator.luau     -- picks/blends among Walk's 8 directional anims
+                                      (facing-relative input angle) or Idle/Run/
+                                      Sprint's single clip, from current state; reads
+                                      the FSM and InputController, writes to neither;
+                                      logic done 2026-09-13, waiting on real
+                                      AnimationIds in Assets/Animations/Movement.model.json
 
 Server/Services/
   MovementValidationService.luau  -- server-side FSM mirror per player, rejects
@@ -262,43 +284,141 @@ is entered *reactively*, by observing the Humanoid's own state change, never by 
 state commanding a jump). Left out rather than added as unused no-ops, per this
 codebase's own "don't design for hypothetical future requirements" rule — add them
 when a real caller exists (e.g. a future forced-launch/stun state), not
-speculatively now. `AutoRotate = false`, `UseJumpPower = true`, and `JumpPower` are
-all set once in `CharacterMover.new`.
+speculatively now. `UseJumpPower = true` and `JumpPower` are set once in
+`CharacterMover.new`. `AutoRotate` is *not* set here — see Facing below.
 
-**Facing:** `Humanoid.AutoRotate = false`. `FacingController` aligns the root part to
-the camera/aim direction every frame, independent of whichever locomotion state is
-active. `LocomotionAnimator` reads the angle between facing and movement direction to
-pick the right one of the 8 directional blends. Facing rides on the character's
-normal replicated `CFrame`, so it needs no dedicated network event.
+**Facing:** `AutoRotate` is toggled per-frame by `FacingController`, not forced
+permanently off (corrected 2026-09-13 — see the dated entry below). `FacingController`
+aligns the root part to the camera/aim direction only while the camera is actually
+locked to the character; otherwise `Humanoid`'s own `AutoRotate` takes over so
+free-orbiting the camera doesn't drag the character's facing with it. `LocomotionAnimator`
+reads the angle between current facing and movement direction to pick the right one
+of the 8 directional blends — this needs no special-casing for the unlocked case,
+since `AutoRotate` naturally keeps facing ≈ movement direction there, which just
+resolves to the `Forward` bucket. Facing rides on the character's normal replicated
+`CFrame`, so it needs no dedicated network event.
 
 **Built 2026-09-13 (Step 3), logic complete but not yet animatable:**
 `FacingController` runs on `RenderStepped`, flattens the camera's `LookVector` to the
 XZ plane, and sets `rootPart.CFrame = CFrame.lookAt(position, position + flatLook)`
 every frame — no dependency on `LocomotionAnimator` or vice versa, both just read
-the same `rootPart.CFrame` independently. `LocomotionAnimator` computes the signed
-angle between that facing vector and the current `MoveIntent.direction` (via
-`Vector3:Cross`/`:Dot`, `math.atan2`), buckets it into one of the 8 named directions
-(45° wide, centered on Forward/ForwardRight/.../ForwardLeft), and maps
-`(state, bucket)` to a track key into `MovementAnimations.luau`.
+the same `rootPart.CFrame` independently. For `Walk` specifically, `LocomotionAnimator`
+computes the signed angle between that facing vector and the current
+`MoveIntent.direction` (via `Vector3:Cross`/`:Dot`, `math.atan2`), buckets it into one
+of the 8 named directions (45° wide, centered on Forward/ForwardRight/.../ForwardLeft),
+and maps `(state, bucket)` to a track key. `Idle`/`Run`/`Sprint` each map to a single,
+non-directional track key regardless of facing-relative angle.
 
 Two scoping calls worth flagging:
-- **Discrete switch-with-crossfade, not a real blend space.** "Picks/blends among
-  the 8 directional anims" is implemented as: stop whatever's playing, `Play(0.15)`
-  the new bucket's track. Not a weighted multi-track blend tree. Revisit once real
-  animations exist and playtesting shows whether a hard bucket switch (even
-  crossfaded) reads as too abrupt between adjacent directions.
+- **Discrete switch-with-crossfade, not a real blend space.** Walk's "picks/blends
+  among the 8 directional anims" is implemented as: stop whatever's playing,
+  `Play(0.15)` the new bucket's track. Not a weighted multi-track blend tree.
+  Revisit once real animations exist and playtesting shows whether a hard bucket
+  switch (even crossfaded) reads as too abrupt between adjacent directions.
 - **No Airborne animation yet.** Neither the original design nor this pass defines
   a jump/fall clip — `LocomotionAnimator` fades out whatever was playing and does
-  nothing else while Airborne. Add a slot to `MovementAnimations.luau` and a branch
-  in `LocomotionAnimator:_update` once one exists; not a blocker for anything else.
+  nothing else while Airborne. Add a slot to the model below and a branch in
+  `LocomotionAnimator:_update` once one exists; not a blocker for anything else.
 
-**Still needed before this is visible in-game:** `MovementAnimations.luau` ships
-with every `AnimationId` slot `nil` — no assets exist yet (2026-09-13). Same
-"don't guess placeholder values" rule as `MovementConstants` (commit `a31e6d9`):
-`LocomotionAnimator` skips loading/playing any `nil` slot, so the code runs
-correctly with zero animations playing rather than erroring, but nobody will see
-directional locomotion until real `Walk`/`Run`/`Sprint`/`Idle` AnimationIds are
-filled in.
+**Bug fixed 2026-09-13 — Walk directional buckets were left/right-mirrored.**
+`resolveDirectionBucket` computed `cross = flatFacing:Cross(flatMove)`, but Roblox's
+`Cross` follows the right-hand rule, and that operand order gives the sign for
+rotating *from* facing *to* move-direction — backwards from the "positive angle =
+clockwise = Right" convention the bucketing math assumes. Concretely: facing
+`(0,0,-1)` (Roblox's default forward) with `moveDirection = (1,0,0)` (world +X, your
+right hand when facing that way) resolved to `"Left"` instead of `"Right"`. Forward
+and Back were unaffected — parallel and anti-parallel vectors cross to zero
+regardless of operand order — which is exactly why walking looked like it "worked"
+while every lateral and diagonal bucket played mirrored. Fixed by swapping to
+`flatMove:Cross(flatFacing)`. Worth a quick playtest once real Walk animations are
+in to confirm Right/Left/the four diagonals all read correctly now, since this
+couldn't be verified without live assets. **Not the root cause reported
+2026-09-13** ("anims fighting with Roblox's native animations") — see the next
+entry for that.
+
+**Bug fixed 2026-09-13 — custom animations were fighting Roblox's default
+`Animate` script.** Roblox auto-adds an `Animate` LocalScript to every character,
+which plays its own walk/idle/jump animations on the *same* `Humanoid`/`Animator`
+automatically based on `MoveDirection`/state, entirely independent of
+`LocomotionAnimator`. Left in place, both systems play tracks on the same rig
+simultaneously — visible as animations flickering/fighting each other, which
+matches what was reported. `LocomotionAnimator.new` now destroys the character's
+`Animate` script (`humanoid.Parent:FindFirstChild("Animate")`) the moment it takes
+over, every life. **Side effect worth flagging:** the default `Animate` script also
+covers default tool-holding, sitting, swimming, and climbing animations — none of
+which this project uses yet (R6, no tools/combat built), so losing them isn't a
+regression today, but whoever builds tool-equip or combat animations later will
+need to handle those explicitly rather than relying on the default script, since
+it's gone for good on any character this system manages.
+
+**Bug fixed 2026-09-13 — camera-facing was forced even outside Shift Lock.**
+`FacingController` originally forced the character to face the camera every frame
+unconditionally, and `CharacterMover` forced `Humanoid.AutoRotate = false`
+permanently — so rotating the camera in normal free-orbit third-person (not
+Shift Locked, not first-person) dragged the character's facing along with it,
+instead of the character auto-facing movement direction like default Roblox
+third-person. Fixed by making both conditional on
+`UserInputService.MouseBehavior == Enum.MouseBehavior.LockCenter`, which Roblox
+sets for both Shift Lock and first-person camera (the only reliable signal for
+"camera is locked to the character" without reaching into the default
+`PlayerModule`'s internal state, which isn't stable API). `FacingController` now
+toggles `Humanoid.AutoRotate` itself each frame — `true` when unlocked (Roblox's
+own physics rotates the character to face movement direction, same as default
+third-person), `false` plus an active camera-facing override when locked (the
+original strafe-style behavior). `CharacterMover` no longer touches `AutoRotate`
+at all. This required changing `FacingController.new`'s signature to take
+`humanoid` in addition to `rootPart`.
+
+Originally assumed no `LocomotionAnimator` change was needed here — reasoning that
+unlocked, `AutoRotate` keeps facing chasing movement direction, so
+`resolveDirectionBucket` would naturally resolve to `Forward` "almost all the time."
+That "almost" was the problem — see the next entry.
+
+**Bug fixed 2026-09-13 — Walk stuttered while turning unlocked.** `AutoRotate`
+doesn't snap the character's facing to the movement direction instantly, it swings
+toward it gradually. While unlocked and mid-swing, the angle between facing and
+movement direction sweeps through several of the 8 buckets in quick succession
+(e.g. Right → ForwardRight → Forward as the character turns to catch up) — and
+`LocomotionAnimator:_playKey` stops/crossfades to a new track on every single bucket
+crossing, which reads as the walk animation stuttering/restarting whenever WASD
+input changes direction. Fixed by only computing the directional bucket at all when
+`UserInputService.MouseBehavior == Enum.MouseBehavior.LockCenter` (same signal
+`FacingController` uses) — unlocked, `Walk` always plays the `Forward` clip
+outright, skipping `resolveDirectionBucket` entirely, since there's nothing
+meaningful to bucket when you're always facing where you walk by definition. Locked,
+facing is genuinely decoupled from movement again (snapped directly to the camera
+every frame, not swung gradually) and the full 8-directional set is meaningful, same
+as originally designed.
+
+**Resolved 2026-09-13 — Run is not directional.** Corrected after Step 3 first
+shipped Run as an 8-directional set mirroring Walk: Run only ever has one
+animation, played regardless of facing-relative angle, same as `Sprint`. Both
+`Assets/Animations/Movement.model.json` (Run is a single `Animation` instance, not
+a folder of 8) and `LocomotionAnimator` (Run maps straight to a `"Run"` key,
+skipping `resolveDirectionBucket` entirely) were updated to match. Only `Walk`
+remains directional.
+
+**Resolved 2026-09-13 — real instances, not a data-table duplicate.** Originally
+built as `Shared/Constants/MovementAnimations.luau`, a plain Luau table of
+`AnimationId` strings, with `LocomotionAnimator` building a throwaway
+`Instance.new("Animation")` per slot at runtime. Replaced same-day with
+`Assets/Animations/Movement.model.json`, a Rojo-synced instance tree mounted at
+`ReplicatedStorage.Assets.Animations.Movement` (`Idle`/`Run`/`Sprint` single
+Animation instances, plus a `Walk` folder holding the 8 directional Animation
+children). Reasoning: this matches the project's existing "hand-authored content
+lives as instances, scripts only `WaitForChild` into it" philosophy (`docs/ARCHITECTURE.md`
+§8's GUI rule, applied here to animations) without losing version control — the
+`.model.json` is a plain text file that diffs and reviews normally, same as any
+`.luau` file, while still letting someone set real `AnimationId`s from Studio's
+property panel rather than editing Luau source. `LocomotionAnimator.loadTrack` now
+does `container:WaitForChild(name, 1)` (short timeout, never an indefinite block)
+and treats a missing child *or* a found one with a blank `AnimationId` as "not
+authored yet" — same graceful no-op as the old `nil`-string check, just checking an
+Instance property instead of a table value. Verified against the real `rojo` CLI
+(`rojo build`) that the `.model.json` schema (`ClassName`/`Name`/`Properties`/
+`Children`, no `$`-prefixes — that prefix form is only for inline trees directly
+inside `default.project.json`) produces exactly the intended tree before writing
+any of the consuming code.
 
 ---
 
@@ -397,11 +517,13 @@ check ever needs the mirror to be exact rather than eventually-consistent.
    starting point for in-Studio tuning, not a final pass).
 3. **Facing + animation** — ✅ logic done 2026-09-13, **⚠️ needs real
    AnimationIds before it's visible in-game**. `FacingController` (camera-relative,
-   `AutoRotate` off) and `LocomotionAnimator` (8-directional bucket selection +
-   crossfade, reading `MovementAnimations.luau`) are both built per §4. No Airborne
-   clip yet, and blending is a discrete crossfade, not a true blend space — see §4
-   for why. `MovementAnimations.luau` ships with every slot `nil`; fill in real
-   Walk/Run/Sprint/Idle AnimationIds once those animations are uploaded.
+   `AutoRotate` off) and `LocomotionAnimator` (Walk's 8-directional bucket
+   selection + crossfade; Idle/Run/Sprint each a single non-directional clip,
+   reading real Animation instances) are both built per §4. No Airborne clip yet,
+   and blending is a discrete crossfade, not a true blend space — see §4 for why.
+   `Assets/Animations/Movement.model.json` ships with every `AnimationId` blank;
+   fill in real Walk/Run/Sprint/Idle IDs from Studio's property panel once those
+   animations are uploaded — no code change needed to pick them up.
 4. **Exploit + perf pass** — server-side speed/delta-position sanity check audit,
    the Sprint-timestamp legality check specifically, the rate-limit gap above,
    `Trove` audit, `os.clock()` audit.

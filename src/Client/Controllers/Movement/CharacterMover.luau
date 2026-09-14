@@ -31,7 +31,10 @@ function CharacterMover.new(humanoid: Humanoid): CharacterMover
 	self._trove = Trove.new()
 	self._humanoid = humanoid
 
-	humanoid.AutoRotate = false
+	-- AutoRotate is NOT forced off here -- FacingController now owns it, toggling
+	-- per-frame based on whether the camera is actually locked to the character
+	-- (Shift Lock/first-person) vs. free-orbiting (docs/MOVEMENT.md §4, fixed
+	-- 2026-09-13). Forcing it off unconditionally broke normal camera orbiting.
 	humanoid.UseJumpPower = true
 	humanoid.JumpPower = MovementConstants.JumpPower
 

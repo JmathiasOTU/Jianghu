@@ -1,12 +1,12 @@
 --!strict
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
 
 local Trove = require(ReplicatedStorage.Packages.Trove)
 local StateMachine = require(ReplicatedStorage.Shared.FSM.StateMachine)
 local MovementStates = require(ReplicatedStorage.Shared.FSM.MovementStates)
 local MovementTypes = require(ReplicatedStorage.Shared.Types.MovementTypes)
-local MovementAnimations = require(ReplicatedStorage.Shared.Constants.MovementAnimations)
 
 local InputController = require(script.Parent.Parent.InputController)
 
@@ -15,8 +15,20 @@ type MovementContext = MovementTypes.MovementContext
 
 local FADE_TIME = 0.15
 
+-- Short, not indefinite: these Animation instances always exist once
+-- Assets/Animations/Movement.model.json is synced (docs/MOVEMENT.md §4), so this
+-- only ever actually waits if that tree is missing or a name drifted out of sync
+-- with DIRECTION_NAMES below -- it should never block a real, up-to-date sync.
+local ANIMATION_LOOKUP_TIMEOUT_SECONDS = 1
+
 local DIRECTION_NAMES: { string } =
 	{ "Forward", "ForwardRight", "Right", "BackRight", "Back", "BackLeft", "Left", "ForwardLeft" }
+
+-- Resolved once at module load, not per-life: this content is static and always
+-- synced before any character exists, so there's no reason to re-look it up on
+-- every respawn.
+local ANIMATIONS_ROOT = ReplicatedStorage:WaitForChild("Assets"):WaitForChild("Animations"):WaitForChild("Movement")
+local WALK_FOLDER = ANIMATIONS_ROOT:WaitForChild("Walk")
 
 export type LocomotionAnimator = {
 	Destroy: (self: LocomotionAnimator) -> (),
@@ -38,7 +50,13 @@ local function resolveDirectionBucket(facing: Vector3, moveDirection: Vector3): 
 	flatFacing = flatFacing.Unit
 	flatMove = flatMove.Unit
 
-	local cross = flatFacing:Cross(flatMove)
+	-- flatMove:Cross(flatFacing), not the other way around -- Roblox's Cross
+	-- follows the right-hand rule, and facing:Cross(move) gives the sign for a
+	-- clockwise-from-facing-to-move rotation, which is backwards from what "Right"
+	-- means here. Swapped operand order fixes a left/right (and diagonal) mirror
+	-- bug found 2026-09-13: Forward/Back were unaffected (parallel/anti-parallel
+	-- vectors cross to zero either way), but every lateral bucket was flipped.
+	local cross = flatMove:Cross(flatFacing)
 	local angle = math.atan2(cross.Y, flatFacing:Dot(flatMove))
 	local degrees = math.deg(angle)
 	if degrees < 0 then
@@ -49,22 +67,30 @@ local function resolveDirectionBucket(facing: Vector3, moveDirection: Vector3): 
 	return DIRECTION_NAMES[index + 1]
 end
 
-local function loadTrack(animator: Animator, id: string?, trove: Trove.Trove): AnimationTrack?
-	if not id or id == "" then
+-- Looks up a real, Rojo-synced Animation instance under `container` rather than
+-- building a throwaway one at runtime (docs/MOVEMENT.md §4) -- keeps AnimationIds
+-- version-controlled and editable in Studio instead of hardcoded strings. A missing
+-- child (timeout) or one nobody's authored yet (blank AnimationId) are both treated
+-- as "not ready" and skipped, exactly like the old nil-string check did.
+local function loadTrack(animator: Animator, container: Instance, name: string, trove: Trove.Trove): AnimationTrack?
+	local animation = container:WaitForChild(name, ANIMATION_LOOKUP_TIMEOUT_SECONDS) :: Animation?
+	if not animation or animation.AnimationId == "" then
 		return nil
 	end
-	local animation = Instance.new("Animation")
-	animation.AnimationId = id
 	local track = trove:Add(animator:LoadAnimation(animation), "Destroy")
-	animation:Destroy()
+	-- Every slot here is a continuous locomotion loop (Idle/Walk/Run/Sprint) --
+	-- AnimationTrack.Looped defaults to false, which would play once and freeze.
+	track.Looped = true
 	return track
 end
 
--- Picks/blends among the 8 directional Walk/Run anims from (facing-relative input
--- angle, current state); reads the FSM and InputController, never writes to either
--- (docs/MOVEMENT.md §1/§3). "Blends" here means a simple crossfade between whichever
--- single track is currently selected and the next -- not a weighted multi-track
--- blend space. Revisit once real animations exist and playtesting says a discrete
+-- Picks/blends among Idle/Run/Sprint's single clip or Walk's 8 directional anims
+-- from (facing-relative input angle, current state); reads the FSM and
+-- InputController, never writes to either (docs/MOVEMENT.md §1/§3). Only Walk is
+-- directional -- Run has one clip regardless of facing-relative angle, same as
+-- Sprint. "Blends" here means a simple crossfade between whichever single track is
+-- currently selected and the next -- not a weighted multi-track blend space.
+-- Revisit once real animations exist and playtesting says a discrete
 -- switch-with-fade isn't smooth enough.
 function LocomotionAnimator.new(
 	humanoid: Humanoid,
@@ -79,14 +105,27 @@ function LocomotionAnimator.new(
 	self._inputController = inputController
 	self._currentKey = nil :: string?
 
+	-- Roblox auto-adds a default "Animate" script to every character, which plays
+	-- its own walk/idle/jump animations on this same Humanoid/Animator
+	-- automatically based on MoveDirection/state -- entirely independent of this
+	-- system. Left alone, both play tracks on the same joints at once, which reads
+	-- as the animations visibly fighting/flickering. This system fully replaces
+	-- it, so it's destroyed (not just disabled) the moment LocomotionAnimator takes
+	-- over -- bug found 2026-09-13, missed when Step 3 first shipped.
+	local character = humanoid.Parent
+	local defaultAnimateScript = character and character:FindFirstChild("Animate")
+	if defaultAnimateScript then
+		defaultAnimateScript:Destroy()
+	end
+
 	local animator = humanoid:WaitForChild("Animator") :: Animator
 
 	self._tracks = {} :: { [string]: AnimationTrack? }
-	self._tracks.Idle = loadTrack(animator, MovementAnimations.Idle, self._trove)
-	self._tracks.Sprint = loadTrack(animator, MovementAnimations.Sprint, self._trove)
+	self._tracks.Idle = loadTrack(animator, ANIMATIONS_ROOT, "Idle", self._trove)
+	self._tracks.Run = loadTrack(animator, ANIMATIONS_ROOT, "Run", self._trove)
+	self._tracks.Sprint = loadTrack(animator, ANIMATIONS_ROOT, "Sprint", self._trove)
 	for _, direction in DIRECTION_NAMES do
-		self._tracks["Walk_" .. direction] = loadTrack(animator, MovementAnimations.Walk[direction], self._trove)
-		self._tracks["Run_" .. direction] = loadTrack(animator, MovementAnimations.Run[direction], self._trove)
+		self._tracks["Walk_" .. direction] = loadTrack(animator, WALK_FOLDER, direction, self._trove)
 	end
 
 	self._trove:Connect(RunService.RenderStepped, function()
@@ -102,19 +141,32 @@ function LocomotionAnimator:_update()
 
 	if state == MovementStates.Idle then
 		key = "Idle"
+	elseif state == MovementStates.Run then
+		key = "Run"
 	elseif state == MovementStates.Sprint then
 		key = "Sprint"
-	elseif state == MovementStates.Walk or state == MovementStates.Run then
+	elseif state == MovementStates.Walk then
 		local moveIntent = self._inputController:GetMoveIntent()
 		if moveIntent.direction.Magnitude > 0 then
-			local facing = self._rootPart.CFrame.LookVector
-			local bucket = resolveDirectionBucket(facing, moveIntent.direction)
-			key = (if state == MovementStates.Walk then "Walk_" else "Run_") .. bucket
+			-- Bucketing only matters while the camera is locked to the character
+			-- (docs/MOVEMENT.md §4) -- unlocked, AutoRotate swings facing toward
+			-- movement direction gradually rather than snapping, and during that
+			-- swing the angle sweeps through several buckets in quick succession,
+			-- each one stopping/crossfading a new track (stutter, fixed
+			-- 2026-09-13). Unlocked, you're always facing where you walk by
+			-- definition, so there's nothing to bucket -- always Forward.
+			local locked = UserInputService.MouseBehavior == Enum.MouseBehavior.LockCenter
+			local bucket = "Forward"
+			if locked then
+				local facing = self._rootPart.CFrame.LookVector
+				bucket = resolveDirectionBucket(facing, moveIntent.direction)
+			end
+			key = "Walk_" .. bucket
 		end
 	end
-	-- Airborne, or Walk/Run with no move direction this frame: key stays nil,
-	-- fading out whatever was last playing. Jump/fall animations aren't part of
-	-- this pass -- add an Airborne clip here once one exists.
+	-- Airborne, or Walk with no move direction this frame: key stays nil, fading
+	-- out whatever was last playing. Jump/fall animations aren't part of this pass
+	-- -- add an Airborne clip here once one exists.
 
 	self:_playKey(key)
 end

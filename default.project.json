@@ -9,6 +9,15 @@
       },
       "Packages": {
         "$path": "Packages"
+      },
+      "Assets": {
+        "$className": "Folder",
+        "Animations": {
+          "$className": "Folder",
+          "Movement": {
+            "$path": "Assets/Animations/Movement.model.json"
+          }
+        }
       }
     },
     "ServerScriptService": {

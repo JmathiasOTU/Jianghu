@@ -46,6 +46,9 @@ local function toTuningStatePayload(constants: EffectiveMovementConstants)
 		jumpPower = constants.JumpPower,
 		sprintForwardDeadzone = constants.SprintForwardDeadzone,
 		speedToleranceMultiplier = constants.SpeedToleranceMultiplier,
+		crouchSpeed = constants.CrouchSpeed,
+		slideDecayRate = constants.SlideDecayRate,
+		slideJumpBoostAmount = constants.SlideJumpBoostAmount,
 	}
 end
 

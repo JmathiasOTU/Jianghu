@@ -19,6 +19,9 @@ export type TunableConstantName =
 	| "JumpPower"
 	| "SprintForwardDeadzone"
 	| "SpeedToleranceMultiplier"
+	| "CrouchSpeed"
+	| "SlideDecayRate"
+	| "SlideJumpBoostAmount"
 
 -- A named-field record (not a `{ [TunableConstantName]: number }` indexer
 -- type) specifically so consumers get plain dot-access
@@ -37,6 +40,9 @@ export type EffectiveMovementConstants = {
 	JumpPower: number,
 	SprintForwardDeadzone: number,
 	SpeedToleranceMultiplier: number,
+	CrouchSpeed: number,
+	SlideDecayRate: number,
+	SlideJumpBoostAmount: number,
 }
 
 -- Iteration order for the overlay's Tuning tab and for anything else that
@@ -50,6 +56,9 @@ local TUNABLE_NAMES: { TunableConstantName } = {
 	"JumpPower",
 	"SprintForwardDeadzone",
 	"SpeedToleranceMultiplier",
+	"CrouchSpeed",
+	"SlideDecayRate",
+	"SlideJumpBoostAmount",
 }
 
 -- Sanity bounds for RequestSetTuning (Server/Services/MovementTuningService.luau)
@@ -67,6 +76,9 @@ local VALID_RANGES: { [TunableConstantName]: { min: number, max: number } } = {
 	JumpPower = { min = 0, max = 500 },
 	SprintForwardDeadzone = { min = -1, max = 1 },
 	SpeedToleranceMultiplier = { min = 1, max = 10 },
+	CrouchSpeed = { min = 0, max = 500 },
+	SlideDecayRate = { min = 0.1, max = 500 },
+	SlideJumpBoostAmount = { min = 0, max = 500 },
 }
 
 local MovementTuning = {}
@@ -85,6 +97,9 @@ function MovementTuning.Defaults(): EffectiveMovementConstants
 		JumpPower = MovementConstants.JumpPower,
 		SprintForwardDeadzone = MovementConstants.SprintForwardDeadzone,
 		SpeedToleranceMultiplier = MovementConstants.SpeedToleranceMultiplier,
+		CrouchSpeed = MovementConstants.CrouchSpeed,
+		SlideDecayRate = MovementConstants.SlideDecayRate,
+		SlideJumpBoostAmount = MovementConstants.SlideJumpBoostAmount,
 	}
 end
 

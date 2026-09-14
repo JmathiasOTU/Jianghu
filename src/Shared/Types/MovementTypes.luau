@@ -24,9 +24,25 @@ export type MoveIntent = {
 -- `context` alone -- both client and server build `constants` from the exact
 -- same source (their own session's tuning state) before calling into
 -- StateRules, so this can never itself become a client/server divergence.
+-- `jumping` (docs/MOVEMENT.md §9, Crouch/Slide slice) is the Humanoid's own
+-- `Jumping` state, read the same way `grounded` already is -- both sides
+-- derive it from the same already-replicated `Humanoid:GetState()`, so it's a
+-- shared context field rather than something only one side computes.
+-- SlideJump's entry gate reads this (jump pressed while sliding), never a
+-- claim -- exactly like Airborne's own entry, no discrete gesture to earn.
+--
+-- `crouchHeld` is the one signal in this whole system that ISN'T derivable
+-- from anything Roblox already replicates (unlike `moveIntent`/`grounded`/
+-- `jumping`, all read off `Humanoid`) -- the server only has it because the
+-- client explicitly tells it (`RequestMovementTransition`'s "CrouchDown"/
+-- "CrouchUp" claims, docs/MOVEMENT.md §9), stored per-session
+-- (`PlayerSession.crouchHeld`) rather than derived fresh each frame the way
+-- everything else in this type is.
 export type MovementContext = {
 	moveIntent: MoveIntent,
 	grounded: boolean,
+	jumping: boolean,
+	crouchHeld: boolean,
 	runDuration: number?,
 	constants: MovementTuning.EffectiveMovementConstants,
 }

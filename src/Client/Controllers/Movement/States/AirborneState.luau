@@ -24,11 +24,22 @@ function AirborneState.Enter(_context: ClientMovementContext) end
 -- the state being left, RequestTransition has already committed to the next state
 -- (StateMachine.luau fires `changed` after updating `current`), so Exit can only
 -- ever be teardown, never the thing choosing where to land.
+--
+-- Extended 2026-09-14 (docs/MOVEMENT.md §9) with a third branch: landing
+-- while Ctrl is still held goes to CrouchWalk/CrouchIdle instead of Walk/Idle
+-- -- both directly reachable from Airborne (StateRules.Transitions), so this
+-- is a single-tick landing decision, not a Idle/Walk-then-Crouch cascade.
 function AirborneState.Update(_dt: number, context: ClientMovementContext)
 	if not context.grounded then
 		return
 	end
-	if StateRules.HasMoveInput(context) then
+	local hasInput = StateRules.HasMoveInput(context)
+	if context.crouchHeld then
+		context.fsm:RequestTransition(
+			if hasInput then MovementStates.CrouchWalk else MovementStates.CrouchIdle,
+			context
+		)
+	elseif hasInput then
 		context.fsm:RequestTransition(MovementStates.Walk, context)
 	else
 		context.fsm:RequestTransition(MovementStates.Idle, context)

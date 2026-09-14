@@ -27,7 +27,18 @@ opt write_checks = true
 -- docs/ARCHITECTURE.md §10 describing rate limits as declared here. Enforced
 -- instead via Shared/Util/RateLimiter.luau, wired into MovementValidationService
 -- when that lands in Step 2 -- see docs/MOVEMENT.md §5.
-type ClaimableMovementState = enum { "Run", "Sprint" }
+-- "CrouchDown"/"CrouchUp" (docs/MOVEMENT.md §10, Crouch/Slide slice) are
+-- DIFFERENT in kind from "Run"/"Sprint" -- they don't name an FSM target
+-- state being claimed, they name the Ctrl key's own press/release EDGE. This
+-- is deliberate: unlike Run/Sprint (whose claim IS the earned target state),
+-- a single Ctrl key resolves into up to four different states (CrouchIdle,
+-- CrouchWalk, Slide, or a crouched landing) depending on context the SERVER
+-- already re-derives every Heartbeat for Idle/Walk/Run/Sprint today --
+-- encoding a specific target name per edge would just duplicate that
+-- decision. The server only ever uses these two to set/clear one session
+-- flag (`PlayerSession.crouchHeld`); every resulting FSM transition is
+-- mirrored passively from it, the same way Idle<->Walk already is.
+type ClaimableMovementState = enum { "Run", "Sprint", "CrouchDown", "CrouchUp" }
 
 event RequestMovementTransition = {
 	from: Client,
@@ -43,7 +54,17 @@ event RequestMovementTransition = {
 -- of only ever showing the client's own (self-reported, untrustworthy) view. Only
 -- ever fired to the one player it describes (`Fire(player, data)`), never
 -- FireAll -- see docs/MOVEMENT.md.
-type DebugMovementState = enum { "Idle", "Walk", "Run", "Sprint", "Airborne" }
+type DebugMovementState = enum {
+	"Idle",
+	"Walk",
+	"Run",
+	"Sprint",
+	"Airborne",
+	"CrouchIdle",
+	"CrouchWalk",
+	"Slide",
+	"SlideJump",
+}
 
 -- One recent speed-sanity correction (Shared/Util/ViolationTracker.luau's
 -- per-key history, docs/MOVEMENT.md §8) -- the same flatDelta/maxDistance/
@@ -99,6 +120,9 @@ type TunableConstantName = enum {
 	"JumpPower",
 	"SprintForwardDeadzone",
 	"SpeedToleranceMultiplier",
+	"CrouchSpeed",
+	"SlideDecayRate",
+	"SlideJumpBoostAmount",
 }
 
 event RequestSetTuning = {
@@ -133,6 +157,9 @@ event TuningState = {
 		jumpPower: f32,
 		sprintForwardDeadzone: f32,
 		speedToleranceMultiplier: f32,
+		crouchSpeed: f32,
+		slideDecayRate: f32,
+		slideJumpBoostAmount: f32,
 	},
 }
 

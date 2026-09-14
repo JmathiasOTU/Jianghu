@@ -21,9 +21,14 @@ end
 -- requires nonzero move input, so releasing every key and attempting
 -- Sprint -> Run directly would fail CanEnter and leave the FSM stuck in Sprint --
 -- attempting Idle first, before checking `forward`, avoids that dead end.
+-- Crouch (docs/MOVEMENT.md §9) is checked before the no-input/backpedal
+-- checks -- pressing Ctrl while Sprinting slides immediately, same priority-
+-- over-the-normal-family reasoning as everywhere else this check appears.
 function SprintState.Update(_dt: number, context: ClientMovementContext)
 	if not context.grounded then
 		context.fsm:RequestTransition(MovementStates.Airborne, context)
+	elseif context.crouchHeld then
+		context.fsm:RequestTransition(MovementStates.Slide, context)
 	elseif not StateRules.HasMoveInput(context) then
 		context.fsm:RequestTransition(MovementStates.Idle, context)
 	elseif not context.moveIntent.forward then

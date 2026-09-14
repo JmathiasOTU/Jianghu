@@ -11,6 +11,10 @@ local MovementStates: { [string]: MovementState } = {
 	Run = Symbol("Run"),
 	Sprint = Symbol("Sprint"),
 	Airborne = Symbol("Airborne"),
+	CrouchIdle = Symbol("CrouchIdle"),
+	CrouchWalk = Symbol("CrouchWalk"),
+	Slide = Symbol("Slide"),
+	SlideJump = Symbol("SlideJump"),
 }
 
 return MovementStates

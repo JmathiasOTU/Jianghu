@@ -7,6 +7,7 @@ local Trove = require(ReplicatedStorage.Packages.Trove)
 local StateMachine = require(ReplicatedStorage.Shared.FSM.StateMachine)
 local MovementStates = require(ReplicatedStorage.Shared.FSM.MovementStates)
 local StateRules = require(ReplicatedStorage.Shared.Movement.StateRules)
+local CollisionGroups = require(ReplicatedStorage.Shared.Movement.CollisionGroups)
 
 local CharacterMover = require(script.CharacterMover)
 local InputController = require(script.InputController)
@@ -24,6 +25,10 @@ local WalkState = require(script.States.WalkState)
 local RunState = require(script.States.RunState)
 local SprintState = require(script.States.SprintState)
 local AirborneState = require(script.States.AirborneState)
+local CrouchIdleState = require(script.States.CrouchIdleState)
+local CrouchWalkState = require(script.States.CrouchWalkState)
+local SlideState = require(script.States.SlideState)
+local SlideJumpState = require(script.States.SlideJumpState)
 
 type MovementState = MovementStates.MovementState
 type ClientMovementContext = ClientMovementContextModule.ClientMovementContext
@@ -42,10 +47,20 @@ local States = {
 	[MovementStates.Run] = RunState,
 	[MovementStates.Sprint] = SprintState,
 	[MovementStates.Airborne] = AirborneState,
+	[MovementStates.CrouchIdle] = CrouchIdleState,
+	[MovementStates.CrouchWalk] = CrouchWalkState,
+	[MovementStates.Slide] = SlideState,
+	[MovementStates.SlideJump] = SlideJumpState,
 }
 
 -- Only Run/Sprint are earned, exploit-relevant transitions that need a server
--- claim (see docs/MOVEMENT.md §5) -- Idle/Walk/Airborne need no remote.
+-- claim naming the target STATE (see docs/MOVEMENT.md §5) -- Idle/Walk/Airborne
+-- need no remote. Crouch/Slide (docs/MOVEMENT.md §9) are claimed differently
+-- -- see the `input.CrouchChanged` connection below -- so they're deliberately
+-- NOT added here: unlike Run/Sprint, the client never claims "CrouchIdle"/
+-- "CrouchWalk"/"Slide" by name, it only tells the server whether Ctrl is held
+-- and lets mirrorPassiveTransitions derive the rest, the same way it already
+-- derives Idle<->Walk.
 local NETWORK_CLAIM_NAMES: { [MovementState]: "Run" | "Sprint" } = {
 	[MovementStates.Run] = "Run",
 	[MovementStates.Sprint] = "Sprint",
@@ -54,12 +69,16 @@ local NETWORK_CLAIM_NAMES: { [MovementState]: "Run" | "Sprint" } = {
 -- Symbol -> plain string name for the F4 debug overlay's DebugSnapshot
 -- (docs/MOVEMENT.md) -- the overlay has no reason to require MovementStates just
 -- to compare Symbols for display, a string is enough for a readout.
-local DEBUG_STATE_NAMES: { [MovementState]: string } = {
+local DEBUG_STATE_NAMES: { [MovementState]: Network.DebugMovementState } = {
 	[MovementStates.Idle] = "Idle",
 	[MovementStates.Walk] = "Walk",
 	[MovementStates.Run] = "Run",
 	[MovementStates.Sprint] = "Sprint",
 	[MovementStates.Airborne] = "Airborne",
+	[MovementStates.CrouchIdle] = "CrouchIdle",
+	[MovementStates.CrouchWalk] = "CrouchWalk",
+	[MovementStates.Slide] = "Slide",
+	[MovementStates.SlideJump] = "SlideJump",
 }
 
 -- How often the current Run/Sprint claim is re-sent while held, not just on the
@@ -110,6 +129,9 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 			JumpPower = value.jumpPower,
 			SprintForwardDeadzone = value.sprintForwardDeadzone,
 			SpeedToleranceMultiplier = value.speedToleranceMultiplier,
+			CrouchSpeed = value.crouchSpeed,
+			SlideDecayRate = value.slideDecayRate,
+			SlideJumpBoostAmount = value.slideJumpBoostAmount,
 		})
 		characterMover:SetJumpPower(value.jumpPower)
 	end))
@@ -132,18 +154,23 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 		return {
 			moveIntent = input:GetMoveIntent(),
 			grounded = characterMover:IsGrounded(),
+			jumping = characterMover:IsJumping(),
+			crouchHeld = input:IsCrouchHeld(),
 			runDuration = runDuration,
 			constants = TuningSnapshot.Get(),
 			characterMover = characterMover,
 			fsm = fsm,
+			slideSpeed = SlideState.GetCurrentSpeed(),
 		}
 	end
 
 	-- The FSM starts already in Idle, so no `changed` fires for it -- Enter has to
 	-- run once up front to stay symmetric with every later transition.
 	IdleState.Enter(buildContext())
+	CollisionGroups.Apply(character, MovementStates.Idle)
 
 	local lastClaimResyncAt = 0
+	local lastCrouchResyncAt = 0
 
 	local function fireClaim(claimName: "Run" | "Sprint")
 		Network.RequestMovementTransition.Fire(claimName)
@@ -159,6 +186,12 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 		-- this existing `fsm.changed` connection, not a new one.
 		DebugSnapshot.RecordTransition(DEBUG_STATE_NAMES[next])
 
+		-- Passability (docs/MOVEMENT.md §9): switched on every transition, not
+		-- gated on "did the group actually change" -- cheap enough, and
+		-- CollisionGroups.Apply itself just re-derives the same group name for
+		-- non-crouch states, so a redundant write here is harmless.
+		CollisionGroups.Apply(character, next)
+
 		local claimName = NETWORK_CLAIM_NAMES[next]
 		if claimName then
 			fireClaim(claimName)
@@ -169,12 +202,32 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 		fsm:RequestTransition(MovementStates.Run, buildContext())
 	end)
 
+	-- Crouch/Slide claim (docs/MOVEMENT.md §9): unlike Run/Sprint's claims
+	-- (which name the target FSM state), this only ever tells the server
+	-- whether Ctrl is held -- fired on the raw key edge, not on any FSM
+	-- transition, specifically so a Ctrl-press mid-air (anticipating a
+	-- crouched landing) reaches the server before the landing decision has to
+	-- be made, not after.
+	lifeTrove:Connect(input.CrouchChanged, function(held: boolean)
+		Network.RequestMovementTransition.Fire(if held then "CrouchDown" else "CrouchUp")
+		lastCrouchResyncAt = os.clock()
+	end)
+
 	lifeTrove:Connect(RunService.Heartbeat, function(dt: number)
 		States[fsm.current].Update(dt, buildContext())
 
 		local claimName = NETWORK_CLAIM_NAMES[fsm.current]
 		if claimName and os.clock() - lastClaimResyncAt >= CLAIM_RESYNC_INTERVAL_SECONDS then
 			fireClaim(claimName)
+		end
+
+		-- Periodic resync while Ctrl is held (same cadence, same self-healing
+		-- reasoning as Run/Sprint's own resync above) -- independent of
+		-- `fsm.current` on purpose, since the crouch flag matters even while
+		-- Airborne (see the mid-air comment above).
+		if input:IsCrouchHeld() and os.clock() - lastCrouchResyncAt >= CLAIM_RESYNC_INTERVAL_SECONDS then
+			Network.RequestMovementTransition.Fire("CrouchDown")
+			lastCrouchResyncAt = os.clock()
 		end
 
 		-- F4 debug overlay (docs/MOVEMENT.md) -- published every Heartbeat

@@ -164,6 +164,17 @@ function LocomotionAnimator.new(
 	self._tracks.Idle = loadTrack(animator, ANIMATIONS_ROOT, "Idle", self._trove)
 	self._tracks.Run = loadTrack(animator, ANIMATIONS_ROOT, "Run", self._trove)
 	self._tracks.Sprint = loadTrack(animator, ANIMATIONS_ROOT, "Sprint", self._trove)
+	-- CrouchIdle/CrouchWalk/Slide (docs/MOVEMENT.md §9): single non-directional
+	-- clips, same as Idle/Run/Sprint above -- read from ANIMATIONS_ROOT, not
+	-- WALK_FOLDER, even though they were first authored as stray children of the
+	-- Walk folder (moved out in Assets/Animations/Movement.model.json alongside
+	-- this fix; found and fixed together, since the animator never referenced
+	-- them under either name until now). SlideJump has no clip of its own --
+	-- it's a brief mid-air hop immediately followed by Airborne, which has none
+	-- either (see the Airborne comment below).
+	self._tracks.CrouchIdle = loadTrack(animator, ANIMATIONS_ROOT, "CrouchIdle", self._trove)
+	self._tracks.CrouchWalk = loadTrack(animator, ANIMATIONS_ROOT, "CrouchWalk", self._trove)
+	self._tracks.Slide = loadTrack(animator, ANIMATIONS_ROOT, "Slide", self._trove)
 	for _, direction in DIRECTION_NAMES do
 		self._tracks["Walk_" .. direction] =
 			loadTrack(animator, WALK_FOLDER, direction, self._trove)
@@ -186,6 +197,12 @@ function LocomotionAnimator:_update()
 		key = "Run"
 	elseif state == MovementStates.Sprint then
 		key = "Sprint"
+	elseif state == MovementStates.CrouchIdle then
+		key = "CrouchIdle"
+	elseif state == MovementStates.CrouchWalk then
+		key = "CrouchWalk"
+	elseif state == MovementStates.Slide then
+		key = "Slide"
 	elseif state == MovementStates.Walk then
 		local moveIntent = self._inputController:GetMoveIntent()
 		if moveIntent.direction.Magnitude > 0 then
@@ -205,9 +222,9 @@ function LocomotionAnimator:_update()
 			key = "Walk_" .. bucket
 		end
 	end
-	-- Airborne, or Walk with no move direction this frame: key stays nil, fading
-	-- out whatever was last playing. Jump/fall animations aren't part of this pass
-	-- -- add an Airborne clip here once one exists.
+	-- Airborne/SlideJump, or Walk with no move direction this frame: key stays
+	-- nil, fading out whatever was last playing. Jump/fall animations aren't
+	-- part of this pass -- add clips for these here once they exist.
 
 	self:_playKey(key)
 end

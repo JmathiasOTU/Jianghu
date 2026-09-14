@@ -26,6 +26,31 @@ local MovementConstants = {
 	-- SPEED_SANITY_DEBUG_LOGGING (`MovementValidationService.luau`).
 	SpeedToleranceMultiplier = 1.3,
 
+	-- Crouch/Slide (docs/MOVEMENT.md §9, Phase 1 slice 2) -- starting-point
+	-- values chosen the same way the original speed tiers were ("Fast & fluid,"
+	-- not yet playtested), not measured/tuned. All three flow through the live-
+	-- tuning layer (Shared/Movement/MovementTuning.luau) like every other value
+	-- above, so they're adjustable in Studio without a republish.
+	--
+	-- Half of WalkSpeed -- crouched movement should read as clearly slower than
+	-- upright walking, not just a cosmetic pose change.
+	CrouchSpeed = 9,
+	-- LINEAR decay (studs/s lost per second), not exponential: chosen because it
+	-- gives a slide a FIXED, predictable duration for a given entry speed
+	-- (duration = (entrySpeed - CrouchSpeed) / SlideDecayRate) -- a level
+	-- designer sizing a slide-gap or a player learning the feel can reason about
+	-- "how far does a Sprint-speed slide carry me" as a fixed number, where an
+	-- exponential decay's asymptotic "never quite reaches the target" curve
+	-- would make that same question depend on an arbitrarily-chosen cutoff
+	-- instead of a clean closed-form answer.
+	SlideDecayRate = 20,
+	-- Added to whatever speed Slide had decayed to at the moment of the jump
+	-- (docs/MOVEMENT.md §9), then clamped to SprintSpeed -- SlideJump reuses
+	-- the existing SprintSpeed ceiling rather than a new cap constant (same
+	-- ceiling Slide/Airborne already share), so the boost can never itself be
+	-- the reason a legitimate player gets rubber-banded.
+	SlideJumpBoostAmount = 10,
+
 	-- How forward-biased Sprint's continuation input must be to still count as
 	-- "sprinting forward" rather than a backpedal/pure-strafe demotion, expressed
 	-- as a dot-product threshold between facing and MoveDirection (1 = dead

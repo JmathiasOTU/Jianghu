@@ -35,6 +35,27 @@
       "Properties": {
         "AnimationId": "rbxassetid://115534453000728"
       }
+    },
+    {
+      "Name": "CrouchIdle",
+      "ClassName": "Animation",
+      "Properties": {
+        "AnimationId": "rbxassetid://103866147082035"
+      }
+    },
+    {
+      "Name": "CrouchWalk",
+      "ClassName": "Animation",
+      "Properties": {
+        "AnimationId": "rbxassetid://74749735884197"
+      }
+    },
+    {
+      "Name": "Slide",
+      "ClassName": "Animation",
+      "Properties": {
+        "AnimationId": "rbxassetid://110056936636927"
+      }
     }
   ]
 }

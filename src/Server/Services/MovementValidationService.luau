@@ -6,6 +6,7 @@ local RunService = game:GetService("RunService")
 local StateMachine = require(ReplicatedStorage.Shared.FSM.StateMachine)
 local MovementStates = require(ReplicatedStorage.Shared.FSM.MovementStates)
 local StateRules = require(ReplicatedStorage.Shared.Movement.StateRules)
+local CollisionGroups = require(ReplicatedStorage.Shared.Movement.CollisionGroups)
 local MovementTypes = require(ReplicatedStorage.Shared.Types.MovementTypes)
 local MovementConstants = require(ReplicatedStorage.Shared.Constants.MovementConstants)
 local MovementTuning = require(ReplicatedStorage.Shared.Movement.MovementTuning)
@@ -32,6 +33,10 @@ local DEBUG_STATE_NAMES: { [MovementState]: Network.DebugMovementState } = {
 	[MovementStates.Run] = "Run",
 	[MovementStates.Sprint] = "Sprint",
 	[MovementStates.Airborne] = "Airborne",
+	[MovementStates.CrouchIdle] = "CrouchIdle",
+	[MovementStates.CrouchWalk] = "CrouchWalk",
+	[MovementStates.Slide] = "Slide",
+	[MovementStates.SlideJump] = "SlideJump",
 }
 
 type PlayerSession = {
@@ -49,6 +54,13 @@ type PlayerSession = {
 	-- keyed to "landed from Airborne" specifically. See `effectiveMaxSpeed`.
 	previousState: MovementState?,
 	lastTransitionAt: number,
+	-- The one signal in this whole system with no natural replicated
+	-- equivalent (docs/MOVEMENT.md §9) -- set/cleared by the "CrouchDown"/
+	-- "CrouchUp" claims, never derived. Every resulting FSM consequence
+	-- (CrouchIdle/CrouchWalk/Slide entry and exit, crouched landing) is then
+	-- mirrored passively off this flag by `mirrorPassiveTransitions`, the same
+	-- way Idle<->Walk already is off `moveIntent`.
+	crouchHeld: boolean,
 }
 
 -- Rate limit for RequestMovementTransition, independent of the FSM's own legality
@@ -158,6 +170,8 @@ local function buildContext(session: PlayerSession): MovementContext
 			strafeRight = strafeRight,
 		},
 		grounded = isGrounded(session.humanoid:GetState()),
+		jumping = session.humanoid:GetState() == Enum.HumanoidStateType.Jumping,
+		crouchHeld = session.crouchHeld,
 		runDuration = runDuration,
 		constants = constants,
 	}
@@ -173,11 +187,33 @@ local function mirrorPassiveTransitions(session: PlayerSession)
 	local context = buildContext(session)
 	local current = session.fsm.current
 
+	-- Slide -> SlideJump -> Airborne (docs/MOVEMENT.md §9): reactive off the
+	-- same already-replicated Humanoid state Airborne's own entry already
+	-- reads (`context.jumping`) -- no claim needed, same reasoning as
+	-- Airborne itself. Checked before every other branch below since
+	-- `context.grounded` has ALREADY flipped false by the time `jumping`
+	-- reads true (both come from the same single `Humanoid:GetState()`), so
+	-- the generic "not grounded -> Airborne" branch further down would
+	-- otherwise catch this first and skip the boost entirely.
+	if current == MovementStates.Slide and context.jumping then
+		if session.fsm:RequestTransition(MovementStates.SlideJump, context) then
+			session.fsm:RequestTransition(MovementStates.Airborne, context)
+		end
+		return
+	end
+
 	if current == MovementStates.Airborne then
 		if context.grounded then
-			local target = if StateRules.HasMoveInput(context)
-				then MovementStates.Walk
-				else MovementStates.Idle
+			local hasInput = StateRules.HasMoveInput(context)
+			local target
+			-- Landing while Ctrl is held goes to the crouch-variant instead of
+			-- Idle/Walk (docs/MOVEMENT.md §9) -- a single-tick decision, same
+			-- as AirborneState.Update's own client-side landing logic.
+			if context.crouchHeld then
+				target = if hasInput then MovementStates.CrouchWalk else MovementStates.CrouchIdle
+			else
+				target = if hasInput then MovementStates.Walk else MovementStates.Idle
+			end
 			session.fsm:RequestTransition(target, context)
 		end
 		return
@@ -185,6 +221,72 @@ local function mirrorPassiveTransitions(session: PlayerSession)
 
 	if not context.grounded then
 		session.fsm:RequestTransition(MovementStates.Airborne, context)
+		return
+	end
+
+	if current == MovementStates.Slide then
+		-- Nominal decay estimate (docs/MOVEMENT.md §9): the server never
+		-- tracks Slide's exact real velocity -- its speed cap is a flat
+		-- SprintSpeed ceiling (see `maxSpeedForState`), not a simulated curve
+		-- -- this only estimates WHEN the client's own real decay should have
+		-- crossed CrouchSpeed, using the nominal tier `previousState` carried
+		-- in (Run's RunSpeed or Sprint's SprintSpeed) rather than a physics
+		-- read. Any drift between this estimate and the client's own
+		-- (velocity-based) decay is absorbed by the existing landing-momentum
+		-- grace (`effectiveMaxSpeed`) the instant this demotes into a
+		-- CrouchSpeed cap -- not a new, separate tolerance.
+		local entrySpeed = if session.previousState == MovementStates.Sprint
+			then context.constants.SprintSpeed
+			else context.constants.RunSpeed
+		local elapsed = os.clock() - session.lastTransitionAt
+		local decayedSpeed =
+			math.max(context.constants.CrouchSpeed, entrySpeed - context.constants.SlideDecayRate * elapsed)
+		if decayedSpeed <= context.constants.CrouchSpeed then
+			session.fsm:RequestTransition(
+				if StateRules.HasMoveInput(context) then MovementStates.CrouchWalk else MovementStates.CrouchIdle,
+				context
+			)
+		end
+		return
+	end
+
+	if current == MovementStates.CrouchIdle then
+		if not context.crouchHeld then
+			session.fsm:RequestTransition(
+				if StateRules.HasMoveInput(context) then MovementStates.Walk else MovementStates.Idle,
+				context
+			)
+		elseif StateRules.HasMoveInput(context) then
+			session.fsm:RequestTransition(MovementStates.CrouchWalk, context)
+		end
+		return
+	end
+
+	if current == MovementStates.CrouchWalk then
+		if not context.crouchHeld then
+			session.fsm:RequestTransition(
+				if StateRules.HasMoveInput(context) then MovementStates.Walk else MovementStates.Idle,
+				context
+			)
+		elseif not StateRules.HasMoveInput(context) then
+			session.fsm:RequestTransition(MovementStates.CrouchIdle, context)
+		end
+		return
+	end
+
+	-- From here on, `current` is one of Idle/Walk/Run/Sprint -- Crouch/Slide
+	-- takes priority over the ordinary family the instant Ctrl is held,
+	-- exactly the same priority every client state module's own Update
+	-- already gives it (docs/MOVEMENT.md §9).
+	if context.crouchHeld then
+		if current == MovementStates.Run or current == MovementStates.Sprint then
+			session.fsm:RequestTransition(MovementStates.Slide, context)
+			return
+		end
+		session.fsm:RequestTransition(
+			if StateRules.HasMoveInput(context) then MovementStates.CrouchWalk else MovementStates.CrouchIdle,
+			context
+		)
 		return
 	end
 
@@ -253,11 +355,24 @@ end
 -- (`AirborneState.Enter` is a no-op, per `AirborneState.luau`) -- whatever tier was
 -- active at takeoff carries into the jump -- so it's capped at the ceiling
 -- (SprintSpeed) rather than guessing which tier the player jumped from.
+-- Crouch/Slide additions (docs/MOVEMENT.md §9): CrouchIdle/CrouchWalk cap at
+-- CrouchSpeed, same "own dedicated tier" treatment as Walk/Run. Slide/
+-- SlideJump cap at the SprintSpeed ceiling -- same reasoning as Airborne's
+-- existing ceiling above: whatever tier was active before Sliding carries
+-- through, and SlideJump's boost is clamped client-side to this same ceiling
+-- (SlideJumpState.Enter) rather than needing a second cap here.
 local function maxSpeedForState(state: MovementState, constants: EffectiveMovementConstants): number
 	if state == MovementStates.Run then
 		return constants.RunSpeed
-	elseif state == MovementStates.Sprint or state == MovementStates.Airborne then
+	elseif
+		state == MovementStates.Sprint
+		or state == MovementStates.Airborne
+		or state == MovementStates.Slide
+		or state == MovementStates.SlideJump
+	then
 		return constants.SprintSpeed
+	elseif state == MovementStates.CrouchIdle or state == MovementStates.CrouchWalk then
+		return constants.CrouchSpeed
 	end
 	return constants.WalkSpeed
 end
@@ -311,6 +426,7 @@ local function createSession(player: Player, humanoid: Humanoid, rootPart: BaseP
 		speedCheckAt = os.clock(),
 		previousState = nil,
 		lastTransitionAt = os.clock(),
+		crouchHeld = false,
 	}
 
 	-- Reset the speed-sanity baseline on EVERY FSM transition, not just Sprint
@@ -338,6 +454,14 @@ local function createSession(player: Player, humanoid: Humanoid, rootPart: BaseP
 		session.previousState = previous
 		session.lastTransitionAt = now
 
+		-- Passability (docs/MOVEMENT.md §9): the SERVER's own copy, keyed off
+		-- its own mirrored state -- never the client's. This is the
+		-- authoritative copy every OTHER client's view of this character (and
+		-- the server's own collision awareness) is built from; the owning
+		-- client's identical, independent write in Movement/init.luau is only
+		-- for that client's own local physics simulation feel.
+		CollisionGroups.Apply(humanoid.Parent :: Model, next)
+
 		if SPEED_SANITY_DEBUG_LOGGING then
 			local constants = MovementTuningState.GetEffective(player)
 			local previousCap = maxSpeedForState(previous, constants)
@@ -356,6 +480,11 @@ local function createSession(player: Player, humanoid: Humanoid, rootPart: BaseP
 			end
 		end
 	end)
+
+	-- Matches the client's own initial call in Movement/init.luau -- the FSM
+	-- starts already in Idle, so no `changed` fires for it, and this session's
+	-- CollisionGroup needs setting up front for the same reason.
+	CollisionGroups.Apply(humanoid.Parent :: Model, MovementStates.Idle)
 
 	return session
 end
@@ -492,7 +621,7 @@ end
 -- claim Sprint without ever earning it. Legality is checked against this session's
 -- OWN runEnteredAt timestamp -- never anything the client sends -- same
 -- lag-compensation principle as parry (§4), applied to a locomotion transition.
-local function onRequestMovementTransition(player: Player, claim: "Run" | "Sprint")
+local function onRequestMovementTransition(player: Player, claim: Network.ClaimableMovementState)
 	local session = sessions[player]
 	if not session then
 		return
@@ -507,6 +636,21 @@ local function onRequestMovementTransition(player: Player, claim: "Run" | "Sprin
 			-- at enforceSpeedSanity, as the actual bug.
 			print(string.format("[SpeedSanity] %s RATE LIMITED claim=%s", player.Name, claim))
 		end
+		return
+	end
+
+	-- Crouch/Slide (docs/MOVEMENT.md §9): these two DON'T name an FSM target
+	-- state, unlike every other claim here -- they only set/clear this
+	-- session's own `crouchHeld` flag. No dwell timer, no FSM attempt at all;
+	-- `mirrorPassiveTransitions` (next Heartbeat) is what turns this into an
+	-- actual transition, the same way it already turns `moveIntent` into
+	-- Idle<->Walk. Simpler than Sprint's claim handling on purpose -- there's
+	-- no dwell-timestamp machinery to copy where it doesn't apply.
+	if claim == "CrouchDown" then
+		session.crouchHeld = true
+		return
+	elseif claim == "CrouchUp" then
+		session.crouchHeld = false
 		return
 	end
 
@@ -551,6 +695,11 @@ local function onRequestMovementTransition(player: Player, claim: "Run" | "Sprin
 end
 
 function MovementValidationService.Init()
+	-- One-time workspace setup (docs/MOVEMENT.md §9) -- collision group
+	-- definitions replicate to every client automatically once registered
+	-- here, so this never needs a client-side counterpart.
+	CollisionGroups.RegisterGroups()
+
 	Players.PlayerAdded:Connect(onPlayerAdded)
 	Players.PlayerRemoving:Connect(onPlayerRemoving)
 	for _, player in Players:GetPlayers() do

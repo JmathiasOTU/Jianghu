@@ -3,10 +3,11 @@
 Living design + implementation doc for the movement FSM. Update this as states get
 built, decisions change, or numbers get tuned — this is not a one-time spec.
 
-**Active build scope (Phase 1): Idle, Walk, Run, Sprint, Airborne (jump + fall).**
-None of these five are gated by stamina/Qinggong — that resource only matters for
-WallRun/ClimbVault/LedgeGrab/Slide, which aren't built yet. See **Deferred** at the
-bottom for a pointer, not a full spec.
+**Active build scope (Phase 1): Idle, Walk, Run, Sprint, Airborne, CrouchIdle,
+CrouchWalk, Slide, SlideJump — nine states.** None of these nine are gated by
+stamina/Qinggong — that resource only matters for WallRun/ClimbVault/LedgeGrab, which
+aren't built yet (see §9's own note on the unrelated "Slide" name-collision with
+**Deferred**'s spatial-claim group at the bottom — not a pointer to the same move).
 
 Movement is **strafe-style while the camera is locked to the character** (Shift
 Lock or first-person): facing decouples from movement direction, you face wherever
@@ -24,6 +25,7 @@ generous air control.
 | Core states (Step 2) | Done — 2026-09-13 | `Client/Controllers/Movement/{init,CharacterMover,InputController,ClientMovementContext}.luau`, `Client/Controllers/Movement/States/*.luau`, `Server/Services/MovementValidationService.luau` |
 | Facing + animation (Step 3) | Logic done 2026-09-13, **animations still needed** | `Client/Controllers/Movement/Presentation/{FacingController,LocomotionAnimator}.luau`, `Assets/Animations/Movement.model.json` |
 | Exploit + perf pass (Step 4) | Done — 2026-09-13 | `Server/Services/MovementValidationService.luau`, `Shared/Util/ViolationTracker.luau`, `Shared/Constants/MovementConstants.luau` |
+| Crouch/Slide/SlideJump (Step 5) | Done — 2026-09-14, **not yet playtested/tuned** | `Shared/FSM/MovementStates.luau`, `Shared/Movement/{StateRules,CollisionGroups}.luau`, `Client/Controllers/Movement/States/{CrouchIdleState,CrouchWalkState,SlideState,SlideJumpState}.luau`, `Server/Services/MovementValidationService.luau` — see §9 |
 
 ---
 
@@ -1016,11 +1018,209 @@ labeled placeholder, unchanged from when §8 first shipped it.
 
 ---
 
+## 9. Crouch, Slide, and Passability
+
+**Added 2026-09-14 — nine-state topology, not yet playtested/tuned.** The
+second slice of Phase 1's grounded-state work: `CrouchIdle`/`CrouchWalk` (Ctrl
+from Idle/Walk), `Slide` (Ctrl from Run/Sprint), and `SlideJump` (jump from
+Slide). Same rigor as everything above — server validation and a live-tunable
+constants path, not a client-trusted "just movement feel" shortcut — but the
+three new constants (`CrouchSpeed`/`SlideDecayRate`/`SlideJumpBoostAmount`,
+`Shared/Constants/MovementConstants.luau`) are starting-point values chosen
+the same way the original speed tiers were, **not measured or tuned against a
+real playtest** — flip `MovementValidationService.SPEED_SANITY_DEBUG_LOGGING`
+on and adjust from the F4 overlay's Tuning tab before trusting the feel.
+
+```
+Idle <──────────────> Walk           Run ──> Sprint
+ │  \                  │  \           │  \      │
+ │   > CrouchIdle <────┤   > CrouchWalk        Slide <── (Ctrl, either)
+ │        │  \         │        │  \            │  \
+ │        │   >────────┘        │   >───────────┘   > SlideJump ──> Airborne
+ v        v                     v                    v (jump)
+Airborne (landing: Ctrl-held routes to CrouchIdle/CrouchWalk instead of Idle/Walk)
+```
+
+Not a literal render of `StateRules.Transitions` (see that file for the exact
+edge lists) — just enough to show the two new families hang off Idle/Walk and
+Run/Sprint respectively, both landable-into directly from Airborne, and that
+`SlideJump` only ever exits into `Airborne`.
+
+**CrouchIdle/CrouchWalk mirror Idle/Walk exactly** — same split, same
+reasoning, just at `CrouchSpeed` instead of `WalkSpeed`, and both are directly
+reachable from Idle, Walk, *and* Airborne's own landing decision (not funneled
+through each other first) so a simultaneous Ctrl+W press or a Ctrl-held
+landing resolves in one tick, not a two-tick CrouchIdle-then-CrouchWalk
+cascade. "Can't jump while crouched" blocks the jump **input**, not
+`Airborne`'s reachability — a crouched player walking off a ledge is
+involuntary ground loss, not the jump action, and falls normally; only the
+input itself is blocked, via `CharacterMover:SetJumpBlocked`
+(`ContextActionService:BindAction` sinking `Enum.PlayerActions.CharacterJump`
+— Roblox's own documented way to disable the default `ControlModule`'s jump
+handling without touching `JumpPower`/`UseJumpPower`, so a later `SlideJump`
+boost, which drives off `WalkSpeed` carrying into a normal jump exactly like
+every other state's takeoff speed, is unaffected).
+
+**Slide inherits real velocity, decays linearly, and is not "held-for-as-long-
+as-Ctrl."** Once entered, releasing Ctrl mid-slide does **not** cancel it —
+Slide is a committed action that decays on its own via friction and only ever
+exits (to `CrouchWalk`/`CrouchIdle`, chosen by current move input) once decayed
+speed crosses `CrouchSpeed`; if Ctrl was already released by then, that
+resulting Crouch state's own next `Update` immediately notices and releases
+into `Walk`/`Idle` a tick later. `SlideState.Enter` reads
+`CharacterMover:GetSpeed()` (real flattened `AssemblyLinearVelocity`
+magnitude, not the nominal `RunSpeed`/`SprintSpeed` constant for whichever
+state Slide came from) specifically so residual-momentum transients — e.g.
+sliding right out of a landing — are inherited correctly rather than guessed
+at. Decay is **linear** (studs/s lost per second), not exponential — see
+`MovementConstants.SlideDecayRate`'s own comment for why: a fixed, closed-form
+slide duration (`(entrySpeed - CrouchSpeed) / SlideDecayRate`) is something a
+level designer sizing a gap, or a player learning the feel, can actually
+reason about, where an exponential curve's asymptotic "never quite reaches
+the target" would make the same question depend on an arbitrary cutoff
+instead. The server never simulates this curve for enforcement — see below.
+
+**SlideJump's own duration is intentionally one frame — it's not a parallel
+air-control implementation.** `SlideJumpState.Enter` applies the boost (clamped
+to the `SprintSpeed` ceiling — the same ceiling Slide/Airborne already share,
+so the boost can never itself be the reason a legitimate player gets rubber-
+banded, rather than left unbounded and relying on the landing-momentum grace
+from §5, which only helps when a cap *decreased*) and immediately requests
+`Airborne` in the same synchronous call. This works because `LemonSignal.Fire`
+(`Packages/LemonSignal`) dispatches connected callbacks via `task.spawn`, which
+runs to completion (or first yield) before returning — a `RequestTransition`
+called reentrantly from inside another transition's own `Enter` completes
+synchronously as long as nothing yields, which nothing here does. `Airborne`
+itself (gravity curve, partial air control, double jump) is entirely
+unmodified by this — it applies the same regardless of how the player got
+airborne, exactly as intended. Client and server detect the jump identically:
+both read `Humanoid:GetState() == Enum.HumanoidStateType.Jumping`
+(`context.jumping`, `Shared/Types/MovementTypes.luau`) — the same single
+Humanoid-state read `context.grounded` already uses, which is *why* `grounded`
+has always already flipped false by the time `jumping` reads true (a Humanoid
+is only ever one state at a time), and is exactly what lets `SlideJump` be
+distinguished from "slid off a ledge without jumping" (both otherwise look
+identical as "grounded → not grounded").
+
+**Network model: `crouchHeld` is fundamentally different from Run/Sprint's
+claims, and is claimed differently on purpose.** Run/Sprint's claim names the
+target STATE being earned, because the gesture (double-tap, dwell) has no
+other representation. Crouch has the opposite problem: WASD direction is
+reconstructable server-side from the already-replicated
+`humanoid.MoveDirection` (which is how Idle↔Walk have never needed a remote),
+but **"is Ctrl currently held" has no equivalent naturally-replicated
+signal** — the server only ever knows it because the client explicitly says
+so. Rather than extend `NETWORK_CLAIM_NAMES` with per-target-state claims
+(`"CrouchIdle"`/`"CrouchWalk"`/`"Slide"`, which would just duplicate the
+context-dependent decision `mirrorPassiveTransitions` already has to make for
+Idle/Walk/Run/Sprint every Heartbeat), `network.zap`'s `ClaimableMovementState`
+gained two claims that name the Ctrl key's own press/release **edge** instead:
+`"CrouchDown"`/`"CrouchUp"`. The server only ever uses these to set/clear one
+session flag (`PlayerSession.crouchHeld`); every resulting transition —
+CrouchIdle/CrouchWalk/Slide entry and exit, a crouched landing — is then
+mirrored passively off that flag by `mirrorPassiveTransitions`, the same way
+Idle↔Walk already is off `moveIntent`. This is a deliberate deviation from
+this doc's own literal precedent ("extend `NETWORK_CLAIM_NAMES`") because it
+solves a real correctness gap a literal per-state-claim design would have
+missed: fired from `InputController.CrouchChanged` (the raw key edge, not any
+`fsm.changed`), `"CrouchDown"` reaches the server even while `Airborne` —
+solving the mid-air-anticipation case, e.g. pressing Ctrl mid-jump so a
+crouched landing is decided correctly on the very tick you land, not a tick
+after. `"CrouchDown"` also gets the same periodic-resync-while-held treatment
+as Run/Sprint (`CLAIM_RESYNC_INTERVAL_SECONDS`, self-healing against a dropped
+packet); `"CrouchUp"` deliberately doesn't need it — released is a one-shot,
+Reliable-transport claim into a target (`Idle`/`Walk`, deterministic, no
+dwell-timer race the way Sprint's boundary-timing claim has) that can't
+plausibly fail the one time it's sent, unlike a timeout-implied release (which
+was seriously considered and rejected: it would leave the server's mirror
+stuck at the *lower* Crouch cap for up to a timeout window after a real
+release, which is exactly the false-positive rubber-banding class this whole
+doc has fought since §5 — an explicit signal has none of that risk).
+`onRequestMovementTransition`'s handling of these two is correspondingly
+simpler than Sprint's — no dwell-timestamp machinery, just a boolean flip.
+
+The server never simulates Slide's exact decay curve for enforcement — its
+speed cap (`maxSpeedForState`) is a **flat `SprintSpeed` ceiling** for both
+`Slide` and `SlideJump`, same reasoning as `Airborne`'s existing ceiling
+(whatever tier was active before carries through, rather than guessing). For
+deciding *when* to passively demote `Slide → CrouchWalk/CrouchIdle`,
+`mirrorPassiveTransitions` estimates the same decay nominally — using
+`session.previousState` to infer the entry tier (`RunSpeed` or `SprintSpeed`)
+and `session.lastTransitionAt` for elapsed time — rather than tracking real
+velocity. Any drift between this estimate and the client's own (real,
+velocity-based) decay is absorbed by the *existing* landing-momentum grace
+(`effectiveMaxSpeed`, §5) the instant the mirror's cap actually tightens to
+`CrouchSpeed` — deliberately not a second, separate tolerance.
+
+**Passability via Roblox CollisionGroups, not R6 rig resizing.**
+`Shared/Movement/CollisionGroups.luau` defines two groups (`"Character"`,
+`"CharacterCrouched"`) and a shared `GroupForState` predicate covering exactly
+`CrouchIdle`/`CrouchWalk`/`Slide`/`SlideJump` — R6 has no supported scaling
+API, and hand-editing Motor6D offsets to shrink the rig would fight
+`docs/ARCHITECTURE.md`'s "R6 only" stance for no real benefit. Registration
+(`PhysicsService:RegisterCollisionGroup`) happens once, server-side only, in
+`MovementValidationService.Init()` — collision group definitions replicate to
+every client automatically, no client-side counterpart needed. The actual
+per-character group is applied **independently on both sides**, each keyed off
+that side's own mirrored FSM state (never a client-reported flag): the owning
+client's write is what actually matters for that client's own local physics
+simulation (fitting through a low gap is resolved locally, since the owning
+client simulates its own character's physics), while the server's write is the
+authoritative copy every other client's view is built from. This makes
+passability a state-gated property exactly like a speed tier — and, like
+`enforceSpeedSanity`'s own `AutoRotate`-unlocked gap documented in §5, this has
+a symmetric, accepted gap of its own: a modified client could falsely claim
+`"CrouchDown"` to shrink its own hitbox and attempt to clip through
+crouch-only geometry it hasn't actually earned. Deliberately left as a
+documented, low-stakes exposure rather than a blocker for this pass — unlike a
+speed hack, there's no sustained advantage (no ongoing extra speed or state to
+exploit repeatedly), the worst case is clipping through one obstacle once, and
+no actual crouch-gated level geometry exists yet to clip through in the first
+place. Revisit if real level geometry built on this ever makes that
+worth closing.
+
+**Naming note — this "Slide" is not the one in Deferred.** Deferred (below)
+lists "WallRun / ClimbVault / LedgeGrab / Slide" as a Stage 2, Qinggong/stamina-
+gated spatial-claim group needing a custom `LinearVelocity`/`VectorForce`
+mover. The `Slide` built in this section is a different, simpler Phase 1 move —
+plain `WalkSpeed`-driven like every other state here, no stamina gate, no
+custom mover — that happens to share the same name. If Stage 2's own slide
+move still needs building later, it needs a different name (e.g. `SlideUnder`)
+to avoid colliding with this `MovementStates.Slide` Symbol.
+
+**Bug found and fixed 2026-09-14 — CrouchIdle/CrouchWalk/Slide never
+animated, which read as "can't crouch-walk."** `LocomotionAnimator.luau` was
+never updated when these three states landed — its `_update()` only ever
+matched `Idle`/`Run`/`Sprint`/`Walk`, so `CrouchIdle`/`CrouchWalk`/`Slide` (and
+`SlideJump`) always fell through to a nil animation key: no clip, no error,
+just silently fading to nothing. Compounded by the animations themselves being
+placed as stray children of the `Walk` folder in
+`Assets/Animations/Movement.model.json` (alongside the 8 directional clips)
+rather than top-level entries like `Idle`/`Run`/`Sprint` — even a
+`LocomotionAnimator` fix would have looked in the wrong place. This produced a
+second, separate-looking symptom: pressing W while `CrouchIdle` appeared not to
+do anything, because the FSM *was* correctly transitioning into `CrouchWalk`
+(`StateRules.Transitions`/`CanEnter` were always correct — verified directly,
+neither needed a change) but nothing on screen changed to show it, since
+neither state had ever had a working animation to switch to in the first
+place. Fixed by moving `CrouchIdle`/`CrouchWalk`/`Slide` to top-level
+`Animation` instances (matching `Idle`/`Run`/`Sprint`'s pattern) and adding the
+three missing `loadTrack` calls plus their `_update()` branches.
+`SlideJump` still has no clip of its own, same as `Airborne` — both are brief,
+already covered by "add a clip here once one exists."
+
+---
+
 ## Deferred (designed earlier, not part of this build)
 
 - **WallRun / ClimbVault / LedgeGrab / Slide** — spatial-claim states needing a
   custom `LinearVelocity`/`VectorForce` mover layer, throttled sanity raycasts, and a
   full predict-then-validate-with-lag-compensation network loop per transition.
+  **Naming collision, see §9's own note:** the `Slide` built in §9
+  (`MovementStates.Slide`) is a different, simpler Phase 1 move — plain
+  `WalkSpeed`-driven, no stamina gate, no custom mover — that happens to share
+  this name. If this deferred spatial slide still gets built later, give it a
+  different Symbol name (e.g. `SlideUnder`) rather than reusing `Slide`.
 - **Qinggong / stamina resource** — gates those four states only, never Walk/Run/
   Sprint. Server-owned like a cooldown: client predicts locally for UI, server drains
   on use and regens, reconciles the client's copy. Worth deciding when you get here:

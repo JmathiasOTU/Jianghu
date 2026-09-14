@@ -13,7 +13,13 @@ type MoveIntent = MovementTypes.MoveIntent
 
 export type InputController = {
 	RunRequested: LemonSignal.Signal<()>,
+	-- Fires the Ctrl key's own press/release EDGE (docs/MOVEMENT.md §9) --
+	-- `true` on press, `false` on release -- not a per-frame poll. Distinct
+	-- from `RunRequested`'s "()" shape since Crouch's claim needs to know
+	-- WHICH edge just happened, not just that Ctrl was touched.
+	CrouchChanged: LemonSignal.Signal<boolean>,
 	GetMoveIntent: (self: InputController) -> MoveIntent,
+	IsCrouchHeld: (self: InputController) -> boolean,
 	Destroy: (self: InputController) -> (),
 }
 
@@ -35,12 +41,14 @@ function InputController.new(): InputController
 	local self = setmetatable({}, InputController) :: any
 	self._trove = Trove.new()
 	self.RunRequested = self._trove:Add(LemonSignal.new(), "Destroy")
+	self.CrouchChanged = self._trove:Add(LemonSignal.new(), "Destroy")
 
 	self._forward = false
 	self._backward = false
 	self._strafeLeft = false
 	self._strafeRight = false
 	self._lastWPressAt = nil :: number?
+	self._crouchHeld = false
 
 	self._trove:Connect(
 		UserInputService.InputBegan,
@@ -48,6 +56,15 @@ function InputController.new(): InputController
 			if gameProcessedEvent then
 				return
 			end
+
+			if input.KeyCode == Enum.KeyCode.LeftControl then
+				if not self._crouchHeld then
+					self._crouchHeld = true
+					self.CrouchChanged:Fire(true)
+				end
+				return
+			end
+
 			local axis = KEY_TO_AXIS[input.KeyCode]
 			if not axis then
 				return
@@ -72,6 +89,14 @@ function InputController.new(): InputController
 	self._trove:Connect(
 		UserInputService.InputEnded,
 		function(input: InputObject, _gameProcessedEvent: boolean)
+			if input.KeyCode == Enum.KeyCode.LeftControl then
+				if self._crouchHeld then
+					self._crouchHeld = false
+					self.CrouchChanged:Fire(false)
+				end
+				return
+			end
+
 			local axis = KEY_TO_AXIS[input.KeyCode]
 			if not axis then
 				return
@@ -113,6 +138,10 @@ function InputController:GetMoveIntent(): MoveIntent
 		strafeLeft = strafeLeft,
 		strafeRight = strafeRight,
 	}
+end
+
+function InputController:IsCrouchHeld(): boolean
+	return self._crouchHeld
 end
 
 function InputController:Destroy()

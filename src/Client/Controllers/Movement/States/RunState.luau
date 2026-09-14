@@ -24,10 +24,16 @@ end
 
 -- "Continuously in Run for N seconds" reads as uninterrupted (docs/MOVEMENT.md §2):
 -- losing the ground or losing input resets the dwell clock via Exit, it never
--- pauses and resumes.
+-- pauses and resumes. Crouch (docs/MOVEMENT.md §9) is checked before the
+-- Sprint attempt -- pressing Ctrl while Running slides instead of continuing
+-- to build toward Sprint, exactly the same priority-over-the-normal-family
+-- reasoning as Idle/Walk's own crouch checks, just landing in Slide instead
+-- of a Crouch variant since Run has no move-input ambiguity to resolve here.
 function RunState.Update(_dt: number, context: ClientMovementContext)
 	if not context.grounded then
 		context.fsm:RequestTransition(MovementStates.Airborne, context)
+	elseif context.crouchHeld then
+		context.fsm:RequestTransition(MovementStates.Slide, context)
 	elseif not StateRules.HasMoveInput(context) then
 		context.fsm:RequestTransition(MovementStates.Idle, context)
 	else

@@ -21,7 +21,7 @@
         "Font": "Gotham",
         "TextSize": 12,
         "TextColor3": [0.35, 0.68, 0.75],
-        "ZIndex": 10
+        "ZIndex": 0
       },
       "Children": [
         {
@@ -48,7 +48,7 @@
         "BackgroundColor3": [0.086, 0.094, 0.114],
         "BorderSizePixel": 0,
         "Visible": false,
-        "ZIndex": 10
+        "ZIndex": 0
       },
       "Children": [
         {

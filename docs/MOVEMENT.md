@@ -759,28 +759,55 @@ existing instances — it never constructs a single UI element.
   clearly labeled placeholder — nothing to wire up until that system exists.
 
 **Bug found 2026-09-13, real cause found 2026-09-14 — the panel went blank a
-moment after opening.** First suspected `CanvasGroup` (used for a
-`GroupTransparency` fade in/out): it composites its entire subtree into a single
-cached texture, and seemed not to re-render that texture against this panel's own
-Heartbeat-driven `TextLabel.Text` updates. Switched `Panel` to a plain `Frame`
-with a `Position` slide instead — but the exact same "flashes correct, then
-blank" symptom reproduced identically on the slide, and again on a third attempt
-(per-element `TextTransparency`/`BackgroundTransparency` tweening, no
-`CanvasGroup` involved at all). Three unrelated animation techniques producing an
-identical symptom was the tell that the animation was never the bug.
+moment after opening.** A long investigation with several wrong turns, kept here
+in full because each wrong turn is a real trap worth not falling into twice:
 
-The real cause: the F4 handler toggled on every `UserInputService.InputBegan` for
-that `KeyCode`, with no debounce against the key itself. Holding F4 for even a
-moment (e.g. to take a screenshot of the panel) can fire a **second**
-`InputBegan` for the same physical press via OS key-repeat — which immediately
-toggled the panel closed again a fraction of a second after it opened. Every
-prior "fix" was correctly re-solving a problem that didn't exist while leaving
-the actual bug untouched. Fixed by tracking whether `F4` is currently held
-(`f4Held`, set on `InputBegan`, cleared on `InputEnded`) and only toggling on the
-transition into held, not on every `InputBegan` while held. Kept the per-element
-fade from the third attempt (asked for on its own merits — "it was clean") since
-it's a strictly more robust technique than `CanvasGroup` regardless of whether
-the caching theory was ever the real issue.
+1. First suspected `CanvasGroup` (used for a `GroupTransparency` fade in/out): it
+   composites its entire subtree into a single cached texture, and seemed not to
+   re-render that texture against this panel's own Heartbeat-driven
+   `TextLabel.Text` updates. Switched `Panel` to a plain `Frame` with a
+   `Position` slide instead — the exact same "flashes correct, then blank"
+   symptom reproduced identically.
+2. Suspected the F4 handler was double-toggling on OS key-repeat (no debounce
+   against the key itself — only against `isOpen`). Added `f4Held`
+   tracking. Real playtest logs (`setOpen`/`playFade`/`InputBegan`/`InputEnded`
+   all instrumented with prints) proved this theory *wrong*: a single F4 press
+   produced exactly one `InputBegan`, one `setOpen(true)`, one `playFade(true)`,
+   and no close call at all — yet the panel still went blank. Three unrelated
+   animation techniques (`CanvasGroup` fade, `Position` slide, per-element
+   `TextTransparency`/`BackgroundTransparency` tweening) and a debounce fix all
+   producing the identical symptom was the actual tell that neither the
+   animation nor the toggle logic was ever the bug.
+3. **The real cause: `Panel` had `ZIndex = 10` (so it would draw above its
+   sibling `CornerTab`), while every descendant inside it was left at the
+   default `ZIndex = 1`.** Live property inspection during a blank episode
+   confirmed every single property on the affected `TextLabel`s was correct —
+   `TextTransparency = 0`, correct `TextColor3`, correct `Text`, `Visible =
+   true` — proving the bug was never in this controller's logic at all, only in
+   rendering order. With a `ZIndexBehavior` that resolves a parent's own
+   background against the whole tree rather than strictly against its own
+   children, a parent's higher `ZIndex` than its descendants can make that
+   parent's opaque background paint *over* its own children. That's exactly
+   why every fix "flashed correct, then went blank" regardless of technique:
+   during the fade-in, `Panel`'s own background was still transparent (nothing
+   to obscure), and the moment it finished tweening to fully opaque, it drew
+   over everything inside it. Confirmed by manually forcing
+   `Panel.BackgroundTransparency = 1` live in Studio — the "hidden" panel
+   background stopped painting over its children, and all text reappeared.
+
+Fixed by setting `ZIndex = 0` on both `CornerTab` and `Panel` — explicitly below
+every descendant's default `ZIndex = 1`, guaranteeing children always draw on top
+regardless of `ZIndexBehavior` mode — rather than pushing every descendant's
+`ZIndex` above the container instead. The two containers are never visible at the
+same time (this controller always hides one when showing
+the other), so neither ever needed to out-rank the other in the first place.
+Kept the per-element fade from step 1's third attempt (asked for back on its own
+merits — "it was clean") and the `f4Held` debounce from step 2 (harmless, and
+real insurance against a genuine double-press) since both are strictly
+correct/more-robust code regardless of not having been the actual bug, plus
+per-target `pcall` isolation around the fade's property writes and
+`TweenService:Create` calls so one bad target can never silently take out every
+target after it in the loop again.
 
 ---
 

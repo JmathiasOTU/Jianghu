@@ -165,43 +165,60 @@ function DebugOverlayController.Init()
 	local function playFade(open: boolean)
 		if not fadeTargets then
 			fadeTargets = collectFadeTargets(panel)
-			print(string.format("[DebugOverlay] collectFadeTargets found %d targets", #fadeTargets))
 		end
 		local targets = fadeTargets :: { FadeTarget }
-		print(string.format("[DebugOverlay] playFade(%s) -- %d targets", tostring(open), #targets))
 
 		if open then
 			-- Snap every element fully transparent the instant `panel.Visible`
 			-- flips true, so the fade-in tween below has something to fade FROM --
 			-- otherwise the panel would flash its fully-opaque baked-in look for one
-			-- frame before the tween catches up.
+			-- frame before the tween catches up. Isolated per-target (not one bare
+			-- loop) for the same reason as the tween loop below -- one bad
+			-- assignment shouldn't silently skip snapping every target after it.
 			for _, target in targets do
-				(target.instance :: any)[target.property] = 1
+				local ok, err = pcall(function()
+					(target.instance :: any)[target.property] = 1
+				end)
+				if not ok then
+					warn(
+						string.format(
+							"[DebugOverlay] snap-to-hidden failed for %s.%s: %s",
+							target.instance:GetFullName(),
+							target.property,
+							tostring(err)
+						)
+					)
+				end
 			end
 		end
 
+		-- Isolated per-target, not one bare loop over all of them (found
+		-- 2026-09-14 while chasing the blank-panel investigation): a single
+		-- TweenService:Create/property-write failure partway through would
+		-- otherwise silently abort the whole loop, leaving every remaining target
+		-- un-tweened with no error visible anywhere near the actual cause.
 		for _, target in targets do
 			local goal = if open then target.visibleValue else 1
-			TweenService:Create(target.instance :: Instance, TWEEN_INFO, {
-				[target.property] = goal,
-			}):Play()
+			local ok, err = pcall(function()
+				TweenService:Create(target.instance :: Instance, TWEEN_INFO, {
+					[target.property] = goal,
+				}):Play()
+			end)
+			if not ok then
+				warn(
+					string.format(
+						"[DebugOverlay] tween failed for %s.%s: %s",
+						target.instance:GetFullName(),
+						target.property,
+						tostring(err)
+					)
+				)
+			end
 		end
 	end
 
 	local function setOpen(open: boolean)
-		-- TEMPORARY diagnostic (docs/MOVEMENT.md) -- remove once the repeated-close
-		-- bug is actually found. Prints every call so we can see exactly how many
-		-- times this fires, and from what isOpen state, on a single F4 press.
-		print(
-			string.format(
-				"[DebugOverlay] setOpen(%s) -- isOpen was %s",
-				tostring(open),
-				tostring(isOpen)
-			)
-		)
-
 		if open == isOpen then
-			print("[DebugOverlay] setOpen: no-op, already in that state")
 			return
 		end
 		isOpen = open
@@ -232,16 +249,6 @@ function DebugOverlayController.Init()
 	trove:Connect(
 		UserInputService.InputBegan,
 		function(input: InputObject, gameProcessedEvent: boolean)
-			if input.KeyCode == TOGGLE_KEY then
-				print(
-					string.format(
-						"[DebugOverlay] F4 InputBegan -- gameProcessedEvent=%s f4Held=%s UserInputState=%s",
-						tostring(gameProcessedEvent),
-						tostring(f4Held),
-						tostring(input.UserInputState)
-					)
-				)
-			end
 			if gameProcessedEvent then
 				return
 			end
@@ -254,7 +261,6 @@ function DebugOverlayController.Init()
 
 	trove:Connect(UserInputService.InputEnded, function(input: InputObject)
 		if input.KeyCode == TOGGLE_KEY then
-			print("[DebugOverlay] F4 InputEnded")
 			f4Held = false
 		end
 	end)

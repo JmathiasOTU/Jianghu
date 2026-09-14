@@ -55,7 +55,9 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 	local rootPart = character:WaitForChild("HumanoidRootPart") :: BasePart
 
 	local characterMover = lifeTrove:Add(CharacterMover.new(humanoid))
-	local fsm = lifeTrove:Add(StateMachine.new(MovementStates.Idle, StateRules.Transitions, StateRules.CanEnter))
+	local fsm = lifeTrove:Add(
+		StateMachine.new(MovementStates.Idle, StateRules.Transitions, StateRules.CanEnter)
+	)
 
 	-- Presentation: purely cosmetic, never touched by states or the FSM (they only
 	-- read it) -- docs/MOVEMENT.md §3/§4.
@@ -63,7 +65,9 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 	lifeTrove:Add(LocomotionAnimator.new(humanoid, rootPart, fsm, input))
 
 	local function buildContext(): ClientMovementContext
-		local runDuration = if fsm.current == MovementStates.Run then RunState.GetDuration() else nil
+		local runDuration = if fsm.current == MovementStates.Run
+			then RunState.GetDuration()
+			else nil
 		return {
 			moveIntent = input:GetMoveIntent(),
 			grounded = characterMover:IsGrounded(),

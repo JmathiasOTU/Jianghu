@@ -11,7 +11,7 @@ local MovementTypes = require(ReplicatedStorage.Shared.Types.MovementTypes)
 type MoveIntent = MovementTypes.MoveIntent
 
 export type InputController = {
-	RunRequested: LemonSignal.Signal<>,
+	RunRequested: LemonSignal.Signal<()>,
 	GetMoveIntent: (self: InputController) -> MoveIntent,
 	Destroy: (self: InputController) -> (),
 }
@@ -41,34 +41,43 @@ function InputController.new(): InputController
 	self._strafeRight = false
 	self._lastWPressAt = nil :: number?
 
-	self._trove:Connect(UserInputService.InputBegan, function(input: InputObject, gameProcessedEvent: boolean)
-		if gameProcessedEvent then
-			return
-		end
-		local axis = KEY_TO_AXIS[input.KeyCode]
-		if not axis then
-			return
-		end
-		(self :: any)["_" .. axis] = true
+	self._trove:Connect(
+		UserInputService.InputBegan,
+		function(input: InputObject, gameProcessedEvent: boolean)
+			if gameProcessedEvent then
+				return
+			end
+			local axis = KEY_TO_AXIS[input.KeyCode]
+			if not axis then
+				return
+			end
+			(self :: any)["_" .. axis] = true
 
-		if input.KeyCode == Enum.KeyCode.W then
-			local now = os.clock()
-			if self._lastWPressAt and now - self._lastWPressAt <= MovementConstants.RunDoubleTapWindowSeconds then
-				self.RunRequested:Fire()
-				self._lastWPressAt = nil
-			else
-				self._lastWPressAt = now
+			if input.KeyCode == Enum.KeyCode.W then
+				local now = os.clock()
+				if
+					self._lastWPressAt
+					and now - self._lastWPressAt <= MovementConstants.RunDoubleTapWindowSeconds
+				then
+					self.RunRequested:Fire()
+					self._lastWPressAt = nil
+				else
+					self._lastWPressAt = now
+				end
 			end
 		end
-	end)
+	)
 
-	self._trove:Connect(UserInputService.InputEnded, function(input: InputObject, _gameProcessedEvent: boolean)
-		local axis = KEY_TO_AXIS[input.KeyCode]
-		if not axis then
-			return
+	self._trove:Connect(
+		UserInputService.InputEnded,
+		function(input: InputObject, _gameProcessedEvent: boolean)
+			local axis = KEY_TO_AXIS[input.KeyCode]
+			if not axis then
+				return
+			end
+			(self :: any)["_" .. axis] = false
 		end
-		(self :: any)["_" .. axis] = false
-	end)
+	)
 
 	return self
 end

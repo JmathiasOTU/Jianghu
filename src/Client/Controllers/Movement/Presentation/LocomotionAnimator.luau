@@ -27,7 +27,8 @@ local DIRECTION_NAMES: { string } =
 -- Resolved once at module load, not per-life: this content is static and always
 -- synced before any character exists, so there's no reason to re-look it up on
 -- every respawn.
-local ANIMATIONS_ROOT = ReplicatedStorage:WaitForChild("Assets"):WaitForChild("Animations"):WaitForChild("Movement")
+local ANIMATIONS_ROOT =
+	ReplicatedStorage:WaitForChild("Assets"):WaitForChild("Animations"):WaitForChild("Movement")
 local WALK_FOLDER = ANIMATIONS_ROOT:WaitForChild("Walk")
 
 export type LocomotionAnimator = {
@@ -72,7 +73,12 @@ end
 -- version-controlled and editable in Studio instead of hardcoded strings. A missing
 -- child (timeout) or one nobody's authored yet (blank AnimationId) are both treated
 -- as "not ready" and skipped, exactly like the old nil-string check did.
-local function loadTrack(animator: Animator, container: Instance, name: string, trove: Trove.Trove): AnimationTrack?
+local function loadTrack(
+	animator: Animator,
+	container: Instance,
+	name: string,
+	trove: Trove.Trove
+): AnimationTrack?
 	local animation = container:WaitForChild(name, ANIMATION_LOOKUP_TIMEOUT_SECONDS) :: Animation?
 	if not animation or animation.AnimationId == "" then
 		return nil
@@ -125,7 +131,8 @@ function LocomotionAnimator.new(
 	self._tracks.Run = loadTrack(animator, ANIMATIONS_ROOT, "Run", self._trove)
 	self._tracks.Sprint = loadTrack(animator, ANIMATIONS_ROOT, "Sprint", self._trove)
 	for _, direction in DIRECTION_NAMES do
-		self._tracks["Walk_" .. direction] = loadTrack(animator, WALK_FOLDER, direction, self._trove)
+		self._tracks["Walk_" .. direction] =
+			loadTrack(animator, WALK_FOLDER, direction, self._trove)
 	end
 
 	self._trove:Connect(RunService.RenderStepped, function()

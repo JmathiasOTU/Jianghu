@@ -392,11 +392,23 @@ as originally designed.
 
 **Resolved 2026-09-13 — Run is not directional.** Corrected after Step 3 first
 shipped Run as an 8-directional set mirroring Walk: Run only ever has one
-animation, played regardless of facing-relative angle, same as `Sprint`. Both
+animation, played regardless of facing-relative angle. Both
 `Assets/Animations/Movement.model.json` (Run is a single `Animation` instance, not
 a folder of 8) and `LocomotionAnimator` (Run maps straight to a `"Run"` key,
 skipping `resolveDirectionBucket` entirely) were updated to match. Only `Walk`
 remains directional.
+
+This is a **temporary animation-pass simplification, not a structural equivalence
+to `Sprint`** (corrected 2026-09-13 — the original wording here claimed "same as
+Sprint," which overstates it): `Sprint`'s forward-bias is *actively enforced* —
+`SprintState.Update` demotes to `Run` on backpedal or pure strafe, and (as of the
+server-side fix above) `MovementValidationService` now enforces that same demotion
+independently. `Run.CanEnter` has no directional restriction at all — it's
+identical to `Walk`'s (`grounded and hasMoveInput`), and nothing demotes out of
+`Run` based on movement direction. The single-clip treatment here is purely because
+no real animations exist yet either way, not because Run and Sprint share a
+gameplay rule. If Run ever gets a real forward-only demotion rule of its own,
+that's a separate gameplay-feel decision — not implied by this entry.
 
 **Resolved 2026-09-13 — real instances, not a data-table duplicate.** Originally
 built as `Shared/Constants/MovementAnimations.luau`, a plain Luau table of
@@ -482,16 +494,73 @@ are mirrored passively every Heartbeat straight off `Humanoid:GetState()` and
 claim handler, so an unclaimed client can never end up mirrored as either no matter
 what its `MoveDirection` says.
 
-**Known simplification:** the server has no per-axis input (only
-`Humanoid.MoveDirection`'s aggregate vector), so it can't replicate the client's
-exact Sprint→Run backpedal rule (§2) — a player who strafes without backpedaling
-could, in principle, leave the server mirror in `Sprint` a moment longer than the
-client's own local state. This isn't a real gap in practice: the client re-fires
-`RequestMovementTransition("Run")` on *every* transition into `Run`, including this
-one (`init.luau`'s `changed` handler fires the claim for any transition landing on
-`Run`, not just the double-tap path), which corrects the server's mirror via the
-same validated path a moment later. Revisit if Step 4's speed/delta-position sanity
-check ever needs the mirror to be exact rather than eventually-consistent.
+**Exploit fixed 2026-09-13 — Sprint's backpedal demotion is now enforced
+server-side, not assumed via the client's reclaim.** This used to be written up as
+a "known simplification": the server had no per-axis input, only
+`Humanoid.MoveDirection`'s aggregate vector, so it couldn't replicate
+`SprintState.Update`'s exact backpedal/pure-strafe demotion — the stated reasoning
+was that this was fine because the client re-fires `RequestMovementTransition("Run")`
+on every transition into `Run`, correcting the server's mirror "a moment later."
+
+That reasoning only holds for a well-behaved client. It does not hold against the
+threat model `docs/ARCHITECTURE.md` §3 ("The Client Is a Liar") is built around: a
+modified client has no obligation to ever send that reclaim. Left as-is, a hacked
+client could earn `Sprint` once and then hold it indefinitely in any direction —
+including standing in place with trivial nonzero input — since nothing server-side
+ever re-checked the demotion condition on its own initiative.
+
+Fixed by giving `MovementValidationService` real geometric intent classification
+instead of hardcoded `false`s: `buildContext` now derives `forward`/`backward`/
+`strafeLeft`/`strafeRight` from the sign of `rootPart.CFrame.LookVector`'s dot/cross
+product with `humanoid.MoveDirection` (`classifyMoveIntent`, same sign convention as
+`LocomotionAnimator.resolveDirectionBucket`) — both server-trusted replicated state,
+not anything the client asserts. `mirrorPassiveTransitions` then actively demotes
+`Sprint -> Run` on the server's own initiative, every Heartbeat, whenever that
+classification says `forward` is false — the same condition `SprintState.Update`
+uses client-side, just computed from a different (server-trustworthy) signal, since
+raw WASD key state itself never replicates. This is additive: the existing
+"no input at all -> Idle" and "not grounded -> Airborne" branches are unchanged.
+
+**Exploit fixed 2026-09-13 — the server-side Sprint demotion above didn't reset
+`runEnteredAt`, so a client that skipped the "Run" reclaim could instantly
+re-earn Sprint.** `RunState.Enter` resets the client's own dwell clock on *every*
+entry into `Run`, including landing there via a `Sprint` backpedal demotion — a
+legitimate client can never regain `Sprint` without a fresh, uninterrupted 3
+seconds in `Run`, no matter how it got there. The server-side demotion added
+above didn't mirror that: it moved `session.fsm.current` back to `Run` but left
+`session.runEnteredAt` untouched, still holding the timestamp from *before*
+`Sprint` was ever entered. A modified client that claims `Sprint` again shortly
+after being demoted — skipping the "Run" reclaim a well-behaved client always
+sends — would have its `runDuration` computed against that stale timestamp and
+pass the dwell check instantly, off elapsed time it never actually spent
+continuously in `Run`. Fixed by resetting `session.runEnteredAt = os.clock()`
+at the moment the server-side demotion succeeds, matching `RunState.Enter`'s
+own behavior exactly.
+
+**Resolved 2026-09-13 — the promised speed/delta-position sanity check is now
+built.** §5 always described this as part of the client/server model, but Steps
+1–3 never actually implemented it — `MovementValidationService` only mirrored FSM
+*legality*, with no check on the character's actual physical movement at all. A
+classic speed hack (setting `Humanoid.WalkSpeed` directly, bypassing the FSM and
+`RequestMovementTransition` entirely) would have gone completely undetected.
+Fixed with `enforceSpeedSanity`, run once per session every Heartbeat but
+internally throttled to fire only every `MovementConstants.SpeedCheckIntervalSeconds`
+(0.5s) — sampling every raw Heartbeat was tried first and rejected, because a
+network-owning client's `CFrame` replicates to the server in bursts, not evenly
+per frame, so a frame-to-frame delta false-positived on ordinary replication
+jitter well before it caught anything real. Horizontal (`X`/`Z`) displacement over
+that interval is compared against `maxSpeedForState(session.fsm.current) * elapsed
+* MovementConstants.SpeedToleranceMultiplier` (1.3x grace for the same jitter plus
+latency) — deliberately keyed off the **server's own mirrored FSM state**, never
+`humanoid.WalkSpeed` as reported, since that property is exactly what a speed hack
+overwrites. `Airborne` has no tier of its own (`AirborneState.Enter` is a no-op —
+whatever speed was active at takeoff carries into the jump), so it's capped at
+the ceiling (`SprintSpeed`) rather than guessing which tier the player jumped
+from. Vertical motion is excluded entirely — this check has no business policing
+gravity. A violation snaps the root part's horizontal position back to the last
+sampled one (rotation and current height preserved) — a rubber-band correction,
+not a kick or a log; revisit if repeated corrections turn out to need a stronger
+response (e.g. actually kicking repeat offenders).
 
 ---
 
@@ -524,9 +593,18 @@ check ever needs the mirror to be exact rather than eventually-consistent.
    `Assets/Animations/Movement.model.json` ships with every `AnimationId` blank;
    fill in real Walk/Run/Sprint/Idle IDs from Studio's property panel once those
    animations are uploaded — no code change needed to pick them up.
-4. **Exploit + perf pass** — server-side speed/delta-position sanity check audit,
-   the Sprint-timestamp legality check specifically, the rate-limit gap above,
-   `Trove` audit, `os.clock()` audit.
+4. **Exploit + perf pass** — ✅ done 2026-09-13. Server-side speed/delta-position
+   sanity check built (`MovementValidationService.enforceSpeedSanity`, previously
+   never implemented despite §5 describing it); Sprint-timestamp legality check
+   audited and one real gap fixed (`runEnteredAt` wasn't reset on server-side
+   Sprint→Run demotion, letting a client that skipped the "Run" reclaim instantly
+   re-earn Sprint off a stale timestamp); rate-limit gap already resolved in Step 2
+   (`RateLimiter`, wired in `MovementValidationService`), reconfirmed still wired
+   correctly; `Trove` audit — every stateful client/server object
+   (`FacingController`, `LocomotionAnimator`, `CharacterMover`, `InputController`,
+   `StateMachine`, both FSM instances) owns exactly one, torn down at the right
+   boundary, nothing leaked; `os.clock()` audit — zero `tick()` usages anywhere in
+   `src/`.
 
 ---
 

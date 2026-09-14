@@ -11,6 +11,16 @@ local MovementConstants = {
 	RunSpeed = 28,
 	SprintSpeed = 40,
 	JumpPower = 55,
+
+	-- MovementValidationService's server-side speed/delta-position sanity check
+	-- (docs/MOVEMENT.md §5, Step 4): sampled over this interval rather than every
+	-- Heartbeat, to smooth over normal CFrame-replication jitter from the
+	-- network-owning client.
+	SpeedCheckIntervalSeconds = 0.5,
+	-- Grace multiplier on top of the current tier's speed cap for that same
+	-- replication jitter plus latency -- not a gameplay value, tune only if the
+	-- sanity check false-positives or lets real speed hacks slip through.
+	SpeedToleranceMultiplier = 1.3,
 }
 
 return MovementConstants

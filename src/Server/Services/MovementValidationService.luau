@@ -43,6 +43,12 @@ type PlayerSession = {
 	runEnteredAt: number?,
 	speedCheckPosition: Vector3,
 	speedCheckAt: number,
+	-- Landing-momentum grace (docs/MOVEMENT.md §5, added 2026-09-14): the state
+	-- this session was in immediately before its most recent transition, and
+	-- when that transition happened -- generic over which transition, never
+	-- keyed to "landed from Airborne" specifically. See `effectiveMaxSpeed`.
+	previousState: MovementState?,
+	lastTransitionAt: number,
 }
 
 -- Rate limit for RequestMovementTransition, independent of the FSM's own legality
@@ -57,6 +63,19 @@ local TRANSITION_CLAIMS_PER_SECOND = 5
 -- deleted) since Stage 2's WallRun/etc. validation will want the same kind of
 -- capture again.
 local SPEED_SANITY_DEBUG_LOGGING = false
+
+-- Sized from a real 2026-09-14 playtest capture (docs/MOVEMENT.md §5), not a
+-- guess: every landing sample showed the FIRST `enforceSpeedSanity` check after
+-- an Airborne->Walk transition firing at elapsed ~0.50-0.517s (just the normal
+-- check cadence) and never a second correction after it -- the whole residual-
+-- momentum transient decays back under the new cap within that first window,
+-- it just needs grace that actually covers it. One `SpeedCheckIntervalSeconds`
+-- of grace (the original placeholder) was already expired BY the time that
+-- first check ran (elapsed >= grace), which is why it measured zero
+-- protection. Two intervals comfortably covers the observed ~0.5-0.517s first
+-- check with margin, without over-granting a second window nothing in the
+-- capture ever showed a need for.
+local LANDING_MOMENTUM_GRACE_SECONDS = 2 * MovementConstants.SpeedCheckIntervalSeconds
 
 local MovementValidationService = {}
 
@@ -223,40 +242,6 @@ local function mirrorPassiveTransitions(session: PlayerSession)
 	end
 end
 
-local function createSession(player: Player, humanoid: Humanoid, rootPart: BasePart): PlayerSession
-	local fsm = StateMachine.new(MovementStates.Idle, StateRules.Transitions, StateRules.CanEnter)
-	local session: PlayerSession = {
-		player = player,
-		humanoid = humanoid,
-		rootPart = rootPart,
-		fsm = fsm,
-		rateLimiter = RateLimiter.new(TRANSITION_CLAIMS_PER_SECOND, 1),
-		runEnteredAt = nil,
-		speedCheckPosition = rootPart.Position,
-		speedCheckAt = os.clock(),
-	}
-
-	-- Reset the speed-sanity baseline on EVERY FSM transition, not just Sprint
-	-- entry (found during the 2026-09-13 rubber-banding investigation): any
-	-- transition can change `maxSpeedForState`'s cap, and Humanoid's WalkSpeed
-	-- changes are not instant -- its ground controller accelerates/decelerates
-	-- toward the new target over a real, documented handful of frames, it doesn't
-	-- snap velocity immediately (docs/ARCHITECTURE.md §9's own example of an
-	-- acceptable tolerance is exactly this class of thing). A window that
-	-- straddles a transition boundary would compare a mix of old- and new-tier
-	-- motion against only the new tier's cap -- most sharply on a large drop
-	-- (Sprint/Airborne -> Walk on landing), where residual momentum can still
-	-- exceed the new, much lower cap for a moment. Starting the window fresh at
-	-- the boundary sidesteps needing to quantify that transient's length at all,
-	-- rather than padding `SpeedToleranceMultiplier` to guess-cover it.
-	fsm.changed:Connect(function()
-		session.speedCheckPosition = rootPart.Position
-		session.speedCheckAt = os.clock()
-	end)
-
-	return session
-end
-
 -- WalkSpeed is the ground-truth cap Roblox's own Humanoid:Move() enforces for a
 -- well-behaved client, but WalkSpeed itself is just a replicated property the
 -- network-owning client (the player, for their own character) can set directly --
@@ -275,6 +260,104 @@ local function maxSpeedForState(state: MovementState, constants: EffectiveMoveme
 		return constants.SprintSpeed
 	end
 	return constants.WalkSpeed
+end
+
+-- Landing-momentum grace (docs/MOVEMENT.md §5, added 2026-09-14): distinct from
+-- `createSession`'s existing per-transition baseline reset below, which only
+-- ever fixed windows that straddled a transition boundary (mixing old- and
+-- new-tier motion in one sample). This fixes a DIFFERENT case -- a window
+-- entirely AFTER a transition, already in the new state, still measuring real
+-- residual momentum: Humanoid's ground controller decelerates toward a lower
+-- WalkSpeed target over a real, documented handful of frames rather than
+-- snapping instantly, and that tail can genuinely exceed the new tier's cap for
+-- a moment (most sharply landing from Sprint/Airborne down into Walk).
+--
+-- Keyed generically off "the cap decreased at the last transition," never off
+-- "coming from Airborne" or "going to Walk" specifically -- `session.previousState`
+-- is whatever state was active immediately before, so Stage 2's WallRun/
+-- ClimbVault/LedgeGrab/Slide (all of which will exit into Airborne or Walk with
+-- their own residual momentum) get this grace for free the moment their own cap
+-- is taught to `maxSpeedForState`, with no separate copy of this fix needed.
+local function effectiveMaxSpeed(session: PlayerSession, constants: EffectiveMovementConstants): number
+	local currentCap = maxSpeedForState(session.fsm.current, constants)
+	local previousState = session.previousState
+	if not previousState then
+		return currentCap
+	end
+
+	local previousCap = maxSpeedForState(previousState, constants)
+	if previousCap <= currentCap then
+		-- The cap went up or stayed the same -- there's no residual-momentum
+		-- tail to grace here, only ever downward transitions produce one.
+		return currentCap
+	end
+
+	if os.clock() - session.lastTransitionAt < LANDING_MOMENTUM_GRACE_SECONDS then
+		return previousCap
+	end
+	return currentCap
+end
+
+local function createSession(player: Player, humanoid: Humanoid, rootPart: BasePart): PlayerSession
+	local fsm = StateMachine.new(MovementStates.Idle, StateRules.Transitions, StateRules.CanEnter)
+	local session: PlayerSession = {
+		player = player,
+		humanoid = humanoid,
+		rootPart = rootPart,
+		fsm = fsm,
+		rateLimiter = RateLimiter.new(TRANSITION_CLAIMS_PER_SECOND, 1),
+		runEnteredAt = nil,
+		speedCheckPosition = rootPart.Position,
+		speedCheckAt = os.clock(),
+		previousState = nil,
+		lastTransitionAt = os.clock(),
+	}
+
+	-- Reset the speed-sanity baseline on EVERY FSM transition, not just Sprint
+	-- entry (found during the 2026-09-13 rubber-banding investigation): any
+	-- transition can change `maxSpeedForState`'s cap, and Humanoid's WalkSpeed
+	-- changes are not instant -- its ground controller accelerates/decelerates
+	-- toward the new target over a real, documented handful of frames, it doesn't
+	-- snap velocity immediately (docs/ARCHITECTURE.md §9's own example of an
+	-- acceptable tolerance is exactly this class of thing). A window that
+	-- straddles a transition boundary would compare a mix of old- and new-tier
+	-- motion against only the new tier's cap -- most sharply on a large drop
+	-- (Sprint/Airborne -> Walk on landing), where residual momentum can still
+	-- exceed the new, much lower cap for a moment. Starting the window fresh at
+	-- the boundary sidesteps needing to quantify that transient's length at all,
+	-- rather than padding `SpeedToleranceMultiplier` to guess-cover it.
+	fsm.changed:Connect(function(next: MovementState, previous: MovementState)
+		local now = os.clock()
+		session.speedCheckPosition = rootPart.Position
+		session.speedCheckAt = now
+
+		-- Landing-momentum grace bookkeeping (see `effectiveMaxSpeed` below) --
+		-- just records what state this session was in and when, regardless of
+		-- which states are involved; `effectiveMaxSpeed` is what decides whether
+		-- that's actually a cap decrease worth gracing.
+		session.previousState = previous
+		session.lastTransitionAt = now
+
+		if SPEED_SANITY_DEBUG_LOGGING then
+			local constants = MovementTuningState.GetEffective(player)
+			local previousCap = maxSpeedForState(previous, constants)
+			local newCap = maxSpeedForState(next, constants)
+			if previousCap > newCap then
+				print(
+					string.format(
+						"[SpeedSanity] %s %s -> %s, cap %.1f -> %.1f, grace window started",
+						player.Name,
+						tostring(previous),
+						tostring(next),
+						previousCap,
+						newCap
+					)
+				)
+			end
+		end
+	end)
+
+	return session
 end
 
 -- Lightweight anti-noclip/speed-hack net (docs/MOVEMENT.md §5): not a full
@@ -306,9 +389,7 @@ local function enforceSpeedSanity(session: PlayerSession, constants: EffectiveMo
 	local position = session.rootPart.Position
 	local previous = session.speedCheckPosition
 	local flatDelta = Vector3.new(position.X - previous.X, 0, position.Z - previous.Z)
-	local maxDistance = maxSpeedForState(session.fsm.current, constants)
-		* elapsed
-		* constants.SpeedToleranceMultiplier
+	local maxDistance = effectiveMaxSpeed(session, constants) * elapsed * constants.SpeedToleranceMultiplier
 
 	if flatDelta.Magnitude > maxDistance then
 		-- Unconditional (not gated behind SPEED_SANITY_DEBUG_LOGGING below): every
@@ -434,7 +515,22 @@ local function onRequestMovementTransition(player: Player, claim: "Run" | "Sprin
 
 	if session.fsm:RequestTransition(claimedState, context) then
 		if claimedState == MovementStates.Run then
-			session.runEnteredAt = os.clock()
+			-- Backdated by half this player's measured RTT (docs/MOVEMENT.md §5,
+			-- fixed 2026-09-14) -- the claim carrying this instant already reached
+			-- the server late, so stamping raw receipt time skews the server's
+			-- dwell clock later than the client's own, which used to land a
+			-- legitimate first Sprint claim right on the 3s boundary (near-even
+			-- odds of rejection from jitter alone) instead of comfortably past it.
+			local ping = player:GetNetworkPing()
+			-- Guards `GetNetworkPing()` returning 0 (no sample yet -- e.g. this is
+			-- the very first claim right after spawn) or an implausibly large
+			-- reading: capped at half of `SprintThresholdSeconds` so a bad reading
+			-- here can never backdate far enough to let Sprint be claimed with
+			-- little to no real Run dwell.
+			local backdateSeconds = if ping > 0
+				then math.min(ping / 2, context.constants.SprintThresholdSeconds / 2)
+				else 0
+			session.runEnteredAt = os.clock() - backdateSeconds
 		elseif SPEED_SANITY_DEBUG_LOGGING and context.runDuration then
 			-- The server only ever sees "Sprint" claimed once its OWN runEnteredAt
 			-- says the dwell is satisfied, so this is never negative -- it's purely

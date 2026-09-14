@@ -648,6 +648,106 @@ record; not a punishment system, just a log for something to check later, and
 built to be reused as-is by WallRun/ClimbVault/LedgeGrab/Slide's validators once
 Stage 2 starts.
 
+**Fixed 2026-09-14 — Run→Sprint dwell-clock skew, reproduced regardless of
+connection quality.** `RunState.Enter` (client) sets its local dwell clock and
+fires the "Run" claim in the same instant, but `session.runEnteredAt` (server)
+only starts once that claim actually arrives — some nonzero time later no
+matter how good the connection is. The client self-transitions into `Sprint`
+locally at exactly local-3.000s and immediately fires the "Sprint" claim; by the
+time that reaches the server, its dwell clock (started later) reads right at
+the 3.000s boundary rather than comfortably past it, so ordinary jitter had
+close to even odds of rejecting that first Sprint claim. This is a *skew* bug,
+not a *magnitude* one — it's about landing exactly on the boundary, so it
+reproduced identically on a fast connection and a slow one, only the size of
+the jitter window differed. Rejected, the mirror stayed in `Run` (the lower
+cap) for up to `CLAIM_RESYNC_INTERVAL_SECONDS` while the player was already
+genuinely moving at `Sprint` speed, and `enforceSpeedSanity` flagged it —
+visually indistinguishable from the 2026-09-13 rubber-banding investigation
+above, but a different root cause.
+
+Fixed in `onRequestMovementTransition`'s Run-claim branch: backdate
+`session.runEnteredAt` by half this player's measured RTT
+(`player:GetNetworkPing() / 2`) instead of stamping raw receipt time — the same
+lag-compensation principle `docs/ARCHITECTURE.md` §4 already applies to parry,
+compensating with a server-computed estimate, never anything the client
+asserts about its own timing. Guarded against `GetNetworkPing()` returning `0`
+(no sample yet — e.g. the very first claim right after spawn) or an
+implausibly large reading: the backdate is capped at half of this session's
+`SprintThresholdSeconds`, so a bad reading here can never backdate far enough
+to let `Sprint` be claimed with little to no real `Run` dwell.
+
+**Added 2026-09-14 — landing-momentum grace, a general mechanism (not an
+Airborne-specific patch).** Distinct from the 2026-09-13 fix that resets
+`enforceSpeedSanity`'s sampling window on every `fsm.changed` (which only ever
+fixed windows that straddled a transition boundary, mixing old- and new-tier
+motion in one sample). This is a different failure: a window entirely AFTER a
+transition, already in the new state, still measuring real residual
+momentum — `Humanoid`'s ground controller decelerates toward a lower
+`WalkSpeed` target over a real, documented handful of frames rather than
+snapping instantly, and that tail can genuinely exceed the new tier's cap for a
+moment (most sharply landing from `Sprint`/`Airborne` down into `Walk` while
+still holding forward). Exactly the class of thing `docs/ARCHITECTURE.md` §9
+permits a tolerance for — "a specific, measured, documented engine behavior" —
+so it has to be measured, not guessed.
+
+`PlayerSession` now tracks `previousState`/`lastTransitionAt`, set alongside
+the existing baseline reset in `fsm.changed`. A new `effectiveMaxSpeed(session,
+constants)` (`MovementValidationService.luau`) compares `maxSpeedForState` for
+`previousState` against the current state: if the previous cap was HIGHER and
+the transition happened within `LANDING_MOMENTUM_GRACE_SECONDS`,
+`enforceSpeedSanity` measures against that higher (previous) cap instead of
+snapping to the stricter one immediately — a step function, not a smooth
+decay, sized to however long the real transient measured in step 1 below
+actually lasts. Keyed generically off **"the cap decreased at the last
+transition,"** never off "coming from Airborne" or "going to Walk"
+specifically — this is deliberate so Stage 2's WallRun/ClimbVault/LedgeGrab/
+Slide, all of which will exit into `Airborne` or `Walk` with their own residual
+momentum, get this grace for free the moment their own cap is taught to
+`maxSpeedForState`, with no separate copy of this fix needed per state.
+
+**Measured 2026-09-14 — real playtest capture, `LANDING_MOMENTUM_GRACE_SECONDS`
+sized from it.** With `SPEED_SANITY_DEBUG_LOGGING` on, repeatedly sprinting,
+jumping, and landing while still holding forward produced four clean
+`Airborne -> Walk` samples (cap 40.0 -> 18.0 each time):
+
+| landing -> first check | elapsed | flatDelta | maxDistance (new cap) | 2nd correction? |
+|---|---|---|---|---|
+| +0.500s | 0.500 | 12.64 | 11.70 | none |
+| +0.517s | 0.517 | 13.09 | 12.09 | none |
+| +0.515s | 0.515 | 13.13 | 12.04 | none |
+| +0.501s | 0.501 | 12.61 | 11.73 | none |
+
+Two things this data settled: (1) the first `enforceSpeedSanity` check after a
+landing always fires at elapsed ≈0.50-0.517s — just the normal
+`SpeedCheckIntervalSeconds` cadence — and every printed `maxDistance` in that
+first check matched `WalkSpeed * elapsed * SpeedToleranceMultiplier` exactly,
+which means the original placeholder grace (one `SpeedCheckIntervalSeconds`,
+0.5s) had **already expired by the time that first check ran** (`elapsed >=
+grace` the instant the check fires) — it was measuring zero actual protection,
+not a slightly-too-short one. (2) None of the four landings produced a second
+correction after the first snap-back — the whole residual-momentum transient
+is contained inside that one first window; by the second window (~1.0s post-
+landing) real velocity is already back under the new cap on its own, with no
+evidence a longer grace was ever needed.
+
+`LANDING_MOMENTUM_GRACE_SECONDS` set to `2 * SpeedCheckIntervalSeconds` (1.0s)
+accordingly — comfortably covers the observed ~0.5-0.517s first check with
+margin, without over-granting a second window's worth of grace the capture
+never showed a need for. `SPEED_SANITY_DEBUG_LOGGING` flipped back to `false`
+per this file's own established pattern.
+
+**Noted, not fixed, out of scope for this pass** — the same capture also
+showed two `state=Run` corrections (flatDelta 19.52/18.34 vs. a `RunSpeed`-cap
+maxDistance of 18.82/18.20) with no preceding "grace window started" print,
+several seconds after the nearest landing — too late to be that landing's own
+residual momentum, and no cap-decreasing transition logged immediately before
+either one. This doesn't match either bug fixed today; it looks like the
+already-documented "§5 residual gap" above (a modified-or-unlocked-camera
+client holding Sprint-tier speed while mirrored as Run, via the `AutoRotate`
+gate on the server-side backpedal demotion) rather than a new issue. Left
+as-is and cross-referenced here rather than silently ignored — revisit if it
+turns out to reproduce reliably rather than being that already-accepted gap.
+
 ---
 
 ## 6. Implementation Steps

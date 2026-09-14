@@ -714,6 +714,76 @@ Stage 2 starts.
 
 ---
 
+## 8. Debug Tooling
+
+**Added 2026-09-13, rebuilt 2026-09-14 — F4 developer debug overlay.** Per
+`docs/ARCHITECTURE.md` §8, the panel itself is a hand-authored, checked-in Rojo
+instance tree — `Assets/UI/MovementDebugOverlay.model.json`, mounted at
+`StarterGui.MovementDebugOverlay` — same `$className`/`Properties`/`Children`
+approach as `Assets/Animations/Movement.model.json`, verified against the real
+`rojo build` before any consuming code was written. `Client/Controllers/DebugOverlayController.luau`
+only ever `WaitForChild`s into it and sets `.Text`/`.Visible`/`.TextColor3` on
+existing instances — it never constructs a single UI element.
+
+- **Client state**: read from `Client/Controllers/Movement/DebugSnapshot.luau`, a
+  small published-state module `Movement/init.luau` writes to every Heartbeat
+  (state name, grounded, `Run` duration, flattened `AssemblyLinearVelocity`
+  magnitude) — `DebugOverlayController` polls it rather than reaching into
+  `MovementController` directly (`docs/ARCHITECTURE.md` §2).
+- **Server state**: `MovementValidationService.broadcastDebugState` fires a new
+  `MovementDebugState` event (`network.zap`, `Server -> Client`, `Unreliable`,
+  restricted to the owning player and only ever sent to developers at all) every
+  Heartbeat with the session's mirrored `fsm.current`, `Run` duration, and current
+  `ViolationTracker` count. The panel visually flags client/server disagreement —
+  the whole point of the panel, given this doc's own rubber-banding investigation
+  above — by recoloring the server state value and showing a dedicated mismatch
+  label whenever the two differ.
+- **Teleport tool**: coordinate entry or click-a-point-in-workspace (a
+  `Workspace:Raycast` from the mouse), firing `RequestDevTeleport` (`network.zap`,
+  `Client -> Server`) like any other remote — never a raw `RemoteEvent`. Authorized
+  by `Shared/Constants/DeveloperAllowlist.luau` (`RunService:IsStudio()` or a
+  hardcoded `UserId` allowlist), checked **first** in `DevToolsService`'s handler,
+  before anything else runs — client-side overlay visibility uses the exact same
+  check, but is never the actual security boundary. Also rate-limited via the
+  shared `RateLimiter`, same as every other player-initiated remote (§5).
+  Teleporting bypasses normal Humanoid movement entirely, so
+  `MovementValidationService.enforceSpeedSanity` would otherwise measure it as an
+  impossible jump and snap the player straight back on the next sample — fixed by
+  a new `Server/Events/CharacterTeleported.luau` signal `DevToolsService` fires
+  after a successful teleport, which `MovementValidationService` subscribes to in
+  order to reset its speed-check baseline (the same "reset the baseline, don't pad
+  the tolerance" approach this doc's §5 rubber-banding fix used). This is a
+  server-to-server pub/sub channel, not either service reaching into the other's
+  session state directly (`docs/ARCHITECTURE.md` §2).
+- **Combat/M1**: `CombatSection` in the instance tree is a deliberately empty,
+  clearly labeled placeholder — nothing to wire up until that system exists.
+
+**Bug found 2026-09-13, real cause found 2026-09-14 — the panel went blank a
+moment after opening.** First suspected `CanvasGroup` (used for a
+`GroupTransparency` fade in/out): it composites its entire subtree into a single
+cached texture, and seemed not to re-render that texture against this panel's own
+Heartbeat-driven `TextLabel.Text` updates. Switched `Panel` to a plain `Frame`
+with a `Position` slide instead — but the exact same "flashes correct, then
+blank" symptom reproduced identically on the slide, and again on a third attempt
+(per-element `TextTransparency`/`BackgroundTransparency` tweening, no
+`CanvasGroup` involved at all). Three unrelated animation techniques producing an
+identical symptom was the tell that the animation was never the bug.
+
+The real cause: the F4 handler toggled on every `UserInputService.InputBegan` for
+that `KeyCode`, with no debounce against the key itself. Holding F4 for even a
+moment (e.g. to take a screenshot of the panel) can fire a **second**
+`InputBegan` for the same physical press via OS key-repeat — which immediately
+toggled the panel closed again a fraction of a second after it opened. Every
+prior "fix" was correctly re-solving a problem that didn't exist while leaving
+the actual bug untouched. Fixed by tracking whether `F4` is currently held
+(`f4Held`, set on `InputBegan`, cleared on `InputEnded`) and only toggling on the
+transition into held, not on every `InputBegan` while held. Kept the per-element
+fade from the third attempt (asked for on its own merits — "it was clean") since
+it's a strictly more robust technique than `CanvasGroup` regardless of whether
+the caching theory was ever the real issue.
+
+---
+
 ## Deferred (designed earlier, not part of this build)
 
 - **WallRun / ClimbVault / LedgeGrab / Slide** — spatial-claim states needing a

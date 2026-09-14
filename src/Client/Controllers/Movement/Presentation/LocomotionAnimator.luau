@@ -80,9 +80,35 @@ local function loadTrack(
 	trove: Trove.Trove
 ): AnimationTrack?
 	local animation = container:WaitForChild(name, ANIMATION_LOOKUP_TIMEOUT_SECONDS) :: Animation?
-	if not animation or animation.AnimationId == "" then
+	if not animation then
+		warn(
+			string.format(
+				"[LocomotionAnimator] %s: no child named %q under %s (sync/name mismatch?)",
+				container:GetFullName(),
+				name,
+				container:GetFullName()
+			)
+		)
 		return nil
 	end
+	if animation.AnimationId == "" then
+		print(
+			string.format(
+				"[LocomotionAnimator] %s.%s found but AnimationId is blank -- not authored yet",
+				container:GetFullName(),
+				name
+			)
+		)
+		return nil
+	end
+	print(
+		string.format(
+			"[LocomotionAnimator] loaded %s.%s (%s)",
+			container:GetFullName(),
+			name,
+			animation.AnimationId
+		)
+	)
 	local track = trove:Add(animator:LoadAnimation(animation), "Destroy")
 	-- Every slot here is a continuous locomotion loop (Idle/Walk/Run/Sprint) --
 	-- AnimationTrack.Looped defaults to false, which would play once and freeze.
@@ -122,8 +148,16 @@ function LocomotionAnimator.new(
 	local defaultAnimateScript = character and character:FindFirstChild("Animate")
 	if defaultAnimateScript then
 		defaultAnimateScript:Destroy()
+		print("[LocomotionAnimator] destroyed default Animate script on " .. character.Name)
+	else
+		print(
+			"[LocomotionAnimator] no default Animate script found on "
+				.. (character and character.Name or "?")
+				.. " (already removed, or this ran before it existed)"
+		)
 	end
 
+	print("[LocomotionAnimator] new() constructing for " .. (character and character.Name or "?"))
 	local animator = humanoid:WaitForChild("Animator") :: Animator
 
 	self._tracks = {} :: { [string]: AnimationTrack? }

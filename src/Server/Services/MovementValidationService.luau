@@ -8,13 +8,27 @@ local MovementStates = require(ReplicatedStorage.Shared.FSM.MovementStates)
 local StateRules = require(ReplicatedStorage.Shared.Movement.StateRules)
 local MovementTypes = require(ReplicatedStorage.Shared.Types.MovementTypes)
 local MovementConstants = require(ReplicatedStorage.Shared.Constants.MovementConstants)
+local DeveloperAllowlist = require(ReplicatedStorage.Shared.Constants.DeveloperAllowlist)
 local RateLimiter = require(ReplicatedStorage.Shared.Util.RateLimiter)
 local ViolationTracker = require(ReplicatedStorage.Shared.Util.ViolationTracker)
 
 local Network = require(script.Parent.Parent.Network.network)
+local CharacterTeleported = require(script.Parent.Parent.Events.CharacterTeleported)
 
 type MovementState = MovementStates.MovementState
 type MovementContext = MovementTypes.MovementContext
+
+-- Symbol -> the plain string literal Network.MovementDebugState's payload needs
+-- (Zap enums are string unions, not Symbols) -- same lookup-table shape as
+-- init.luau's NETWORK_CLAIM_NAMES, so a typo here fails to compile rather than
+-- silently sending "Unknown" forever.
+local DEBUG_STATE_NAMES: { [MovementState]: Network.DebugMovementState } = {
+	[MovementStates.Idle] = "Idle",
+	[MovementStates.Walk] = "Walk",
+	[MovementStates.Run] = "Run",
+	[MovementStates.Sprint] = "Sprint",
+	[MovementStates.Airborne] = "Airborne",
+}
 
 type PlayerSession = {
 	player: Player,
@@ -294,6 +308,26 @@ local function enforceSpeedSanity(session: PlayerSession)
 	session.speedCheckAt = now
 end
 
+-- Debug overlay (F4, developer-only, docs/MOVEMENT.md): one-way broadcast of this
+-- session's mirrored state to the owning client only, so the overlay can flag
+-- client/server disagreement instead of only showing the client's own
+-- (self-reported) view -- that's the actual point of the panel. Restricted to
+-- developers so a normal player's client never even receives this traffic.
+local function broadcastDebugState(session: PlayerSession)
+	if not DeveloperAllowlist.IsDeveloper(session.player) then
+		return
+	end
+
+	local context = buildContext(session)
+	local violation = speedViolations:Get(session.player)
+
+	Network.MovementDebugState.Fire(session.player, {
+		state = DEBUG_STATE_NAMES[session.fsm.current],
+		runDuration = if context.runDuration then context.runDuration :: number else nil,
+		violationCount = if violation then violation.count else 0,
+	})
+end
+
 local function onPlayerAdded(player: Player)
 	local function onCharacterAdded(character: Model)
 		local humanoid = character:WaitForChild("Humanoid") :: Humanoid
@@ -372,10 +406,23 @@ function MovementValidationService.Init()
 
 	Network.RequestMovementTransition.SetCallback(onRequestMovementTransition)
 
+	-- See DevToolsService's teleport handler: this is fired for any out-of-band
+	-- character move (today, only the debug overlay's developer teleport) so
+	-- enforceSpeedSanity doesn't measure the jump as an impossible speed and
+	-- immediately snap the player back to where they were.
+	CharacterTeleported:Connect(function(player: Player)
+		local session = sessions[player]
+		if session then
+			session.speedCheckPosition = session.rootPart.Position
+			session.speedCheckAt = os.clock()
+		end
+	end)
+
 	RunService.Heartbeat:Connect(function()
 		for _, session in sessions do
 			mirrorPassiveTransitions(session)
 			enforceSpeedSanity(session)
+			broadcastDebugState(session)
 		end
 	end)
 end

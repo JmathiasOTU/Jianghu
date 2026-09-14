@@ -5,35 +5,35 @@
       "Name": "Idle",
       "ClassName": "Animation",
       "Properties": {
-        "AnimationId": ""
+        "AnimationId": "rbxassetid://90674629106604"
       }
     },
     {
       "Name": "Sprint",
       "ClassName": "Animation",
       "Properties": {
-        "AnimationId": ""
+        "AnimationId": "rbxassetid://115737519957403"
       }
     },
     {
       "Name": "Walk",
       "ClassName": "Folder",
       "Children": [
-        { "Name": "Forward", "ClassName": "Animation", "Properties": { "AnimationId": "" } },
-        { "Name": "ForwardRight", "ClassName": "Animation", "Properties": { "AnimationId": "" } },
-        { "Name": "Right", "ClassName": "Animation", "Properties": { "AnimationId": "" } },
-        { "Name": "BackRight", "ClassName": "Animation", "Properties": { "AnimationId": "" } },
-        { "Name": "Back", "ClassName": "Animation", "Properties": { "AnimationId": "" } },
-        { "Name": "BackLeft", "ClassName": "Animation", "Properties": { "AnimationId": "" } },
-        { "Name": "Left", "ClassName": "Animation", "Properties": { "AnimationId": "" } },
-        { "Name": "ForwardLeft", "ClassName": "Animation", "Properties": { "AnimationId": "" } }
+        { "Name": "Forward", "ClassName": "Animation", "Properties": { "AnimationId": "rbxassetid://94798501873440" } },
+        { "Name": "ForwardRight", "ClassName": "Animation", "Properties": { "AnimationId": "rbxassetid://111875231717111" } },
+        { "Name": "Right", "ClassName": "Animation", "Properties": { "AnimationId": "rbxassetid://138304500693640" } },
+        { "Name": "BackRight", "ClassName": "Animation", "Properties": { "AnimationId": "rbxassetid://116024697647581" } },
+        { "Name": "Back", "ClassName": "Animation", "Properties": { "AnimationId": "rbxassetid://128844989818445" } },
+        { "Name": "BackLeft", "ClassName": "Animation", "Properties": { "AnimationId": "rbxassetid://121566991335888" } },
+        { "Name": "Left", "ClassName": "Animation", "Properties": { "AnimationId": "rbxassetid://105611688611402" } },
+        { "Name": "ForwardLeft", "ClassName": "Animation", "Properties": { "AnimationId": "rbxassetid://129685547745709" } }
       ]
     },
     {
       "Name": "Run",
       "ClassName": "Animation",
       "Properties": {
-        "AnimationId": ""
+        "AnimationId": "rbxassetid://115534453000728"
       }
     }
   ]

@@ -11,6 +11,7 @@ local StateRules = require(ReplicatedStorage.Shared.Movement.StateRules)
 local CharacterMover = require(script.CharacterMover)
 local InputController = require(script.InputController)
 local ClientMovementContextModule = require(script.ClientMovementContext)
+local DebugSnapshot = require(script.DebugSnapshot)
 local Network = require(script.Parent.Parent.Network.network)
 
 local FacingController = require(script.Presentation.FacingController)
@@ -46,6 +47,17 @@ local States = {
 local NETWORK_CLAIM_NAMES: { [MovementState]: "Run" | "Sprint" } = {
 	[MovementStates.Run] = "Run",
 	[MovementStates.Sprint] = "Sprint",
+}
+
+-- Symbol -> plain string name for the F4 debug overlay's DebugSnapshot
+-- (docs/MOVEMENT.md) -- the overlay has no reason to require MovementStates just
+-- to compare Symbols for display, a string is enough for a readout.
+local DEBUG_STATE_NAMES: { [MovementState]: string } = {
+	[MovementStates.Idle] = "Idle",
+	[MovementStates.Walk] = "Walk",
+	[MovementStates.Run] = "Run",
+	[MovementStates.Sprint] = "Sprint",
+	[MovementStates.Airborne] = "Airborne",
 }
 
 -- How often the current Run/Sprint claim is re-sent while held, not just on the
@@ -122,6 +134,18 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 			Network.RequestMovementTransition.Fire(claimName)
 			lastClaimResyncAt = os.clock()
 		end
+
+		-- F4 debug overlay (docs/MOVEMENT.md) -- published every Heartbeat
+		-- regardless of whether the overlay is even open, same as how the FSM's own
+		-- context is rebuilt unconditionally; cheap enough (a few field reads, no
+		-- allocation-heavy work) not to bother gating on overlay visibility.
+		local velocity = rootPart.AssemblyLinearVelocity
+		DebugSnapshot.Set({
+			state = DEBUG_STATE_NAMES[fsm.current],
+			grounded = characterMover:IsGrounded(),
+			runDuration = if fsm.current == MovementStates.Run then RunState.GetDuration() else nil,
+			speed = Vector3.new(velocity.X, 0, velocity.Z).Magnitude,
+		})
 	end)
 end
 

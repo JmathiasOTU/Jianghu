@@ -29,6 +29,12 @@
         "$path": "ServerPackages"
       }
     },
+    "StarterGui": {
+      "$className": "StarterGui",
+      "MovementDebugOverlay": {
+        "$path": "Assets/UI/MovementDebugOverlay.model.json"
+      }
+    },
     "StarterPlayer": {
       "$className": "StarterPlayer",
       "StarterPlayerScripts": {

@@ -35,3 +35,36 @@ event RequestMovementTransition = {
 	call: SingleAsync,
 	data: ClaimableMovementState,
 }
+
+-- Debug overlay (F4, developer-only) ------------------------------------------
+--
+-- One-way server -> owning-client broadcast of MovementValidationService's
+-- mirrored FSM state, so the overlay can flag client/server disagreement instead
+-- of only ever showing the client's own (self-reported, untrustworthy) view. Only
+-- ever fired to the one player it describes (`Fire(player, data)`), never
+-- FireAll -- see docs/MOVEMENT.md.
+type DebugMovementState = enum { "Idle", "Walk", "Run", "Sprint", "Airborne" }
+
+event MovementDebugState = {
+	from: Server,
+	type: Unreliable,
+	call: SingleSync,
+	data: struct {
+		state: DebugMovementState,
+		runDuration: f32?,
+		violationCount: u16,
+	},
+}
+
+-- Developer-only teleport tool. Every player-initiated remote still goes through
+-- Zap like any other (docs/ARCHITECTURE.md §10) even though only a developer is
+-- ever meant to reach it -- the authorization check lives entirely server-side
+-- (RunService:IsStudio() or a hardcoded UserId allowlist, checked first, before
+-- anything else in the handler runs) since client-side UI visibility is not a
+-- security boundary.
+event RequestDevTeleport = {
+	from: Client,
+	type: Reliable,
+	call: SingleAsync,
+	data: vector,
+}

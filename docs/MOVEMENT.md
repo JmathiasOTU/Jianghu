@@ -23,7 +23,7 @@ generous air control.
 | Shared scaffolding (Step 1) | Done — 2026-09-13 | `Shared/FSM/MovementStates.luau`, `Shared/FSM/StateMachine.luau`, `Shared/Constants/MovementConstants.luau`, `Shared/Types/MovementTypes.luau`, `Shared/Movement/StateRules.luau`, `network.zap`, `Shared/Util/RateLimiter.luau` |
 | Core states (Step 2) | Done — 2026-09-13 | `Client/Controllers/Movement/{init,CharacterMover,InputController,ClientMovementContext}.luau`, `Client/Controllers/Movement/States/*.luau`, `Server/Services/MovementValidationService.luau` |
 | Facing + animation (Step 3) | Logic done 2026-09-13, **animations still needed** | `Client/Controllers/Movement/Presentation/{FacingController,LocomotionAnimator}.luau`, `Assets/Animations/Movement.model.json` |
-| Exploit + perf pass (Step 4) | Not started | — |
+| Exploit + perf pass (Step 4) | Done — 2026-09-13 | `Server/Services/MovementValidationService.luau`, `Shared/Util/ViolationTracker.luau`, `Shared/Constants/MovementConstants.luau` |
 
 ---
 
@@ -562,6 +562,92 @@ sampled one (rotation and current height preserved) — a rubber-band correction
 not a kick or a log; revisit if repeated corrections turn out to need a stronger
 response (e.g. actually kicking repeat offenders).
 
+**Fixed 2026-09-13 — constant Sprint rubber-banding, reported in playtesting even
+on a low-latency connection.** The entry above justified `SpeedToleranceMultiplier`
+(1.3) as "grace for jitter plus latency" with no measurement behind it — exactly
+what §9 prohibits. Per that rule, the fix here is **not** a bigger number
+(unmeasured evidence for a new one wouldn't be any more valid than for the old
+one); it's two structural bugs found by tracing the actual transition/replication
+sequence, verified by reasoning rather than a captured playtest (this pass had no
+way to run a live client — `SPEED_SANITY_DEBUG_LOGGING` below is exactly the
+capture mechanism a future playtest should confirm this with).
+- **The FSM mirror could get permanently stuck below the player's real speed.**
+  `mirrorPassiveTransitions`'s Sprint→Run demotion fires off a single Heartbeat's
+  `classifyMoveIntent` read. But `FacingController`'s own fix (§4) already
+  established that facing *deliberately* lags `MoveDirection` whenever
+  `Humanoid.AutoRotate` is true (unlocked camera) — Roblox's ground controller
+  turns the character to catch up rather than snapping. A player simply looking
+  around while holding forward, unlocked, can swing `MoveDirection` past this
+  check's forward deadzone (see below) for a few frames with zero backward/strafe
+  input at all. Once that misfires, the mirror lands in `Run` — but the **client**
+  never demoted (its own forward check is the literal, camera-independent W key,
+  never wrong this way) and keeps moving at genuine `SprintSpeed`. Since
+  `NETWORK_CLAIM_NAMES` only re-fires a claim when the *client's own* FSM
+  transitions, and it never did, the mirror never resyncs back to `Sprint` — every
+  `enforceSpeedSanity` sample for the rest of that sprint compares real
+  `SprintSpeed` motion against the now-permanently-wrong `RunSpeed` cap, i.e.
+  continuous corrections until the player fully stops and re-earns Sprint from
+  scratch. Latency-independent by construction, which is why it reproduced on a
+  good connection. Fixed by gating that demotion branch on `not
+  session.humanoid.AutoRotate` (a plain replicated Humanoid property already
+  trusted elsewhere, e.g. by `CharacterMover`/`FacingController` — no new trust
+  assumption): this proxy is only asked to answer a question ("is this player
+  backpedaling *relative to their facing*") that's only coherent in the first
+  place while facing is actually decoupled from movement, i.e. locked — see this
+  doc's intro. This narrows enforcement while unlocked, it doesn't remove it: "no
+  input at all → Idle" and `enforceSpeedSanity`'s speed cap both still apply
+  unconditionally. The one residual, low-severity gap — a modified client could
+  hold Sprint's speed cap instead of Run's while moving backward, unlocked,
+  without ever backpedal-demoting — is accepted and documented here rather than
+  silently left implicit.
+- **A transition could still be measured against the wrong cap for one window.**
+  Separately, any state change that alters `maxSpeedForState`'s cap (most sharply
+  landing from `Sprint`/`Airborne` momentum down into `Walk`) could have part of
+  its `SpeedCheckIntervalSeconds` window measured against the *new* cap while the
+  Humanoid's ground controller was still decelerating from the *old* speed — a
+  real, documented Roblox behavior (WalkSpeed changes are not instant), exactly
+  the class of thing §9 says a tolerance is allowed to exist for, except this
+  fix doesn't need to quantify how long that transient lasts at all: `createSession`
+  now resets `speedCheckPosition`/`speedCheckAt` on every `fsm.changed` firing, so
+  no sampling window ever straddles a transition boundary in the first place.
+
+Separately (not part of the rubber-banding fix — this direction, if anything, cuts
+the other way against it, which is exactly why the `AutoRotate` gate above was
+also necessary): **`classifyMoveIntent`'s forward/backward zero-crossing was too
+permissive.** `forwardComponent > 0` let a `MoveDirection` sitting at a razor-thin
+positive angle (e.g. 89°) count as "forward" and dodge the Sprint→Run demotion
+while moving almost entirely sideways. Real WASD input only ever produces a 0°,
+45°, or 90°+ camera-relative angle, so this can only be hit by a spoofed
+`MoveDirection`, never a legitimate diagonal hold. Hardened to
+`MovementConstants.SprintForwardDeadzone` (0.5, i.e. requiring the angle stay under
+60°) — comfortably below `cos 45° ≈ 0.707`, so every real diagonal Sprint-hold is
+unaffected. This is a gameplay-feel threshold, not a latency tolerance (§9's
+"measured engine behavior" bar targets the *other* kind of number), so it's
+reasoned from the fixed geometry of keyboard input rather than a network
+measurement. The client's own `SprintState.Update` needed no equivalent change:
+its `forward` flag is `InputController`'s literal "is W held" boolean, which by
+construction can only ever be exactly 0°/45°/90°+ for real keyboard combos —
+mirroring the server's continuous dot-product threshold onto it would reintroduce
+the exact `AutoRotate`-lag instability the fix above just closed, for zero benefit
+(a raw key press has no "angle" to spoof).
+
+**Added 2026-09-13 — diagnostic capture and a reusable violation log.**
+`SPEED_SANITY_DEBUG_LOGGING` (`MovementValidationService.luau`, off by default)
+gates three `print`s added for this investigation and kept (not deleted) for
+Stage 2's spatial-claim validators to reuse the same approach: every
+`enforceSpeedSanity` correction logs the player, mirrored state, `flatDelta`,
+`maxDistance`, and `elapsed`; a rate-limited `RequestMovementTransition` call logs
+the rejection (ruling the limiter in or out as a cause of dropped legitimate
+claims); an accepted `Sprint` claim logs how far its `runDuration` overshot
+`SprintThresholdSeconds`, which is exactly the claim-round-trip lag §5 asks to
+measure at Sprint entry. Flip it on for the next playtest to get real numbers
+instead of another guess. Separately, `Shared/Util/ViolationTracker.luau` (new,
+generic — doesn't know anything about movement) gives `enforceSpeedSanity` a
+per-player count/timestamp of corrections instead of correcting forever with no
+record; not a punishment system, just a log for something to check later, and
+built to be reused as-is by WallRun/ClimbVault/LedgeGrab/Slide's validators once
+Stage 2 starts.
+
 ---
 
 ## 6. Implementation Steps
@@ -641,5 +727,17 @@ response (e.g. actually kicking repeat offenders).
   separate movement-only resource? Not a decision this doc needs to make yet.
 - **`Overridden` state** — the single narrow seam combat will later use to move the
   character (e.g. for Dash) without touching movement's FSM directly.
+- **`enforceSpeedSanity` has no carve-out for externally-applied velocity.**
+  Flagged 2026-09-13 during the Step 4 rubber-banding fix: the speed/delta-position
+  check (`MovementValidationService.luau`, docs/MOVEMENT.md §5) assumes all
+  horizontal motion comes from the player's own `WalkSpeed` tier. Inert today —
+  nothing in Phase 1 produces extra velocity — but knockback, launch pads, and
+  combat's future `Overridden`/Dash state all will, and none of them will replicate
+  as a legible state change this check already knows to reset its baseline on
+  (unlike a Sprint/Run/Walk transition, an external shove doesn't fire
+  `fsm.changed`). Whichever system adds the first of these needs to give this
+  check an explicit exemption window (the same "reset the baseline, don't guess a
+  bigger tolerance" approach used above) — not something to work out now, just
+  flagged so Stage 2/combat work doesn't get silently rubber-banded by this later.
 
 Ask for the full spec on any of these when you're ready to build them.

@@ -48,6 +48,22 @@ local NETWORK_CLAIM_NAMES: { [MovementState]: "Run" | "Sprint" } = {
 	[MovementStates.Sprint] = "Sprint",
 }
 
+-- How often the current Run/Sprint claim is re-sent while held, not just on the
+-- transition edge (found 2026-09-13, docs/MOVEMENT.md §5: real playtest logs
+-- showed the server mirror stuck at Run while the player was genuinely sprinting
+-- the whole time). The claim fires once on `fsm.changed`, fire-and-forget with no
+-- ack -- if that single packet is ever rejected (e.g. the dwell reads a hair under
+-- threshold due to ordinary jitter right at the 3s boundary) or dropped, the
+-- client's own FSM is already in Sprint and never transitions again, so it never
+-- naturally resends. Periodic reassertion makes that self-healing: a `RequestTransition`
+-- for the state the FSM mirror is already in is a harmless no-op server-side
+-- (`next == current` fails legality trivially), so this only ever repairs a
+-- desync, never causes one. A network-reliability concern, not gameplay tuning --
+-- lives here rather than MovementConstants for the same reason
+-- TRANSITION_CLAIMS_PER_SECOND lives in MovementValidationService instead of
+-- there.
+local CLAIM_RESYNC_INTERVAL_SECONDS = 1
+
 local input: InputController.InputController
 
 local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
@@ -81,6 +97,8 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 	-- run once up front to stay symmetric with every later transition.
 	IdleState.Enter(buildContext())
 
+	local lastClaimResyncAt = 0
+
 	lifeTrove:Connect(fsm.changed, function(next: MovementState, previous: MovementState)
 		States[previous].Exit(buildContext())
 		States[next].Enter(buildContext())
@@ -88,6 +106,7 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 		local claimName = NETWORK_CLAIM_NAMES[next]
 		if claimName then
 			Network.RequestMovementTransition.Fire(claimName)
+			lastClaimResyncAt = os.clock()
 		end
 	end)
 
@@ -97,6 +116,12 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 
 	lifeTrove:Connect(RunService.Heartbeat, function(dt: number)
 		States[fsm.current].Update(dt, buildContext())
+
+		local claimName = NETWORK_CLAIM_NAMES[fsm.current]
+		if claimName and os.clock() - lastClaimResyncAt >= CLAIM_RESYNC_INTERVAL_SECONDS then
+			Network.RequestMovementTransition.Fire(claimName)
+			lastClaimResyncAt = os.clock()
+		end
 	end)
 end
 

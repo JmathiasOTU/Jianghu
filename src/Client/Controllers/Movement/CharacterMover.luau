@@ -3,6 +3,7 @@ local ContextActionService = game:GetService("ContextActionService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Trove = require(ReplicatedStorage.Packages.Trove)
+local SpatialQueries = require(ReplicatedStorage.Shared.Movement.SpatialQueries)
 
 -- Named binding for SetJumpBlocked below -- ContextActionService keys bindings
 -- by name, so Bind/Unbind need to agree on the same string.
@@ -21,9 +22,13 @@ export type CharacterMover = {
 	IsGrounded: (self: CharacterMover) -> boolean,
 	IsJumping: (self: CharacterMover) -> boolean,
 	GetVerticalVelocity: (self: CharacterMover) -> number,
+	GetHorizontalVelocity: (self: CharacterMover) -> Vector3,
+	SetHorizontalVelocity: (self: CharacterMover, velocity: Vector3) -> (),
+	GetFacingDirection: (self: CharacterMover) -> Vector3,
 	SetJumpBlocked: (self: CharacterMover, blocked: boolean) -> (),
 	SetVelocityOverride: (self: CharacterMover, velocity: Vector3, maxForce: Vector3?) -> (),
 	ClearVelocityOverride: (self: CharacterMover) -> (),
+	QueryGround: (self: CharacterMover, castDistance: number?) -> SpatialQueries.GroundQueryResult?,
 	Destroy: (self: CharacterMover) -> (),
 }
 
@@ -95,20 +100,67 @@ function CharacterMover:SetSpeed(speed: number)
 	self._humanoid.WalkSpeed = speed
 end
 
--- Real flattened horizontal velocity magnitude (docs/MOVEMENT.md §9), not
--- `humanoid.WalkSpeed` (the TARGET the ground controller is driving toward,
--- not what it's actually reached yet) -- Slide reads this once on Enter to
--- inherit "whatever speed you had at entry," which needs the true instant-in-
--- time speed, residual-momentum transients included, same
--- `AssemblyLinearVelocity`-flattening DebugSnapshot/enforceSpeedSanity
--- already use elsewhere for the same reason.
-function CharacterMover:GetSpeed(): number
+-- Real flattened horizontal velocity vector (docs/MOVEMENT.md §9, extended
+-- TRAVERSAL-ROADMAP.md §8 Phase 3), not `humanoid.WalkSpeed` (the TARGET the
+-- ground controller is driving toward, not what it's actually reached yet).
+-- Slide's own Enter reads this to inherit both "whatever speed you had at
+-- entry" (the magnitude, via GetSpeed below) AND "whatever direction you were
+-- actually moving" (the raw vector, needed once Slide drives a real
+-- `LinearVelocity` instead of just a WalkSpeed magnitude) -- residual-
+-- momentum transients included, same `AssemblyLinearVelocity`-flattening
+-- DebugSnapshot/enforceSpeedSanity already use elsewhere for the same reason.
+function CharacterMover:GetHorizontalVelocity(): Vector3
 	local rootPart = self._humanoid.RootPart
 	if not rootPart then
-		return 0
+		return Vector3.zero
 	end
 	local velocity = rootPart.AssemblyLinearVelocity
-	return Vector3.new(velocity.X, 0, velocity.Z).Magnitude
+	return Vector3.new(velocity.X, 0, velocity.Z)
+end
+
+-- Thin wrapper over `GetHorizontalVelocity` -- kept as its own method since
+-- most callers (every grounded state's own decay/threshold checks) only ever
+-- need the magnitude, not the direction.
+function CharacterMover:GetSpeed(): number
+	return self:GetHorizontalVelocity().Magnitude
+end
+
+-- Real flattened `rootPart.CFrame.LookVector` (docs/MOVEMENT.md §4/§12,
+-- playtest feedback 2026-09-15) -- NOT a separate camera/input read of its
+-- own, deliberately: `FacingController` already keeps the rootPart's actual
+-- facing pointed at the camera's look direction every `RenderStepped` while
+-- locked (Shift Lock/first-person), and `Humanoid.AutoRotate` already turns
+-- it to face `MoveDirection` on its own when unlocked -- this just reads
+-- whichever of those two is currently driving it, so Slide's steering (below)
+-- gets "look/move direction" for free from systems that already exist,
+-- without duplicating either one's logic or caring which mode is active.
+function CharacterMover:GetFacingDirection(): Vector3
+	local rootPart = self._humanoid.RootPart
+	if not rootPart then
+		return Vector3.zero
+	end
+	local lookVector = rootPart.CFrame.LookVector
+	return Vector3.new(lookVector.X, 0, lookVector.Z)
+end
+
+-- A single direct, one-shot physical write to `AssemblyLinearVelocity`'s
+-- horizontal axes (docs/MOVEMENT.md's Y-component equivalent already reads
+-- this same property elsewhere) -- NOT constraint-backed like
+-- SetVelocityOverride, deliberately: this is for SlideJump's boosted launch
+-- impulse, which fires once inside `SlideJumpState.Enter` the SAME frame it
+-- transitions synchronously into Airborne, whose own Enter/Exit never runs a
+-- real frame to clear anything (see SlideJumpState's own doc comment). A
+-- constraint left active with no Exit to clear it would silently override
+-- horizontal air control forever; a direct one-shot write just nudges the
+-- body's real velocity via inertia and leaves the LinearVelocity constraint
+-- untouched (already inert from Slide's own Exit clearing it first).
+function CharacterMover:SetHorizontalVelocity(velocity: Vector3)
+	local rootPart = self._humanoid.RootPart
+	if not rootPart then
+		return
+	end
+	local current = rootPart.AssemblyLinearVelocity
+	rootPart.AssemblyLinearVelocity = Vector3.new(velocity.X, current.Y, velocity.Z)
 end
 
 function CharacterMover:SetJumpPower(jumpPower: number)
@@ -181,6 +233,20 @@ end
 function CharacterMover:ClearVelocityOverride()
 	self._linearVelocity.MaxAxesForce = Vector3.zero
 	self._linearVelocity.VectorVelocity = Vector3.zero
+end
+
+-- Slide's own ground-normal probe (TRAVERSAL-ROADMAP.md §8 Phase 3, mechanic
+-- 3a) -- delegates straight to `Shared/Movement/SpatialQueries.QueryGround`,
+-- the SAME pure function server-side resimulation calls, seeded from this
+-- CharacterMover's own rootPart/character so states never need direct
+-- rootPart access themselves (docs/MOVEMENT.md §4's "states never touch the
+-- Humanoid directly" boundary, extended to the RootPart it owns).
+function CharacterMover:QueryGround(castDistance: number?): SpatialQueries.GroundQueryResult?
+	local rootPart = self._humanoid.RootPart
+	if not rootPart then
+		return nil
+	end
+	return SpatialQueries.QueryGround(rootPart, self._humanoid.Parent :: Instance, castDistance)
 end
 
 function CharacterMover:Destroy()

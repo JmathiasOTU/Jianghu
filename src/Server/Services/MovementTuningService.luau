@@ -48,11 +48,16 @@ local function toTuningStatePayload(constants: EffectiveMovementConstants)
 		speedToleranceMultiplier = constants.SpeedToleranceMultiplier,
 		crouchSpeed = constants.CrouchSpeed,
 		slideDecayRate = constants.SlideDecayRate,
+		slideEntrySpeedMultiplier = constants.SlideEntrySpeedMultiplier,
 		slideJumpBoostAmount = constants.SlideJumpBoostAmount,
 		hardLandingFallSpeedThreshold = constants.HardLandingFallSpeedThreshold,
 		landingAnimationHoldSeconds = constants.LandingAnimationHoldSeconds,
 		doubleJumpForce = constants.DoubleJumpForce,
 		doubleJumpDecayDurationSeconds = constants.DoubleJumpDecayDurationSeconds,
+		slideSlopeAngleThresholdDegrees = constants.SlideSlopeAngleThresholdDegrees,
+		slideMaxWalkableSlopeDegrees = constants.SlideMaxWalkableSlopeDegrees,
+		slideSlopeAmplificationCap = constants.SlideSlopeAmplificationCap,
+		slideGroundRaycastThrottleSeconds = constants.SlideGroundRaycastThrottleSeconds,
 	}
 end
 

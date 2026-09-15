@@ -140,11 +140,16 @@ type TunableConstantName = enum {
 	"SpeedToleranceMultiplier",
 	"CrouchSpeed",
 	"SlideDecayRate",
+	"SlideEntrySpeedMultiplier",
 	"SlideJumpBoostAmount",
 	"HardLandingFallSpeedThreshold",
 	"LandingAnimationHoldSeconds",
 	"DoubleJumpForce",
 	"DoubleJumpDecayDurationSeconds",
+	"SlideSlopeAngleThresholdDegrees",
+	"SlideMaxWalkableSlopeDegrees",
+	"SlideSlopeAmplificationCap",
+	"SlideGroundRaycastThrottleSeconds",
 }
 
 event RequestSetTuning = {
@@ -181,11 +186,16 @@ event TuningState = {
 		speedToleranceMultiplier: f32,
 		crouchSpeed: f32,
 		slideDecayRate: f32,
+		slideEntrySpeedMultiplier: f32,
 		slideJumpBoostAmount: f32,
 		hardLandingFallSpeedThreshold: f32,
 		landingAnimationHoldSeconds: f32,
 		doubleJumpForce: f32,
 		doubleJumpDecayDurationSeconds: f32,
+		slideSlopeAngleThresholdDegrees: f32,
+		slideMaxWalkableSlopeDegrees: f32,
+		slideSlopeAmplificationCap: f32,
+		slideGroundRaycastThrottleSeconds: f32,
 	},
 }
 

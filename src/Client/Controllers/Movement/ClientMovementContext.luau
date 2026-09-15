@@ -21,12 +21,20 @@ type MovementState = MovementStates.MovementState
 -- OTHER state that needs it (SlideJumpState, for its boost) reads it off
 -- `context` rather than requiring the sibling state module directly. Client-only
 -- (not part of the shared MovementContext) -- the server never simulates
--- Slide's exact decay curve, it uses a flat SprintSpeed ceiling instead (see
--- `maxSpeedForState`), so it has no equivalent use for this value.
+-- Slide's exact decay curve, it uses a flat SprintSpeed (+ slope
+-- amplification) ceiling instead (see `maxSpeedForState`), so it has no
+-- equivalent use for this value.
+-- `slideDirection` (TRAVERSAL-ROADMAP.md §8 Phase 3) is the companion vector,
+-- exposed the exact same way (`SlideState.GetCurrentDirection` ->
+-- `context.slideDirection`) -- needed once Slide itself drives a real
+-- `LinearVelocity` instead of a bare WalkSpeed magnitude, so "the speed Slide
+-- had a moment ago" (SlideJumpState's boost) has a real direction to apply it
+-- along.
 export type ClientMovementContext = MovementTypes.MovementContext & {
 	characterMover: CharacterMover.CharacterMover,
 	fsm: StateMachine.StateMachine<MovementState, MovementTypes.MovementContext>,
 	slideSpeed: number?,
+	slideDirection: Vector3?,
 }
 
 return {}

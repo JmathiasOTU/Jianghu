@@ -28,6 +28,7 @@ generous air control.
 | Crouch/Slide/SlideJump (Step 5) | Done — 2026-09-14, **not yet playtested/tuned** | `Shared/FSM/MovementStates.luau`, `Shared/Movement/{StateRules,CollisionGroups}.luau`, `Client/Controllers/Movement/States/{CrouchIdleState,CrouchWalkState,SlideState,SlideJumpState}.luau`, `Server/Services/MovementValidationService.luau` — see §9 |
 | Landing/falling animation (`TRAVERSAL-ROADMAP.md` Phase 0) | Done — 2026-09-14, **no clips authored yet** | `Client/Controllers/Movement/{CharacterMover,Presentation/LocomotionAnimator}.luau`, `Shared/Constants/MovementConstants.luau`, `Shared/Movement/MovementTuning.luau`, `Server/Services/MovementTuningService.luau`, `network.zap`, `Assets/Animations/Movement.model.json` — see §10 |
 | DoubleJump (`TRAVERSAL-ROADMAP.md` Phase 1) | Done — 2026-09-14, **not yet playtested/tuned** | `Shared/FSM/MovementStates.luau`, `Shared/Movement/{StateRules,TraversalMath,MovementTuning}.luau`, `Shared/Types/MovementTypes.luau`, `Shared/Constants/MovementConstants.luau`, `Client/Controllers/Movement/{CharacterMover,InputController,init}.luau`, `Client/Controllers/Movement/States/{AirborneState,DoubleJumpState}.luau`, `Server/Services/{MovementValidationService,MovementTuningService}.luau`, `network.zap` — see §11 |
+| Slide/SlideJump physics upgrade (`TRAVERSAL-ROADMAP.md` Phase 3) | Done — 2026-09-15, **not yet playtested/tuned** | `Shared/Movement/{SpatialQueries (new),TraversalMath,MovementTuning}.luau`, `Shared/Constants/MovementConstants.luau`, `Client/Controllers/Movement/{CharacterMover,ClientMovementContext,init}.luau`, `Client/Controllers/Movement/States/{SlideState,SlideJumpState}.luau`, `Server/Services/{MovementValidationService,MovementTuningService}.luau`, `network.zap` — see §12 |
 
 ---
 
@@ -1446,6 +1447,187 @@ when Dash/WallClimb need them. Playtesting/tuning `DoubleJumpForce`/
 `DoubleJumpDecayDurationSeconds` and the new server-side tolerance constants —
 all starting-point values, same as every other "Fast & fluid" number in this
 file.
+
+---
+
+## 12. Slide Physics Upgrade (`TRAVERSAL-ROADMAP.md` Phase 3)
+
+Phase 2 (Dash) was deliberately skipped — this phase reuses nothing from it
+and nothing downstream blocks on it. Upgrades §9's existing `Slide`/
+`SlideJump` pair from a `Humanoid.WalkSpeed` magnitude to a real
+ground-normal-aware `LinearVelocity`, per the roadmap's own §2 ownership
+table (`SetVelocityOverride` listed for "...Slide"). **No new FSM states, no
+new topology** — `Slide`/`SlideJump` keep their existing Symbols/CanEnter/
+transitions unchanged; this is purely an internals rewrite.
+
+**Two new shared modules.** `Shared/Movement/SpatialQueries.luau` (new) —
+`QueryGround(rootPart, filterInstance, castDistance?)`, a pure wrapper over
+`Workspace:Raycast` straight down from the root part, excluding the caster's
+own character. Called identically by client prediction
+(`CharacterMover:QueryGround`) and server resimulation
+(`MovementValidationService.updateSlideGroundQuery`) — same "one geometry
+read, never two hand-synced copies" principle `TraversalMath` already
+established for pure math. `Shared/Movement/TraversalMath.luau` gained three
+functions for mechanics 3a/3b/3c: `SlopeAngleRadians`,
+`SlopeDownhillDirection`, and `SlideSlopeAmplification` (composes the other
+two into the final extra-speed-when-downhill number). Only the *slope* math
+is ported from the reference — the reference's whole decay curve is **not**
+ported, per the roadmap's own §9 note; `SlideDecayRate`'s existing
+`dt`-integrated linear decay is unchanged, and slope amplification is a pure
+additive top-up applied only to the velocity output each tick, never fed back
+into the decaying base — so the existing closed-form
+`(entrySpeed - CrouchSpeed) / SlideDecayRate` duration stays accurate
+regardless of terrain; a downhill slide moves faster for the same fixed
+duration, not longer.
+
+**`CharacterMover` gained three methods.** `GetHorizontalVelocity()` — the
+real flattened `AssemblyLinearVelocity` vector (`GetSpeed()` is now a thin
+wrapper around its `.Magnitude`). `QueryGround(castDistance?)` — delegates to
+`SpatialQueries.QueryGround` seeded with this mover's own rootPart/character,
+keeping "states never touch the Humanoid/RootPart directly" (§4) intact.
+`SetHorizontalVelocity(velocity)` — a direct, one-shot
+`AssemblyLinearVelocity` write (NOT constraint-backed), added specifically for
+`SlideJumpState`'s boost impulse — see below for why a constraint-backed
+override would be unsafe there.
+
+**Slide direction is locked in at Entry, never steerable.** Matches this
+section's own existing "committed action, decays via friction" framing:
+`SlideState.Enter` reads `CharacterMover:GetHorizontalVelocity()` once,
+storing both the magnitude (`currentSpeed`, as before) and its unit direction
+(`currentDirection`, new) — every subsequent tick decays the magnitude and
+re-applies `direction * (decayedSpeed + slopeAmplification)` via
+`SetVelocityOverride`, horizontal-axes-only (`maxForce = (huge, 0, huge)`,
+the exact complementary pair to DoubleJump's vertical-only force). Direction
+itself never updates mid-slide.
+
+**`Humanoid.WalkSpeed` is silenced to 0 for the duration of the slide.**
+Necessary once Slide drives horizontal velocity via `LinearVelocity`: leaving
+`WalkSpeed` at its pre-slide value would have the Humanoid's own ground
+controller *also* driving horizontal velocity toward
+`MoveDirection * WalkSpeed` on the same two axes, fighting the constraint.
+Safe because every state Slide can hand off to (`CrouchIdle`/`CrouchWalk`)
+sets its own `WalkSpeed` on `Enter`, so this never leaves `WalkSpeed` stuck at
+0 for longer than the one frame Slide itself is active.
+
+**Ground raycast is throttled via a `dt`-accumulator, both sides, per
+`ARCHITECTURE.md` §6** (which forbids a raw per-tick raycast). Client:
+`SlideState.Update` accumulates `dt` and re-fires
+`CharacterMover:QueryGround()` once `SlideGroundRaycastThrottleSeconds` is
+exceeded, reusing the cached result on every tick in between. Server has no
+`dt` of its own in its Heartbeat loop (every other server-side duration here
+is already `os.clock()`-timestamp-based), so
+`MovementValidationService.updateSlideGroundQuery` throttles off
+`os.clock()` deltas instead — same effective cadence, different clock
+primitive. The server's cache (`session.slideGroundQuery`) is cleared to
+`nil` the instant the session's mirrored state isn't `Slide`/`SlideJump`, so
+a stale normal can never leak into an unrelated state's speed cap.
+
+**`SlideJumpState`'s boost now carries a real direction, not just a
+number** — reads `context.slideDirection` (new, alongside the existing
+`context.slideSpeed`, both `ClientMovementContext`-only, both exposed the same
+`SlideState.GetCurrent*()` → `Movement/init.luau`'s `buildContext` → context
+field pattern) and applies the boosted vector via the new
+`SetHorizontalVelocity` — a direct one-shot write, deliberately **not**
+`SetVelocityOverride`. `SlideJumpState`'s own doc comment already established
+its Enter transitions synchronously into `Airborne` in the same call, so
+`Update`/`Exit` never run a real frame — a constraint-backed override set
+here would have no Exit to ever clear it, silently locking horizontal
+velocity for the rest of the fall. `SetSpeed(boosted)` is *also* called
+(mirroring the pre-upgrade design) purely so `Airborne`'s own partial air
+control target matches the boosted magnitude — otherwise a slide-jump would
+lose air-strafe responsiveness that every other jump-off still gets.
+
+**Bug found and fixed while wiring `slideDirection` up — `Movement/init.luau`'s
+`fsm.changed` handler was building a SECOND, fresh context for `Enter` after
+`Exit` had already run.** `States[previous].Exit(buildContext())` followed by
+`States[next].Enter(buildContext())` calls `buildContext()` twice — the first
+call (for `Exit`) correctly captures `SlideState`'s live `currentSpeed`/
+`currentDirection`, but `SlideState.Exit` itself immediately nulls both;
+the second `buildContext()` call (for `Enter`) then reads them back as `nil`,
+silently falling back to `CrouchSpeed`/zero-vector defaults.
+This pre-dates this phase (`context.slideSpeed` alone had the identical bug,
+just never surfaced since nothing yet depended on it enough to fail loudly)
+but a zero-vector `slideDirection` would have made `SlideJumpState`'s new
+direct impulse a complete no-op, so it's fixed alongside this upgrade: the
+handler now builds ONE context and passes it to both `Exit` and `Enter` —
+safe, since nothing between the two calls yields or mutates any of
+`buildContext`'s own live sources, and `Exit` only ever mutates the
+FROM-state's own module-local variables, never the context table itself.
+
+**Server: `maxSpeedForState` became a formula for `Slide`/`SlideJump`, not a
+flat tier** (`TRAVERSAL-ROADMAP.md` §7.5) — `SprintSpeed + slopeAmplification`
+instead of a bare `SprintSpeed` ceiling, where `slopeAmplification` comes from
+`slideSlopeAmplification`, fed the server's own cached ground-normal
+(`updateSlideGroundQuery`) and the session's real, physics-owned
+`AssemblyLinearVelocity` direction — never anything the client asserts.
+Without this, a real slope-boosted slide would immediately rubber-band
+against a cap that only ever assumed flat ground. `effectiveMaxSpeed`'s
+existing landing-momentum-grace lookup for `previousCap` deliberately omits
+`slopeAmplification` (defaults to 0) — that lookup only needs a generous flat
+ceiling for grace purposes, never a precise live figure for a state that's
+already been exited.
+
+**Not done — flagged, not required for this phase:** playtesting/tuning
+`SlideSlopeAngleThresholdDegrees`/`SlideMaxWalkableSlopeDegrees`/
+`SlideSlopeAmplificationCap` — starting-point values, same as every other
+"Fast & fluid" number in this file (`SlideSlopeAmplificationCap` in
+particular is a deliberate paring-down of the reference's raw `45`, flagged
+in `TRAVERSAL-ROADMAP.md` §5 itself as needing a tune-down). Wall/ledge
+detection (mechanics 4/5/6) are **not** part of `SpatialQueries` yet — only
+the ground-raycast entry Phase 3 needs; Phase 4 (WallRun/WallClimb) adds
+those when it lands.
+
+### 12.1 Follow-up tuning: entry speed and steering (playtest feedback 2026-09-15)
+
+Two playtest-driven changes on top of the base Phase 3 upgrade above, both
+shipped as live-tunable numbers/behavior rather than a redesign of the decay
+curve itself (which was confirmed to already feel right).
+
+**Entry speed was too low relative to the (correct) decay rate.**
+`SlideDecayRate` controls how fast a slide slows down, but how FAR it
+carries you is a function of both decay rate and entry speed
+(`distance = (entrySpeed - CrouchSpeed)^2 / (2 * SlideDecayRate)`) — at the
+raw inherited `RunSpeed`/`SprintSpeed` entry (28/40), that was only ~9/~24
+studs, which read as "decay feels right, but there's no slide." Added
+`SlideEntrySpeedMultiplier` (new tunable, default `1.25`, alongside the other
+Slide numbers in `MovementConstants.luau`/F4 Tuning tab) — `SlideState.Enter`
+scales the real inherited velocity magnitude by it rather than slowing decay
+down, so it stays proportional to however fast you were actually moving
+(Sprint-entry slides still cover more ground than Run-entry ones) instead of
+adding a flat number. Two other spots needed the SAME ceiling so the boost
+doesn't get silently clipped back down: `SlideJumpState`'s boost clamp
+(`SprintSpeed * SlideEntrySpeedMultiplier` instead of a bare `SprintSpeed`)
+and the server's `maxSpeedForState` formula for `Slide`/`SlideJump`
+(`SprintSpeed * SlideEntrySpeedMultiplier + slopeAmplification`) — otherwise
+`enforceSpeedSanity` would rubber-band a legitimately boosted slide back down
+to the old, pre-boost ceiling.
+
+**Slide direction is now STEERABLE, not locked at Entry.** The original
+design (per §9's "committed action" framing, carried into this phase's own
+first pass above) froze `currentDirection` the instant Slide was entered and
+never touched it again — feedback was that this felt wrong: "the velocity
+forces you in one direction permanently," when the expectation was to steer
+by looking where you want to go (Shift Lock/first-person), the same way
+normal movement already works. `CharacterMover` gained
+`GetFacingDirection()` — a flattened `rootPart.CFrame.LookVector` read, no
+new camera/input logic of its own: `FacingController` already keeps the
+rootPart's actual facing pointed at the camera look direction every
+`RenderStepped` while locked, and `Humanoid.AutoRotate` already turns it
+toward held move input on its own when unlocked, so this just reads
+whichever of those two is already live. `SlideState.Update` calls it every
+tick (cheap CFrame read, no throttling needed, unlike the ground raycast) and
+re-derives `currentDirection` from it, falling back to the last real
+direction if the flattened look vector is degenerate (looking straight
+up/down). Only the DIRECTION the decaying speed gets applied along changes —
+`currentSpeed`'s decay/amplification math is completely untouched, and
+because slope amplification's downhill dot-product already reads
+`currentDirection` fresh each tick, steering into/out of a slope's downhill
+line now correctly gains/loses the amplification bonus as you turn, not just
+at the instant you entered. Steering is currently uncapped (no turn-rate
+limit) — an instant full direction reversal via a camera snap is physically
+unrealistic but was the literal behavior requested; revisit with a
+`SlideSteerTurnRateDegreesPerSecond`-style cap only if playtesting finds it
+feels too twitchy.
 
 ---
 

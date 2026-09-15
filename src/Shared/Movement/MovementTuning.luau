@@ -21,11 +21,16 @@ export type TunableConstantName =
 	| "SpeedToleranceMultiplier"
 	| "CrouchSpeed"
 	| "SlideDecayRate"
+	| "SlideEntrySpeedMultiplier"
 	| "SlideJumpBoostAmount"
 	| "HardLandingFallSpeedThreshold"
 	| "LandingAnimationHoldSeconds"
 	| "DoubleJumpForce"
 	| "DoubleJumpDecayDurationSeconds"
+	| "SlideSlopeAngleThresholdDegrees"
+	| "SlideMaxWalkableSlopeDegrees"
+	| "SlideSlopeAmplificationCap"
+	| "SlideGroundRaycastThrottleSeconds"
 
 -- A named-field record (not a `{ [TunableConstantName]: number }` indexer
 -- type) specifically so consumers get plain dot-access
@@ -46,11 +51,16 @@ export type EffectiveMovementConstants = {
 	SpeedToleranceMultiplier: number,
 	CrouchSpeed: number,
 	SlideDecayRate: number,
+	SlideEntrySpeedMultiplier: number,
 	SlideJumpBoostAmount: number,
 	HardLandingFallSpeedThreshold: number,
 	LandingAnimationHoldSeconds: number,
 	DoubleJumpForce: number,
 	DoubleJumpDecayDurationSeconds: number,
+	SlideSlopeAngleThresholdDegrees: number,
+	SlideMaxWalkableSlopeDegrees: number,
+	SlideSlopeAmplificationCap: number,
+	SlideGroundRaycastThrottleSeconds: number,
 }
 
 -- Iteration order for the overlay's Tuning tab and for anything else that
@@ -66,11 +76,16 @@ local TUNABLE_NAMES: { TunableConstantName } = {
 	"SpeedToleranceMultiplier",
 	"CrouchSpeed",
 	"SlideDecayRate",
+	"SlideEntrySpeedMultiplier",
 	"SlideJumpBoostAmount",
 	"HardLandingFallSpeedThreshold",
 	"LandingAnimationHoldSeconds",
 	"DoubleJumpForce",
 	"DoubleJumpDecayDurationSeconds",
+	"SlideSlopeAngleThresholdDegrees",
+	"SlideMaxWalkableSlopeDegrees",
+	"SlideSlopeAmplificationCap",
+	"SlideGroundRaycastThrottleSeconds",
 }
 
 -- Sanity bounds for RequestSetTuning (Server/Services/MovementTuningService.luau)
@@ -90,11 +105,16 @@ local VALID_RANGES: { [TunableConstantName]: { min: number, max: number } } = {
 	SpeedToleranceMultiplier = { min = 1, max = 10 },
 	CrouchSpeed = { min = 0, max = 500 },
 	SlideDecayRate = { min = 0.1, max = 500 },
+	SlideEntrySpeedMultiplier = { min = 0.5, max = 5 },
 	SlideJumpBoostAmount = { min = 0, max = 500 },
 	HardLandingFallSpeedThreshold = { min = 0, max = 500 },
 	LandingAnimationHoldSeconds = { min = 0, max = 5 },
 	DoubleJumpForce = { min = 0, max = 500 },
 	DoubleJumpDecayDurationSeconds = { min = 0.05, max = 5 },
+	SlideSlopeAngleThresholdDegrees = { min = 0, max = 89 },
+	SlideMaxWalkableSlopeDegrees = { min = 0.1, max = 89 },
+	SlideSlopeAmplificationCap = { min = 0, max = 500 },
+	SlideGroundRaycastThrottleSeconds = { min = 0.02, max = 2 },
 }
 
 local MovementTuning = {}
@@ -115,11 +135,16 @@ function MovementTuning.Defaults(): EffectiveMovementConstants
 		SpeedToleranceMultiplier = MovementConstants.SpeedToleranceMultiplier,
 		CrouchSpeed = MovementConstants.CrouchSpeed,
 		SlideDecayRate = MovementConstants.SlideDecayRate,
+		SlideEntrySpeedMultiplier = MovementConstants.SlideEntrySpeedMultiplier,
 		SlideJumpBoostAmount = MovementConstants.SlideJumpBoostAmount,
 		HardLandingFallSpeedThreshold = MovementConstants.HardLandingFallSpeedThreshold,
 		LandingAnimationHoldSeconds = MovementConstants.LandingAnimationHoldSeconds,
 		DoubleJumpForce = MovementConstants.DoubleJumpForce,
 		DoubleJumpDecayDurationSeconds = MovementConstants.DoubleJumpDecayDurationSeconds,
+		SlideSlopeAngleThresholdDegrees = MovementConstants.SlideSlopeAngleThresholdDegrees,
+		SlideMaxWalkableSlopeDegrees = MovementConstants.SlideMaxWalkableSlopeDegrees,
+		SlideSlopeAmplificationCap = MovementConstants.SlideSlopeAmplificationCap,
+		SlideGroundRaycastThrottleSeconds = MovementConstants.SlideGroundRaycastThrottleSeconds,
 	}
 end
 

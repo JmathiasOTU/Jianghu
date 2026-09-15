@@ -11,6 +11,7 @@ local MovementTypes = require(ReplicatedStorage.Shared.Types.MovementTypes)
 local MovementConstants = require(ReplicatedStorage.Shared.Constants.MovementConstants)
 local MovementTuning = require(ReplicatedStorage.Shared.Movement.MovementTuning)
 local TraversalMath = require(ReplicatedStorage.Shared.Movement.TraversalMath)
+local SpatialQueries = require(ReplicatedStorage.Shared.Movement.SpatialQueries)
 local DeveloperAllowlist = require(ReplicatedStorage.Shared.Constants.DeveloperAllowlist)
 local RateLimiter = require(ReplicatedStorage.Shared.Util.RateLimiter)
 local ViolationTracker = require(ReplicatedStorage.Shared.Util.ViolationTracker)
@@ -87,6 +88,16 @@ type PlayerSession = {
 	-- same orthogonal-cooldown principle Run/Sprint's limiter already
 	-- established, just applied to the new event.
 	traversalRateLimiter: RateLimiter.RateLimiter,
+	-- Slide's own ground-normal cache (TRAVERSAL-ROADMAP.md §7.5/§8 Phase 3) --
+	-- the server's own copy of the same throttled-raycast pattern
+	-- SlideState.Update runs client-side, off `SpatialQueries.QueryGround`
+	-- (the SAME pure function, never a second hand-synced geometry read). Only
+	-- ever populated while this session is mirrored into Slide/SlideJump;
+	-- `updateSlideGroundQuery` clears it the instant it isn't, so a stale
+	-- normal from a slide that ended moments ago can never leak into
+	-- `maxSpeedForState`'s cap for an unrelated state.
+	slideGroundQuery: SpatialQueries.GroundQueryResult?,
+	slideGroundQueryAt: number,
 }
 
 -- Rate limit for RequestMovementTransition, independent of the FSM's own legality
@@ -427,6 +438,57 @@ local function mirrorPassiveTransitions(session: PlayerSession)
 	end
 end
 
+-- Slide's own ground-normal probe, server side (TRAVERSAL-ROADMAP.md §7.5/§8
+-- Phase 3) -- throttled the same way the client's own SlideState.Update is,
+-- just off `os.clock()` deltas rather than a `dt` accumulator, since this
+-- file's Heartbeat loop doesn't carry a `dt` of its own (every other
+-- server-side duration here is already `os.clock()`-timestamp-based, e.g.
+-- `speedCheckAt`/`lastTransitionAt`). Cleared to nil the instant this session
+-- isn't mirrored into Slide/SlideJump, so a stale read can't outlive the
+-- state it was measured for.
+local function updateSlideGroundQuery(session: PlayerSession, constants: EffectiveMovementConstants)
+	local current = session.fsm.current
+	if current ~= MovementStates.Slide and current ~= MovementStates.SlideJump then
+		session.slideGroundQuery = nil
+		return
+	end
+
+	local now = os.clock()
+	if now - session.slideGroundQueryAt < constants.SlideGroundRaycastThrottleSeconds then
+		return
+	end
+	session.slideGroundQueryAt = now
+	session.slideGroundQuery = SpatialQueries.QueryGround(session.rootPart, session.humanoid.Parent :: Instance)
+end
+
+-- Companion to the client's own slope-amplification read (SlideState.Update)
+-- -- same `TraversalMath.SlideSlopeAmplification` function, fed the server's
+-- own cached ground-normal and the session's real, physics-owned
+-- `AssemblyLinearVelocity` direction (already server-trusted ground truth
+-- elsewhere in this file, e.g. `enforceDoubleJumpTrajectory`'s own read of
+-- the Y component) rather than anything the client asserts about its
+-- direction.
+local function slideSlopeAmplification(session: PlayerSession, constants: EffectiveMovementConstants): number
+	local query = session.slideGroundQuery
+	if not query then
+		return 0
+	end
+
+	local velocity = session.rootPart.AssemblyLinearVelocity
+	local direction = Vector3.new(velocity.X, 0, velocity.Z)
+	if direction.Magnitude == 0 then
+		return 0
+	end
+
+	return TraversalMath.SlideSlopeAmplification(
+		query.normal,
+		direction.Unit,
+		math.rad(constants.SlideSlopeAngleThresholdDegrees),
+		math.rad(constants.SlideMaxWalkableSlopeDegrees),
+		constants.SlideSlopeAmplificationCap
+	)
+end
+
 -- WalkSpeed is the ground-truth cap Roblox's own Humanoid:Move() enforces for a
 -- well-behaved client, but WalkSpeed itself is just a replicated property the
 -- network-owning client (the player, for their own character) can set directly --
@@ -439,19 +501,28 @@ end
 -- active at takeoff carries into the jump -- so it's capped at the ceiling
 -- (SprintSpeed) rather than guessing which tier the player jumped from.
 -- Crouch/Slide additions (docs/MOVEMENT.md §9): CrouchIdle/CrouchWalk cap at
--- CrouchSpeed, same "own dedicated tier" treatment as Walk/Run. Slide/
--- SlideJump cap at the SprintSpeed ceiling -- same reasoning as Airborne's
--- existing ceiling above: whatever tier was active before Sliding carries
--- through, and SlideJump's boost is clamped client-side to this same ceiling
--- (SlideJumpState.Enter) rather than needing a second cap here.
-local function maxSpeedForState(state: MovementState, constants: EffectiveMovementConstants): number
+-- CrouchSpeed, same "own dedicated tier" treatment as Walk/Run.
+--
+-- Slide/SlideJump cap became a FORMULA, not a flat tier (TRAVERSAL-ROADMAP.md
+-- §7.5, Phase 3): `SprintSpeed * SlideEntrySpeedMultiplier` -- the SAME
+-- boosted ceiling `SlideState.Enter`/`SlideJumpState.Enter` clamp to
+-- client-side (docs/MOVEMENT.md §12, 2026-09-15 entry-speed tuning pass;
+-- before that pass this was a bare `SprintSpeed`, same reasoning as
+-- Airborne's existing ceiling) -- PLUS `slopeAmplification`, the same
+-- downhill top-up `TraversalMath.SlideSlopeAmplification` grants the client,
+-- so a real slope-boosted slide doesn't rubber-band against a cap that only
+-- ever assumed flat ground. `slopeAmplification` defaults to 0 for every call
+-- site that doesn't have a live ground read to pass (e.g. `effectiveMaxSpeed`'s
+-- own `previousCap` lookup below, which only needs a generous flat ceiling
+-- for grace purposes, never a precise live figure).
+local function maxSpeedForState(state: MovementState, constants: EffectiveMovementConstants, slopeAmplification: number?): number
 	if state == MovementStates.Run then
 		return constants.RunSpeed
+	elseif state == MovementStates.Slide or state == MovementStates.SlideJump then
+		return constants.SprintSpeed * constants.SlideEntrySpeedMultiplier + (slopeAmplification or 0)
 	elseif
 		state == MovementStates.Sprint
 		or state == MovementStates.Airborne
-		or state == MovementStates.Slide
-		or state == MovementStates.SlideJump
 		or state == MovementStates.DoubleJump
 	then
 		-- DoubleJump only ever touches vertical velocity (§2's
@@ -482,7 +553,7 @@ end
 -- their own residual momentum) get this grace for free the moment their own cap
 -- is taught to `maxSpeedForState`, with no separate copy of this fix needed.
 local function effectiveMaxSpeed(session: PlayerSession, constants: EffectiveMovementConstants): number
-	local currentCap = maxSpeedForState(session.fsm.current, constants)
+	local currentCap = maxSpeedForState(session.fsm.current, constants, slideSlopeAmplification(session, constants))
 	local previousState = session.previousState
 	if not previousState then
 		return currentCap
@@ -519,6 +590,8 @@ local function createSession(player: Player, humanoid: Humanoid, rootPart: BaseP
 		traversalEntryAt = nil,
 		speedSanitySuspendedUntil = nil,
 		traversalRateLimiter = RateLimiter.new(TRAVERSAL_CLAIMS_PER_SECOND, 1),
+		slideGroundQuery = nil,
+		slideGroundQueryAt = 0,
 	}
 
 	-- Reset the speed-sanity baseline on EVERY FSM transition, not just Sprint
@@ -900,6 +973,7 @@ function MovementValidationService.Init()
 		for _, session in sessions do
 			local constants = MovementTuningState.GetEffective(session.player)
 			mirrorPassiveTransitions(session)
+			updateSlideGroundQuery(session, constants)
 			enforceSpeedSanity(session, constants)
 			enforceDoubleJumpTrajectory(session, constants)
 			broadcastDebugState(session)

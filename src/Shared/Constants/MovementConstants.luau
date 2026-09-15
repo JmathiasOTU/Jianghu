@@ -44,12 +44,30 @@ local MovementConstants = {
 	-- would make that same question depend on an arbitrarily-chosen cutoff
 	-- instead of a clean closed-form answer.
 	SlideDecayRate = 20,
+	-- Multiplies whatever REAL horizontal speed you had the instant Slide was
+	-- entered (docs/MOVEMENT.md §12/playtest feedback 2026-09-15): decay rate
+	-- alone controls how fast a slide slows down, but distance covered is a
+	-- function of BOTH decay rate and entry speed
+	-- (distance = (entrySpeed - CrouchSpeed)^2 / (2 * SlideDecayRate)) -- a
+	-- Run-tier slide at the raw RunSpeed=28 entry only covers ~9 studs before
+	-- SlideDecayRate=20 eats it down to CrouchSpeed, which read as "the decay
+	-- feels right but the slide has no distance." This scales entry speed up
+	-- (still proportional to however fast you were actually moving -- Sprint
+	-- entries stay faster than Run entries, downhill residual momentum still
+	-- carries through) rather than slowing decay down, which would have
+	-- changed the deceleration feel that was already confirmed correct.
+	-- `SlideJumpState`'s boost ceiling and the server's `maxSpeedForState`
+	-- formula both scale by this same multiplier so a boosted slide doesn't
+	-- immediately rubber-band against a cap sized for the old, unboosted
+	-- ceiling. Starting-point value, not measured -- retune in Studio (F4
+	-- Tuning tab) alongside SlideDecayRate until the ratio feels right.
+	SlideEntrySpeedMultiplier = 1.25,
 	-- Added to whatever speed Slide had decayed to at the moment of the jump
 	-- (docs/MOVEMENT.md §9), then clamped to SprintSpeed -- SlideJump reuses
 	-- the existing SprintSpeed ceiling rather than a new cap constant (same
 	-- ceiling Slide/Airborne already share), so the boost can never itself be
 	-- the reason a legitimate player gets rubber-banded.
-	SlideJumpBoostAmount = 10,
+	SlideJumpBoostAmount = 50,
 
 	-- How forward-biased Sprint's continuation input must be to still count as
 	-- "sprinting forward" rather than a backpedal/pure-strafe demotion, expressed
@@ -87,6 +105,33 @@ local MovementConstants = {
 	-- Airborne (or straight to a grounded state, if it lands mid-impulse).
 	DoubleJumpForce = 50,
 	DoubleJumpDecayDurationSeconds = 0.4,
+
+	-- Slide slope amplification (TRAVERSAL-ROADMAP.md §5/§8 Phase 3, mechanic
+	-- 3a/3b/3c) -- ported from the reference's slope math, NOT its whole decay
+	-- curve: `SlideDecayRate` above stays exactly the existing linear
+	-- dt-integrated decay, this only adds an extra top-up on top of it when
+	-- sliding downhill (Shared/Movement/TraversalMath.luau).
+	--
+	-- Below this angle (degrees, off the ground normal), no amplification
+	-- applies at all -- gates out raycast/geometry noise on near-flat ground,
+	-- not a real slope.
+	SlideSlopeAngleThresholdDegrees = 5,
+	-- The angle (degrees) at which amplification reaches its full cap --
+	-- steeper doesn't add more (ratio clamps at 1.0). This is "the steepest
+	-- slope still treated as walkable enough to slide down," not a hard
+	-- geometry limit.
+	SlideMaxWalkableSlopeDegrees = 8,
+	-- Max EXTRA speed (studs/s) slope amplification can add, reached at
+	-- SlideMaxWalkableSlopeDegrees. The reference used 45 directly for this
+	-- same kind of magnitude -- deliberately tuned down here (per
+	-- TRAVERSAL-ROADMAP.md §5's own "tune down" flag): 45 studs/s stacked on a
+	-- 40 SprintSpeed base would more than double slide speed on a gentle 8°
+	-- slope. Starting-point value, not measured -- retune after playtesting.
+	SlideSlopeAmplificationCap = 12,
+	-- Slide's ground-normal raycast is throttled via a delta-time accumulator
+	-- (ARCHITECTURE.md §6 forbids a raw per-tick raycast) -- how often it
+	-- actually re-fires, not every Heartbeat.
+	SlideGroundRaycastThrottleSeconds = 0.1,
 
 	-- Server-only anti-cheat plumbing (MovementValidationService), not a
 	-- gameplay-feel number -- deliberately NOT in MovementTuning's live-tunable

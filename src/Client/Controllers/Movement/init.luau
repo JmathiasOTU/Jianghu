@@ -149,11 +149,16 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 			SpeedToleranceMultiplier = value.speedToleranceMultiplier,
 			CrouchSpeed = value.crouchSpeed,
 			SlideDecayRate = value.slideDecayRate,
+			SlideEntrySpeedMultiplier = value.slideEntrySpeedMultiplier,
 			SlideJumpBoostAmount = value.slideJumpBoostAmount,
 			HardLandingFallSpeedThreshold = value.hardLandingFallSpeedThreshold,
 			LandingAnimationHoldSeconds = value.landingAnimationHoldSeconds,
 			DoubleJumpForce = value.doubleJumpForce,
 			DoubleJumpDecayDurationSeconds = value.doubleJumpDecayDurationSeconds,
+			SlideSlopeAngleThresholdDegrees = value.slideSlopeAngleThresholdDegrees,
+			SlideMaxWalkableSlopeDegrees = value.slideMaxWalkableSlopeDegrees,
+			SlideSlopeAmplificationCap = value.slideSlopeAmplificationCap,
+			SlideGroundRaycastThrottleSeconds = value.slideGroundRaycastThrottleSeconds,
 		})
 		characterMover:SetJumpPower(value.jumpPower)
 	end))
@@ -191,6 +196,7 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 			characterMover = characterMover,
 			fsm = fsm,
 			slideSpeed = SlideState.GetCurrentSpeed(),
+			slideDirection = SlideState.GetCurrentDirection(),
 		}
 	end
 
@@ -209,8 +215,22 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 	end
 
 	lifeTrove:Connect(fsm.changed, function(next: MovementState, previous: MovementState)
-		States[previous].Exit(buildContext())
-		States[next].Enter(buildContext())
+		-- ONE shared context for both calls (bug found alongside
+		-- TRAVERSAL-ROADMAP.md §8 Phase 3) -- building a SECOND, fresh context
+		-- for Enter after Exit already ran silently broke any "outgoing
+		-- state's own value, read via context" hand-off (e.g. `slideSpeed`/
+		-- `slideDirection`, ClientMovementContext.luau): SlideState.Exit
+		-- nulls its module-scope currentSpeed/currentDirection, so a second
+		-- buildContext() call afterward would always see them as nil, and
+		-- SlideJumpState.Enter would silently fall back to CrouchSpeed/zero
+		-- instead of the real decayed slide velocity. Nothing between Exit
+		-- and Enter here yields or mutates any of `buildContext`'s own live
+		-- sources (input/characterMover/constants), so reusing one context
+		-- for both is safe -- Exit only ever mutates the FROM state's own
+		-- module-local variables, never the context table itself.
+		local context = buildContext()
+		States[previous].Exit(context)
+		States[next].Enter(context)
 
 		-- F4 debug overlay state history (docs/MOVEMENT.md §8): populated off
 		-- this existing `fsm.changed` connection, not a new one.

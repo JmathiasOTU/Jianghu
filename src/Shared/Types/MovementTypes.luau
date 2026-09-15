@@ -2,6 +2,7 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local MovementTuning = require(ReplicatedStorage.Shared.Movement.MovementTuning)
+local MovementStates = require(ReplicatedStorage.Shared.FSM.MovementStates)
 
 -- `forward`/`backward`/`strafeLeft`/`strafeRight` are the raw WASD axis holds, kept
 -- alongside the resolved `direction` because Sprint's continuation rule cares about
@@ -44,6 +45,28 @@ export type MoveIntent = {
 -- whoever owns the FSM lifecycle (`Movement/init.luau` client-side,
 -- `PlayerSession` server-side), reset the instant the character lands and
 -- set once DoubleJump is entered, never recomputed from a physics read.
+-- `preAirborneLocomotion` (landing-resume fix) is Run/Sprint if that's the
+-- tier this life was in the instant it left the ground, nil otherwise --
+-- same per-life tracked-not-derived treatment as `doubleJumpUsed`: set on the
+-- Run/Sprint -> Airborne edge, carried through an Airborne<->DoubleJump hop,
+-- cleared the instant a landing actually resolves. `AirborneState.
+-- ResolveLandingTarget` (and its server mirror) reads this to land straight
+-- back into the SAME tier when forward is still held, instead of always
+-- demoting to Walk -- and `StateRules.CanEnter[Sprint]` reads it too, since a
+-- resumed Sprint has already legitimately passed the dwell check once and
+-- shouldn't have to re-clear it after every single jump.
+-- `fallHeight` (HardLanding rework) is the real height, in studs, of the
+-- excursion about to end -- the peak Y reached since this life last left the
+-- ground, minus the current Y -- or nil while no excursion is in progress
+-- (grounded, or the very first frame of one before a peak has been sampled).
+-- Tracked the same per-life, not-derived-from-`context`-alone way as
+-- `doubleJumpUsed`/`preAirborneLocomotion` (`Movement/init.luau`'s own
+-- `peakHeight`, `PlayerSession.peakHeight` server-side), off each side's own
+-- trusted `rootPart.Position.Y` -- the server NEVER derives this from
+-- anything the client asserts (docs/ARCHITECTURE.md §3). `AirborneState.
+-- ResolveLandingTarget` (and its server mirror) reads this against
+-- `constants.HardLandingHeightThreshold` to decide whether a landing forces
+-- the `HardLanding` lock instead of resolving normally.
 export type MovementContext = {
 	moveIntent: MoveIntent,
 	grounded: boolean,
@@ -51,6 +74,8 @@ export type MovementContext = {
 	crouchHeld: boolean,
 	doubleJumpUsed: boolean,
 	runDuration: number?,
+	preAirborneLocomotion: MovementStates.MovementState?,
+	fallHeight: number?,
 	constants: MovementTuning.EffectiveMovementConstants,
 }
 

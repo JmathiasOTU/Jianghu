@@ -65,6 +65,13 @@
       }
     },
     {
+      "Name": "SlideJump",
+      "ClassName": "Animation",
+      "Properties": {
+        "AnimationId": "rbxassetid://135295565014032"
+      }
+    },
+    {
       "Name": "DoubleJump",
       "ClassName": "Animation",
       "Properties": {

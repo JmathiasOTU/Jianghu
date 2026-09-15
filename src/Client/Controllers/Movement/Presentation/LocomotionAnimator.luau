@@ -17,6 +17,19 @@ type MovementContext = MovementTypes.MovementContext
 
 local FADE_TIME = 0.15
 
+-- SlideJump's own FSM state lasts exactly one synchronous frame before handing
+-- off to Airborne (`SlideJumpState.Enter`'s doc comment) -- `_update` runs on
+-- RenderStepped, so `fsm.current` is never actually observed as SlideJump on a
+-- real rendered frame, and the per-state resolution below would never pick the
+-- clip. Same fix as the Land/LandHard one-shot hold: play it for a fixed
+-- window starting the instant SlideJump is exited, overriding normal
+-- resolution, regardless of the FSM having already moved on to Airborne.
+-- Prefers the real clip length (`AnimationTrack.Length`, populated once the
+-- animation asset is loaded, which it always is well before this fires) so
+-- retiming the authored animation doesn't require a matching code change; this
+-- is only a fallback for the (should-never-happen) case that Length reads 0.
+local SLIDE_JUMP_HOLD_FALLBACK_SECONDS = 0.55
+
 -- Short, not indefinite: these Animation instances always exist once
 -- Assets/Animations/Movement.model.json is synced (docs/MOVEMENT.md §4), so this
 -- only ever actually waits if that tree is missing or a name drifted out of sync
@@ -153,25 +166,25 @@ function LocomotionAnimator.new(
 	-- would never be seen.
 	self._landingKey = nil :: string?
 	self._landingHoldUntil = nil :: number?
+	-- SlideJump one-shot hold (see SLIDE_JUMP_HOLD_FALLBACK_SECONDS above):
+	-- when set, `_update` plays "SlideJump" unconditionally until `os.clock()`
+	-- passes this.
+	self._slideJumpHoldUntil = nil :: number?
 
-	-- Roblox auto-adds a default "Animate" script to every character, which plays
-	-- its own walk/idle/jump animations on this same Humanoid/Animator
-	-- automatically based on MoveDirection/state -- entirely independent of this
-	-- system. Left alone, both play tracks on the same joints at once, which reads
-	-- as the animations visibly fighting/flickering. This system fully replaces
-	-- it, so it's destroyed (not just disabled) the moment LocomotionAnimator takes
-	-- over -- bug found 2026-09-13, missed when Step 3 first shipped.
+	-- Roblox's default "Animate" script fights this system's own tracks if left
+	-- alive -- destroy it now, and destroy it again if it shows up later
+	-- (StarterCharacterScripts can clone it in after CharacterAdded fires).
 	local character = humanoid.Parent
 	local defaultAnimateScript = character and character:FindFirstChild("Animate")
 	if defaultAnimateScript then
 		defaultAnimateScript:Destroy()
-		print("[LocomotionAnimator] destroyed default Animate script on " .. character.Name)
-	else
-		print(
-			"[LocomotionAnimator] no default Animate script found on "
-				.. (character and character.Name or "?")
-				.. " (already removed, or this ran before it existed)"
-		)
+	end
+	if character then
+		self._trove:Connect(character.ChildAdded, function(child: Instance)
+			if child.Name == "Animate" then
+				child:Destroy()
+			end
+		end)
 	end
 
 	print("[LocomotionAnimator] new() constructing for " .. (character and character.Name or "?"))
@@ -186,10 +199,7 @@ function LocomotionAnimator.new(
 	-- WALK_FOLDER, even though they were first authored as stray children of the
 	-- Walk folder (moved out in Assets/Animations/Movement.model.json alongside
 	-- this fix; found and fixed together, since the animator never referenced
-	-- them under either name until now). SlideJump has no clip of its own --
-	-- it's a brief mid-air hop immediately followed by Airborne (see below);
-	-- flagged in the Traversal Roadmap as a one-line extension to reuse "Jump"
-	-- if wanted later, not done here.
+	-- them under either name until now).
 	self._tracks.CrouchIdle = loadTrack(animator, ANIMATIONS_ROOT, "CrouchIdle", self._trove, true)
 	self._tracks.CrouchWalk = loadTrack(animator, ANIMATIONS_ROOT, "CrouchWalk", self._trove, true)
 	self._tracks.Slide = loadTrack(animator, ANIMATIONS_ROOT, "Slide", self._trove, true)
@@ -202,6 +212,7 @@ function LocomotionAnimator.new(
 	-- one-shots played on the Airborne->grounded edge. Fall stays looped (a
 	-- fall can last arbitrarily long); Jump/Land/LandHard do not.
 	self._tracks.Jump = loadTrack(animator, ANIMATIONS_ROOT, "Jump", self._trove, false)
+	self._tracks.SlideJump = loadTrack(animator, ANIMATIONS_ROOT, "SlideJump", self._trove, false)
 	self._tracks.Fall = loadTrack(animator, ANIMATIONS_ROOT, "Fall", self._trove, true)
 	self._tracks.Land = loadTrack(animator, ANIMATIONS_ROOT, "Land", self._trove, false)
 	self._tracks.LandHard = loadTrack(animator, ANIMATIONS_ROOT, "LandHard", self._trove, false)
@@ -211,24 +222,40 @@ function LocomotionAnimator.new(
 	self._tracks.DoubleJump = loadTrack(animator, ANIMATIONS_ROOT, "DoubleJump", self._trove, false)
 
 	-- Landing detection (docs/MOVEMENT.md §10; corrected TRAVERSAL-ROADMAP.md
-	-- Phase 1): an edge out of an airborne-family state (Airborne or
-	-- DoubleJump) is only a LANDING if it actually arrives grounded --
-	-- checking `previous` alone stopped being sufficient the moment
-	-- `DoubleJump` became a real Airborne exit that ISN'T a landing
-	-- (Airborne -> DoubleJump is still airborne, just a new impulse). Also
-	-- covers the rarer reverse case, DoubleJump -> a grounded state directly
-	-- (landed mid-impulse, `DoubleJumpState.Update`'s own mid-air-landing
-	-- branch) -- `previous == DoubleJump` alone would otherwise miss it.
-	-- Reads vertical speed at this exact instant -- one frame later and the
-	-- Landed->grounded physics state has already damped it.
-	self._trove:Connect(fsm.changed, function(_next: MovementState, previous: MovementState)
+	-- Phase 1; simplified again once HardLanding became a real FSM state): an
+	-- edge out of an airborne-family state (Airborne or DoubleJump) is only a
+	-- LANDING if it actually arrives grounded -- checking `previous` alone
+	-- stopped being sufficient the moment `DoubleJump` became a real Airborne
+	-- exit that ISN'T a landing (Airborne -> DoubleJump is still airborne,
+	-- just a new impulse). Also covers the rarer reverse case, DoubleJump -> a
+	-- grounded state directly (landed mid-impulse, `DoubleJumpState.Update`'s
+	-- own mid-air-landing branch) -- `previous == DoubleJump` alone would
+	-- otherwise miss it.
+	--
+	-- `next == HardLanding` is deliberately excluded from the one-shot hold
+	-- below: severity is no longer an animator-local velocity read
+	-- (`HardLandingFallSpeedThreshold` is gone -- see `AirborneState.
+	-- ResolveLandingTarget`'s real `fallHeight` check instead), it's now
+	-- which grounded state the FSM actually landed in. A landing INTO
+	-- HardLanding needs no hold of its own -- it's a real state that persists
+	-- for its own real lock duration, so per-state resolution below already
+	-- plays "LandHard" for as long as `fsm.current` says so. Only a landing
+	-- into any OTHER grounded state still needs this brief "Land" overlay.
+	self._trove:Connect(fsm.changed, function(next: MovementState, previous: MovementState)
+		if previous == MovementStates.SlideJump then
+			local track = self._tracks.SlideJump
+			local duration = (track and track.Length > 0) and track.Length or SLIDE_JUMP_HOLD_FALLBACK_SECONDS
+			self._slideJumpHoldUntil = os.clock() + duration
+		end
+
 		local fromAirborneFamily = previous == MovementStates.Airborne or previous == MovementStates.DoubleJump
-		if not fromAirborneFamily or not self._characterMover:IsGrounded() then
+		if not fromAirborneFamily or not self._characterMover:IsGrounded() or next == MovementStates.HardLanding then
 			return
 		end
-		local fallSpeed = -self._characterMover:GetVerticalVelocity()
-		local hardThreshold = TuningSnapshot.Get().HardLandingFallSpeedThreshold
-		self._landingKey = if fallSpeed >= hardThreshold then "LandHard" else "Land"
+		-- An immediate landing (e.g. a slide jump off a tiny ledge) should show
+		-- the real landing clip, not keep holding SlideJump past its welcome.
+		self._slideJumpHoldUntil = nil
+		self._landingKey = "Land"
 		self._landingHoldUntil = os.clock() + TuningSnapshot.Get().LandingAnimationHoldSeconds
 	end)
 
@@ -250,6 +277,18 @@ function LocomotionAnimator:_update()
 		end
 		self._landingHoldUntil = nil
 		self._landingKey = nil
+	end
+
+	-- SlideJump one-shot hold -- see the fsm.changed connection in `.new` for
+	-- why this can't just be handled inline below (same reasoning as the
+	-- landing hold above: by the time this is set, `fsm.current` is already
+	-- Airborne).
+	if self._slideJumpHoldUntil then
+		if os.clock() < self._slideJumpHoldUntil then
+			self:_playKey("SlideJump")
+			return
+		end
+		self._slideJumpHoldUntil = nil
 	end
 
 	local state = self._fsm.current
@@ -299,10 +338,13 @@ function LocomotionAnimator:_update()
 		end
 	elseif state == MovementStates.DoubleJump then
 		key = "DoubleJump"
+	elseif state == MovementStates.SlideJump then
+		key = "SlideJump"
+	elseif state == MovementStates.HardLanding then
+		key = "LandHard"
 	end
-	-- SlideJump, or Walk with no move direction this frame: key stays nil,
-	-- fading out whatever was last playing -- same "add a clip here once one
-	-- exists" deferred treatment SlideJump still has.
+	-- Walk with no move direction this frame: key stays nil, fading out
+	-- whatever was last playing.
 
 	self:_playKey(key)
 end

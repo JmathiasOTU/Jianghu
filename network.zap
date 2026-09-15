@@ -82,6 +82,7 @@ type DebugMovementState = enum {
 	"Slide",
 	"SlideJump",
 	"DoubleJump",
+	"HardLanding",
 }
 
 -- One recent speed-sanity correction (Shared/Util/ViolationTracker.luau's
@@ -142,8 +143,9 @@ type TunableConstantName = enum {
 	"SlideDecayRate",
 	"SlideEntrySpeedMultiplier",
 	"SlideJumpBoostAmount",
-	"HardLandingFallSpeedThreshold",
 	"LandingAnimationHoldSeconds",
+	"HardLandingHeightThreshold",
+	"HardLandingDurationSeconds",
 	"DoubleJumpForce",
 	"DoubleJumpDecayDurationSeconds",
 	"SlideSlopeAngleThresholdDegrees",
@@ -188,8 +190,9 @@ event TuningState = {
 		slideDecayRate: f32,
 		slideEntrySpeedMultiplier: f32,
 		slideJumpBoostAmount: f32,
-		hardLandingFallSpeedThreshold: f32,
 		landingAnimationHoldSeconds: f32,
+		hardLandingHeightThreshold: f32,
+		hardLandingDurationSeconds: f32,
 		doubleJumpForce: f32,
 		doubleJumpDecayDurationSeconds: f32,
 		slideSlopeAngleThresholdDegrees: f32,

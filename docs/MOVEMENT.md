@@ -1298,15 +1298,17 @@ silently changing their behavior by omission.
 gracefully" handling `loadTrack` already has for any blank clip) until real
 animations are picked.
 
-**New constants** (`MovementConstants.luau`, both wired through
+**New constant at the time** (`MovementConstants.luau`, wired through
 `Shared/Movement/MovementTuning.luau` → `network.zap`'s `TunableConstantName`/
 `TuningState` → `MovementTuningService.luau`'s payload mapping →
-`TuningSnapshot`, same live-tuning pipeline as every other movement number,
-so both are adjustable from the F4 overlay's Tuning tab without a republish):
-`HardLandingFallSpeedThreshold` (studs/s, starting-point value, not measured)
-and `LandingAnimationHoldSeconds` (the hold window above). `LocomotionAnimator`
-reads both through `TuningSnapshot.Get()` — it had no reason to read tuned
-constants before this.
+`TuningSnapshot`, same live-tuning pipeline as every other movement number, so
+it's adjustable from the F4 overlay's Tuning tab without a republish):
+`LandingAnimationHoldSeconds` (the hold window above). `LocomotionAnimator`
+reads it through `TuningSnapshot.Get()` — it had no reason to read tuned
+constants before this. (This phase also shipped `HardLandingFallSpeedThreshold`,
+a fall-*speed* threshold picking `Land` vs `LandHard` purely as an animation
+choice with no gameplay effect — superseded by the HardLanding rework below,
+which replaced it with a real, timed lock state.)
 
 **Not done — flagged, not required for this phase:** `SlideJumpState` still
 has no clip, same as before (its own comment already notes `Enter` hands off
@@ -1315,6 +1317,98 @@ runs a real frame — `LocomotionAnimator` would see `SlideJump` for
 effectively zero `RenderStepped` frames even if a clip existed). A one-line
 extension to reuse the `Jump` key was considered per the roadmap but skipped;
 revisit if it turns out to be visible in practice.
+
+---
+
+### 10a. HardLanding rework (2026-09-15) — a real, timed lock state
+
+Phase 0 above treated Land/LandHard as a purely cosmetic choice: a fall-speed
+read at the landing instant picked which one-shot clip to play, with zero
+gameplay effect, and no way to dial "how high before it's a hard landing" in
+terms a designer (or a future fall-damage system) actually thinks in. This
+rework promotes `HardLanding` to a real FSM state — mirrored client/server
+like every other movement state in this file — that actually locks movement
+for its own real duration, and switches the trigger from fall *speed* to fall
+*height* (`HardLandingHeightThreshold`, studs) so it lines up with "would this
+fall take fall damage," which is height, not `v = sqrt(2·g·h)`-derived speed.
+A "medium fall" tier is intentionally deferred — this pass only had to make
+the two extremes (a normal light landing, and a real hard-landing lock)
+correct; a state in between slots into the same `ResolveLandingTarget`
+priority chain later without disturbing either end.
+
+**Fall-height tracking** (`Movement/init.luau`'s `peakHeight`, `PlayerSession.
+peakHeight` server-side) — the peak `rootPart.Position.Y` reached since this
+life/session last left the ground, grown every Heartbeat (grow-only; never
+reset there — see below), seeded to the current height on the real takeoff
+edge (`fsm.changed`, `next == Airborne`, excluding the Airborne↔`DoubleJump`
+hop so a double jump's own upward impulse doesn't reset the peak mid-fall),
+and cleared the instant a landing actually resolves. Exposed to `context` as
+`fallHeight` (peak minus CURRENT height) — nil while grounded. The server
+computes its own copy off its own trusted `rootPart.Position.Y`, never
+anything the client asserts (`docs/ARCHITECTURE.md` §3).
+
+**Same-frame ordering hazard, both sides:** the grow-only Heartbeat update
+runs BEFORE the state's own `Update`/`mirrorPassiveTransitions` call. On the
+exact landing Heartbeat, `grounded` has already flipped true by the time that
+runs — if the peak were reset off that same read, `fallHeight` would already
+be ~0 by the time `ResolveLandingTarget` consults it moments later in the same
+frame. Resetting is left entirely to the `fsm.changed` edge instead, which
+only fires (synchronously, inside `Update`'s own `RequestTransition` call)
+*after* the landing decision has already consumed the real peak.
+
+**`AirborneState.ResolveLandingTarget`** (and its server mirror,
+`resolveLandingTarget`) now checks `fallHeight >= constants.
+HardLandingHeightThreshold` FIRST, ahead of crouch/input/landing-resume — a
+big enough fall overrides whatever the player was doing or holding on the way
+down, it isn't just another grounded-state candidate to weigh. `DoubleJumpState.
+Update`'s mid-impulse landing case inherits this for free, same as it already
+did for the crouch/resume branches.
+
+**`HardLandingState`** (`Client/Controllers/Movement/States/HardLandingState.
+luau`, new): on `Enter`, pins `WalkSpeed` to 0 and blocks jump (`CharacterMover:
+SetJumpBlocked`, the same mechanism `CrouchIdle` already uses) for
+`HardLandingDurationSeconds` (defaults to 1.11s, matched to the real clip).
+`Update` unconditionally hands back to `Airborne` if the ground is lost
+mid-lock (involuntary, same as every other grounded state's own check), else
+holds until the deadline, then re-runs `AirborneState.ResolveLandingTarget` —
+`fallHeight` is already nil by then, so this always resolves to an ordinary
+grounded target, never back into `HardLanding`. `Exit` unblocks jump; `WalkSpeed`
+is left to whichever state is entered next (every state's own `Enter` already
+sets it).
+
+**Server enforcement** (`MovementValidationService`) — mirrored the same
+"never trust the client" way every other state here is: `mirrorPassiveTransitions`
+gained a `HardLanding` branch matching `HardLandingState.Update` exactly, off
+its own `session.hardLandingLockUntil` (set server-side, off this session's
+own effective tuning, on the `fsm.changed` edge into `HardLanding` — never a
+client-claimed duration). `maxSpeedForState(HardLanding)` returns `0`, which
+is what actually makes the lock authoritative — `enforceSpeedSanity`'s
+existing position-correction snaps any horizontal drift straight back, no new
+enforcement path needed. `effectiveMaxSpeed`'s landing-momentum grace
+(designed for an ordinary landing's brief residual-momentum tail, sized around
+how long *that* decay takes) is deliberately NOT granted to `HardLanding` — at
+1.0s (`LANDING_MOMENTUM_GRACE_SECONDS`) it would otherwise cover nearly the
+entire 1.11s lock, letting a modified client move freely for almost the whole
+duration before the zero cap ever bit.
+
+**Topology** (`StateRules.luau`): `HardLanding` is reachable from `Airborne`
+and `DoubleJump` (a landing can resolve into it), and reaches every ordinary
+grounded state plus `Airborne` itself (the ground-loss safety valve). `CanEnter[
+HardLanding]` is just `context.grounded`, same shape as `Idle`'s own predicate
+— "was the fall big enough" is `ResolveLandingTarget`'s call, not `CanEnter`'s.
+
+**Constants** (`MovementConstants.luau`, full F4 live-tuning pipeline, same
+as every tunable in this file): `HardLandingHeightThreshold` (studs, replaces
+`HardLandingFallSpeedThreshold`) and `HardLandingDurationSeconds` (seconds,
+new). Both starting-point values, not measured.
+
+**Animation simplification** (`LocomotionAnimator`): the old velocity-threshold
+Land/LandHard split is gone — severity is now which grounded state the FSM
+actually landed in, not an animator-local read. A landing into `HardLanding`
+needs no one-shot hold of its own (unlike the light `Land` clip): it's a real
+state that persists for its own real duration, so ordinary per-state
+resolution already plays `LandHard` for as long as `fsm.current` says so. Only
+a landing into any OTHER grounded state still gets the brief `Land` overlay.
 
 ---
 

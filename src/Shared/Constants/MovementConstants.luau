@@ -84,18 +84,37 @@ local MovementConstants = {
 	SprintForwardDeadzone = 0.5,
 
 	-- Landing/falling animation (Traversal Roadmap §8 Phase 0, docs/MOVEMENT.md
-	-- §10) -- original design, no reference source. Vertical speed (studs/s,
-	-- CharacterMover:GetVerticalVelocity() at the instant of landing) at or
-	-- above this plays LandHard instead of the default light Land clip.
-	-- Starting-point value, not measured -- retune after playtesting a real
-	-- fall alongside the other "Fast & fluid" numbers above.
-	HardLandingFallSpeedThreshold = 65,
-	-- How long the one-shot Land/LandHard clip is allowed to win over the
-	-- landed-state's own animation key before falling through to normal
-	-- per-state resolution (docs/MOVEMENT.md §10) -- the FSM has already
-	-- transitioned to Idle/Walk/etc. by the time landing is detected, so
-	-- without this window the one-shot would never be seen at all.
-	LandingAnimationHoldSeconds = 0.35,
+	-- §10) -- original design, no reference source. How long the one-shot
+	-- light `Land` clip is allowed to win over the landed-state's own
+	-- animation key before falling through to normal per-state resolution --
+	-- the FSM has already transitioned to Idle/Walk/etc. by the time landing
+	-- is detected, so without this window the one-shot would never be seen at
+	-- all. `HardLanding` (below) needs no equivalent hold: it's a real FSM
+	-- state that persists for its own real duration, so per-state resolution
+	-- already picks `LandHard` for as long as the lock lasts.
+	LandingAnimationHoldSeconds = 0.19,
+
+	-- HardLanding (real FSM state, docs/MOVEMENT.md §10 rework) -- the fall
+	-- height (studs, peak height reached since last leaving the ground minus
+	-- landing height -- NOT vertical speed; a height threshold is what "would
+	-- take fall damage at this height" actually means, and is what a designer
+	-- wants to dial in directly rather than back-computing from
+	-- v = sqrt(2*g*h)) at or above which a landing forces the `HardLanding`
+	-- lock instead of resolving normally to Idle/Walk/Run/Sprint/Crouch.
+	-- Starting-point value, not measured -- retune in Studio (F4 Tuning tab)
+	-- once real fall-damage numbers exist to anchor it to.
+	HardLandingHeightThreshold = 40,
+	-- How long `HardLanding` holds movement (WalkSpeed pinned to 0) and jump
+	-- locked, once entered -- sized to the real `LandHard` clip's length so
+	-- the lock and the animation end together. A fixed duration, not a
+	-- read-the-clip's-own-Length like SlideJump's presentation-only
+	-- animation hold (`LocomotionAnimator`'s `SLIDE_JUMP_HOLD_FALLBACK_SECONDS`):
+	-- this number is gameplay-authoritative (the server mirrors it to enforce
+	-- the lock, see `MovementValidationService.mirrorPassiveTransitions`), so
+	-- client and server need to agree on the exact SAME number, which reading
+	-- a client-local `AnimationTrack.Length` can never guarantee the server
+	-- side of.
+	HardLandingDurationSeconds = 1.11,
 
 	-- DoubleJump (TRAVERSAL-ROADMAP.md §5/§8 Phase 1) -- starting-point values,
 	-- not yet playtested, chosen the same "Fast & fluid" way as the original
@@ -104,7 +123,7 @@ local MovementConstants = {
 	-- DoubleJumpDecayDurationSeconds, at which point the state hands back to
 	-- Airborne (or straight to a grounded state, if it lands mid-impulse).
 	DoubleJumpForce = 50,
-	DoubleJumpDecayDurationSeconds = 0.4,
+	DoubleJumpDecayDurationSeconds = 0.45,
 
 	-- Slide slope amplification (TRAVERSAL-ROADMAP.md §5/§8 Phase 3, mechanic
 	-- 3a/3b/3c) -- ported from the reference's slope math, NOT its whole decay

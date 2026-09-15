@@ -30,6 +30,7 @@ local CrouchWalkState = require(script.States.CrouchWalkState)
 local SlideState = require(script.States.SlideState)
 local SlideJumpState = require(script.States.SlideJumpState)
 local DoubleJumpState = require(script.States.DoubleJumpState)
+local HardLandingState = require(script.States.HardLandingState)
 
 type MovementState = MovementStates.MovementState
 type ClientMovementContext = ClientMovementContextModule.ClientMovementContext
@@ -53,6 +54,7 @@ local States = {
 	[MovementStates.Slide] = SlideState,
 	[MovementStates.SlideJump] = SlideJumpState,
 	[MovementStates.DoubleJump] = DoubleJumpState,
+	[MovementStates.HardLanding] = HardLandingState,
 }
 
 -- Only Run/Sprint are earned, exploit-relevant transitions that need a server
@@ -82,6 +84,7 @@ local DEBUG_STATE_NAMES: { [MovementState]: Network.DebugMovementState } = {
 	[MovementStates.Slide] = "Slide",
 	[MovementStates.SlideJump] = "SlideJump",
 	[MovementStates.DoubleJump] = "DoubleJump",
+	[MovementStates.HardLanding] = "HardLanding",
 }
 
 -- Grounded-family states (TRAVERSAL-ROADMAP.md §4) -- landing into any of
@@ -90,6 +93,10 @@ local DEBUG_STATE_NAMES: { [MovementState]: Network.DebugMovementState } = {
 -- not derived from StateRules.Transitions -- "which states count as grounded"
 -- and "which states can reach which" are different questions that happen to
 -- share some membership.
+-- HardLanding included (docs/MOVEMENT.md §10 rework): it's a real grounded
+-- lock, entered only while `context.grounded` -- the same "you're on the
+-- ground now" edge every doubleJumpUsed/preAirborneLocomotion/peakHeight
+-- reset below already keys off.
 local GROUNDED_STATES: { [MovementState]: boolean } = {
 	[MovementStates.Idle] = true,
 	[MovementStates.Walk] = true,
@@ -97,6 +104,7 @@ local GROUNDED_STATES: { [MovementState]: boolean } = {
 	[MovementStates.Sprint] = true,
 	[MovementStates.CrouchIdle] = true,
 	[MovementStates.CrouchWalk] = true,
+	[MovementStates.HardLanding] = true,
 }
 
 -- How often the current Run/Sprint claim is re-sent while held, not just on the
@@ -151,8 +159,9 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 			SlideDecayRate = value.slideDecayRate,
 			SlideEntrySpeedMultiplier = value.slideEntrySpeedMultiplier,
 			SlideJumpBoostAmount = value.slideJumpBoostAmount,
-			HardLandingFallSpeedThreshold = value.hardLandingFallSpeedThreshold,
 			LandingAnimationHoldSeconds = value.landingAnimationHoldSeconds,
+			HardLandingHeightThreshold = value.hardLandingHeightThreshold,
+			HardLandingDurationSeconds = value.hardLandingDurationSeconds,
 			DoubleJumpForce = value.doubleJumpForce,
 			DoubleJumpDecayDurationSeconds = value.doubleJumpDecayDurationSeconds,
 			SlideSlopeAngleThresholdDegrees = value.slideSlopeAngleThresholdDegrees,
@@ -181,6 +190,44 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 	-- edge (resets it) need to touch it without requiring each other.
 	local doubleJumpUsed = false
 
+	-- Crouch-lock (SlideJump landing fix): true from the instant SlideJump is
+	-- entered until Ctrl is actually released, regardless of how long that
+	-- takes -- masked into `crouchHeld` below so every existing "if
+	-- crouchHeld, go crouch/slide" check (IdleState/WalkState/RunState/
+	-- SprintState's own Update, AirborneState.ResolveLandingTarget) treats a
+	-- still-held Ctrl as not-held without any of them needing to know why.
+	-- Without this, a player who slide-jumps without ever releasing Ctrl (the
+	-- common case -- jump is a different key) would resolve the landing to
+	-- Idle/Walk correctly, only for THAT state's own next Update tick to see
+	-- `crouchHeld` still true and immediately re-enter CrouchIdle/CrouchWalk
+	-- -- the exact "lands in idle, then instantly crouches" two-hop this
+	-- fixes. Cleared on the real key-up edge (`input.CrouchChanged` below),
+	-- never on a timer, so a legitimate re-press after release still works
+	-- immediately.
+	local crouchSuppressed = false
+
+	-- Landing-resume fix: Run/Sprint if that's the tier this life was in the
+	-- instant it left the ground, nil otherwise -- set on the Run/Sprint ->
+	-- Airborne edge below, carried through an Airborne<->DoubleJump hop,
+	-- cleared the instant a landing actually resolves (also below). Read by
+	-- `AirborneState.ResolveLandingTarget` (via `buildContext` below) to land
+	-- straight back into the same tier when forward is still held, and by
+	-- `StateRules.CanEnter[Sprint]` to admit that resume without re-checking a
+	-- dwell timer that `fsm.current == Airborne` has no way to satisfy.
+	local preAirborneLocomotion: MovementState? = nil
+
+	-- HardLanding fall-height tracking (docs/MOVEMENT.md §10 rework): the peak
+	-- `rootPart.Position.Y` reached since this life last left the ground, nil
+	-- while grounded (no excursion in progress). Grown every Heartbeat below
+	-- (grow-only -- never reset there, to avoid a same-frame race against the
+	-- landing decision that reads it, see the Heartbeat comment); seeded to
+	-- the current height on the real takeoff edge and cleared the instant a
+	-- landing resolves, both in the `fsm.changed` handler below, mirroring
+	-- `preAirborneLocomotion`'s own bookkeeping shape. Read via `buildContext`
+	-- as `fallHeight` (peak minus CURRENT height) by `AirborneState.
+	-- ResolveLandingTarget` to decide whether a landing forces `HardLanding`.
+	local peakHeight: number? = nil
+
 	local function buildContext(): ClientMovementContext
 		local runDuration = if fsm.current == MovementStates.Run
 			then RunState.GetDuration()
@@ -189,9 +236,11 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 			moveIntent = input:GetMoveIntent(),
 			grounded = characterMover:IsGrounded(),
 			jumping = characterMover:IsJumping(),
-			crouchHeld = input:IsCrouchHeld(),
+			crouchHeld = input:IsCrouchHeld() and not crouchSuppressed,
 			doubleJumpUsed = doubleJumpUsed,
 			runDuration = runDuration,
+			preAirborneLocomotion = preAirborneLocomotion,
+			fallHeight = if peakHeight then peakHeight - rootPart.Position.Y else nil,
 			constants = TuningSnapshot.Get(),
 			characterMover = characterMover,
 			fsm = fsm,
@@ -258,6 +307,47 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 		elseif GROUNDED_STATES[next] then
 			doubleJumpUsed = false
 		end
+
+		-- Crouch-lock (SlideJump landing fix): armed the instant SlideJump is
+		-- entered -- see the `crouchSuppressed` declaration above for why this
+		-- has to persist past the landing edge, not just the one frame.
+		if next == MovementStates.SlideJump then
+			crouchSuppressed = true
+		end
+
+		-- Landing-resume bookkeeping (landing-resume fix): mirrors the
+		-- DoubleJump bookkeeping's own two-branch shape just above -- set on
+		-- the Run/Sprint -> Airborne edge, left untouched on every OTHER edge
+		-- into Airborne/DoubleJump so it survives an Airborne <-> DoubleJump
+		-- hop (`previous` there is Airborne/DoubleJump itself, neither of
+		-- which is Run/Sprint, so the branch below correctly no-ops and keeps
+		-- whatever was already set). Slide -> SlideJump -> Airborne never sets
+		-- it at all (`previous` there is SlideJump), so a slide-jump always
+		-- lands via the normal Walk/Idle path, never a resumed Run/Sprint --
+		-- deliberately out of scope for this fix. Cleared the instant a
+		-- landing actually resolves, below.
+		if next == MovementStates.Airborne or next == MovementStates.DoubleJump then
+			if previous == MovementStates.Run or previous == MovementStates.Sprint then
+				preAirborneLocomotion = previous
+			end
+		elseif GROUNDED_STATES[next] then
+			preAirborneLocomotion = nil
+		end
+
+		-- HardLanding fall-height bookkeeping (docs/MOVEMENT.md §10 rework):
+		-- seeded on the real takeoff edge -- `next == Airborne` covers every
+		-- grounded-state jump-off AND Slide -> SlideJump -> Airborne (`previous`
+		-- there is SlideJump); excluded when `previous == DoubleJump` so the
+		-- Airborne <-> DoubleJump hop doesn't reset the peak mid-excursion.
+		-- Cleared the instant a landing actually resolves, same edge as
+		-- `preAirborneLocomotion` just above.
+		if next == MovementStates.Airborne then
+			if previous ~= MovementStates.DoubleJump then
+				peakHeight = rootPart.Position.Y
+			end
+		elseif GROUNDED_STATES[next] then
+			peakHeight = nil
+		end
 	end)
 
 	lifeTrove:Connect(input.RunRequested, function()
@@ -284,9 +374,29 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 	lifeTrove:Connect(input.CrouchChanged, function(held: boolean)
 		Network.RequestMovementTransition.Fire(if held then "CrouchDown" else "CrouchUp")
 		lastCrouchResyncAt = os.clock()
+		-- Crouch-lock re-arm (SlideJump landing fix): the real key-up edge is
+		-- the only thing that clears the lock -- a legitimate re-press right
+		-- after release must work immediately, never gated on a cooldown.
+		if not held then
+			crouchSuppressed = false
+		end
 	end)
 
 	lifeTrove:Connect(RunService.Heartbeat, function(dt: number)
+		-- Grow-only, deliberately BEFORE `Update` below (docs/MOVEMENT.md §10
+		-- rework): on the exact landing Heartbeat, `characterMover:IsGrounded()`
+		-- has already flipped true by the time this runs, same instant
+		-- `AirborneState.Update` reads `context.grounded` to make its landing
+		-- decision -- if this reset `peakHeight` on that same "now grounded"
+		-- read, `fallHeight` would already be ~0 by the time `ResolveLandingTarget`
+		-- consults it a few lines later in the SAME frame. Resetting is left
+		-- entirely to the `fsm.changed` handler above instead, which only fires
+		-- (synchronously, within `Update`'s own `RequestTransition` call) AFTER
+		-- the landing decision has already consumed the real peak.
+		if peakHeight then
+			peakHeight = math.max(peakHeight, rootPart.Position.Y)
+		end
+
 		States[fsm.current].Update(dt, buildContext())
 
 		local claimName = NETWORK_CLAIM_NAMES[fsm.current]

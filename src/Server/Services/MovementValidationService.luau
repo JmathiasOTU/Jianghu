@@ -41,6 +41,23 @@ local DEBUG_STATE_NAMES: { [MovementState]: Network.DebugMovementState } = {
 	[MovementStates.Slide] = "Slide",
 	[MovementStates.SlideJump] = "SlideJump",
 	[MovementStates.DoubleJump] = "DoubleJump",
+	[MovementStates.HardLanding] = "HardLanding",
+}
+
+-- Grounded-family states (docs/MOVEMENT.md §10 rework) -- mirrors
+-- Movement/init.luau's own client-side `GROUNDED_STATES` 1:1, same "which
+-- states count as grounded" question `session.peakHeight`'s seed/clear edge
+-- (below, in `createSession`'s `fsm.changed` handler) needs answered
+-- server-side too. Deliberately a plain set, not derived from
+-- `StateRules.Transitions`, same reasoning as the client's own copy.
+local GROUNDED_STATES: { [MovementState]: boolean } = {
+	[MovementStates.Idle] = true,
+	[MovementStates.Walk] = true,
+	[MovementStates.Run] = true,
+	[MovementStates.Sprint] = true,
+	[MovementStates.CrouchIdle] = true,
+	[MovementStates.CrouchWalk] = true,
+	[MovementStates.HardLanding] = true,
 }
 
 type PlayerSession = {
@@ -71,6 +88,41 @@ type PlayerSession = {
 	-- `mirrorPassiveTransitions` already detects for the crouched-landing
 	-- branch).
 	doubleJumpUsed: boolean,
+	-- Crouch-lock (SlideJump landing fix) -- mirrors the client's own
+	-- `crouchSuppressed` 1:1: armed the instant this session's mirror enters
+	-- SlideJump, cleared on an accepted "CrouchUp" claim (the server's only
+	-- source for the real key-up edge, same as `crouchHeld` itself). Masked
+	-- into `context.crouchHeld` by `buildContext` below so the server's own
+	-- passive-transition/landing logic independently arrives at the same
+	-- "don't auto-recrouch after a slide jump" decision the client does,
+	-- never trusting the client's own masked value.
+	crouchSuppressed: boolean,
+	-- Landing-resume fix -- mirrors the client's own `preAirborneLocomotion`
+	-- 1:1: Run/Sprint if that's the tier this session's mirror was in the
+	-- instant it left the ground, nil otherwise. Set in
+	-- `mirrorPassiveTransitions`'s own "not grounded -> Airborne" branch
+	-- (off `current`, the state about to be left, same source the client
+	-- reads via `previous`), cleared the instant a landing resolves.
+	preAirborneLocomotion: MovementState?,
+	-- HardLanding fall-height tracking (docs/MOVEMENT.md §10 rework) -- mirrors
+	-- the client's own `peakHeight` 1:1, off this session's OWN
+	-- `rootPart.Position.Y` (server-trusted, never anything the client
+	-- asserts, docs/ARCHITECTURE.md §3): the peak height reached since this
+	-- session's mirror last left the ground, nil while grounded. Grown every
+	-- Heartbeat (`updatePeakHeight`, called before `mirrorPassiveTransitions`
+	-- for the same same-frame-race reason as the client's own Heartbeat
+	-- ordering comment), seeded/cleared in `createSession`'s `fsm.changed`
+	-- handler.
+	peakHeight: number?,
+	-- HardLanding movement lock (docs/MOVEMENT.md §10 rework) -- mirrors the
+	-- client's own `HardLandingState`'s `lockedUntil`: this server's own
+	-- `os.clock()` deadline, set the instant this session's mirror enters
+	-- HardLanding, read by `mirrorPassiveTransitions`'s own HardLanding branch
+	-- to decide when to resolve back out. `maxSpeedForState`'s HardLanding ->
+	-- 0 cap is what actually makes the lock authoritative (via
+	-- `enforceSpeedSanity`'s existing position correction) -- this timestamp
+	-- only decides when the MIRROR itself is allowed to leave the state.
+	hardLandingLockUntil: number?,
 	-- Entry snapshot for DoubleJump's resimulation (TRAVERSAL-ROADMAP.md §7.1)
 	-- -- this server's OWN `os.clock()` the instant it accepted the claim,
 	-- never anything the client sends. `enforceDoubleJumpTrajectory` measures
@@ -118,6 +170,10 @@ local TRAVERSAL_CLAIMS_PER_SECOND = 5
 -- no-op. Revisit with a real playtest capture, same as SpeedToleranceMultiplier
 -- was.
 local TRAVERSAL_VERTICAL_VELOCITY_TOLERANCE = 15
+
+-- Absorbs standing-still jitter during HardLanding's WalkSpeed=0 lock without
+-- tolerating a real WASD movement attempt.
+local HARD_LANDING_RESIDUAL_SPEED_TOLERANCE = 6
 
 -- Temporary instrumentation for the 2026-09-13 Sprint-rubber-banding
 -- investigation (docs/MOVEMENT.md §5) -- prints real numbers instead of guessing
@@ -221,9 +277,11 @@ local function buildContext(session: PlayerSession): MovementContext
 		},
 		grounded = isGrounded(session.humanoid:GetState()),
 		jumping = session.humanoid:GetState() == Enum.HumanoidStateType.Jumping,
-		crouchHeld = session.crouchHeld,
+		crouchHeld = session.crouchHeld and not session.crouchSuppressed,
 		doubleJumpUsed = session.doubleJumpUsed,
 		runDuration = runDuration,
+		preAirborneLocomotion = session.preAirborneLocomotion,
+		fallHeight = if session.peakHeight then session.peakHeight - session.rootPart.Position.Y else nil,
 		constants = constants,
 	}
 end
@@ -233,12 +291,22 @@ end
 -- `AirborneState.ResolveLandingTarget` client-side exactly, single source of
 -- truth for "which grounded state does a landing input pattern resolve to"
 -- rather than a second inline copy for DoubleJump's own mid-impulse-landing
--- case.
+-- case. Landing-resume fix: resumes `context.preAirborneLocomotion`
+-- (Run/Sprint) instead of always falling to Walk when forward is still held
+-- -- see AirborneState.luau's own copy of this function for the full
+-- reasoning, identical here. HardLanding rework: `fallHeight` is checked
+-- FIRST, same override-everything priority as the client's own copy.
 local function resolveLandingTarget(context: MovementContext): MovementState
+	if context.fallHeight and context.fallHeight >= context.constants.HardLandingHeightThreshold then
+		return MovementStates.HardLanding
+	end
 	local hasInput = StateRules.HasMoveInput(context)
 	if context.crouchHeld then
 		return if hasInput then MovementStates.CrouchWalk else MovementStates.CrouchIdle
 	elseif hasInput then
+		if context.moveIntent.forward and context.preAirborneLocomotion then
+			return context.preAirborneLocomotion :: MovementState
+		end
 		return MovementStates.Walk
 	end
 	return MovementStates.Idle
@@ -264,6 +332,10 @@ local function mirrorPassiveTransitions(session: PlayerSession)
 	-- otherwise catch this first and skip the boost entirely.
 	if current == MovementStates.Slide and context.jumping then
 		if session.fsm:RequestTransition(MovementStates.SlideJump, context) then
+			-- Crouch-lock (SlideJump landing fix): armed the instant this
+			-- session's mirror enters SlideJump, same edge the client's own
+			-- `crouchSuppressed` arms on -- see the PlayerSession field comment.
+			session.crouchSuppressed = true
 			session.fsm:RequestTransition(MovementStates.Airborne, context)
 		end
 		return
@@ -278,6 +350,9 @@ local function mirrorPassiveTransitions(session: PlayerSession)
 				-- DoubleJump reset (TRAVERSAL-ROADMAP.md §4): mirrors the
 				-- client's own reset on the identical "landed" edge.
 				session.doubleJumpUsed = false
+				-- Landing-resume fix: consumed the instant a landing actually
+				-- resolves, same edge as the doubleJumpUsed reset just above.
+				session.preAirborneLocomotion = nil
 			end
 		end
 		return
@@ -302,6 +377,11 @@ local function mirrorPassiveTransitions(session: PlayerSession)
 		if context.grounded then
 			if session.fsm:RequestTransition(resolveLandingTarget(context), context) then
 				session.doubleJumpUsed = false
+				-- Landing-resume fix: same consume-on-landing edge as the
+				-- Airborne branch above -- `preAirborneLocomotion` survives the
+				-- Airborne -> DoubleJump hop untouched (see where it's set,
+				-- below), so this mid-impulse landing still needs to clear it.
+				session.preAirborneLocomotion = nil
 			end
 			return
 		end
@@ -313,7 +393,36 @@ local function mirrorPassiveTransitions(session: PlayerSession)
 		return
 	end
 
+	-- HardLanding (docs/MOVEMENT.md §10 rework): mirrors `HardLandingState.
+	-- Update` client-side exactly -- losing the ground mid-lock is involuntary
+	-- and takes priority over the lock timer (nothing left to lock the player
+	-- TO); otherwise holds until this session's own `hardLandingLockUntil`
+	-- (set server-side, off this session's own effective tuning, on the
+	-- `fsm.changed` edge into HardLanding -- never anything the client
+	-- claims), then re-resolves the SAME landing decision Airborne/DoubleJump
+	-- use. `context.fallHeight` is already nil by this point (cleared the
+	-- instant HardLanding was entered), so this always resolves to an
+	-- ordinary grounded target, never back into HardLanding again.
+	if current == MovementStates.HardLanding then
+		if not context.grounded then
+			session.fsm:RequestTransition(MovementStates.Airborne, context)
+			return
+		end
+		if session.hardLandingLockUntil and os.clock() < session.hardLandingLockUntil then
+			return
+		end
+		session.fsm:RequestTransition(resolveLandingTarget(context), context)
+		return
+	end
+
 	if not context.grounded then
+		-- Landing-resume fix: `current` is whatever grounded state this
+		-- session's mirror is about to leave -- the same "previous" the
+		-- client's own fsm.changed handler reads, just sourced before the
+		-- transition instead of from the edge's own callback args.
+		if current == MovementStates.Run or current == MovementStates.Sprint then
+			session.preAirborneLocomotion = current
+		end
 		session.fsm:RequestTransition(MovementStates.Airborne, context)
 		return
 	end
@@ -438,6 +547,24 @@ local function mirrorPassiveTransitions(session: PlayerSession)
 	end
 end
 
+-- HardLanding fall-height tracking, server side (docs/MOVEMENT.md §10
+-- rework) -- mirrors the client's own Heartbeat-ordering comment exactly:
+-- grow-only, and MUST run before `mirrorPassiveTransitions` below in the
+-- Heartbeat loop, for the identical same-frame-race reason. On the exact
+-- landing Heartbeat, `context.grounded` has already flipped true by the time
+-- `mirrorPassiveTransitions` reads it to make the landing decision -- if this
+-- reset `session.peakHeight` off that same read, `fallHeight` would already
+-- be ~0 by the time `resolveLandingTarget` consults it moments later in the
+-- SAME frame. Resetting is left entirely to the `fsm.changed` handler in
+-- `createSession`, which only fires (synchronously, inside
+-- `mirrorPassiveTransitions`'s own `RequestTransition` call) AFTER the
+-- landing decision has already consumed the real peak.
+local function updatePeakHeight(session: PlayerSession)
+	if session.peakHeight then
+		session.peakHeight = math.max(session.peakHeight, session.rootPart.Position.Y)
+	end
+end
+
 -- Slide's own ground-normal probe, server side (TRAVERSAL-ROADMAP.md §7.5/§8
 -- Phase 3) -- throttled the same way the client's own SlideState.Update is,
 -- just off `os.clock()` deltas rather than a `dt` accumulator, since this
@@ -532,6 +659,10 @@ local function maxSpeedForState(state: MovementState, constants: EffectiveMoveme
 		return constants.SprintSpeed
 	elseif state == MovementStates.CrouchIdle or state == MovementStates.CrouchWalk then
 		return constants.CrouchSpeed
+	elseif state == MovementStates.HardLanding then
+		-- Not a literal 0 -- that made maxDistance always exactly 0, flagging
+		-- even standing-still jitter every single check.
+		return HARD_LANDING_RESIDUAL_SPEED_TOLERANCE
 	end
 	return constants.WalkSpeed
 end
@@ -554,6 +685,13 @@ end
 -- is taught to `maxSpeedForState`, with no separate copy of this fix needed.
 local function effectiveMaxSpeed(session: PlayerSession, constants: EffectiveMovementConstants): number
 	local currentCap = maxSpeedForState(session.fsm.current, constants, slideSlopeAmplification(session, constants))
+
+	-- Skips the grace below -- it's sized for an ordinary landing's brief
+	-- momentum tail, not a multi-second lock.
+	if session.fsm.current == MovementStates.HardLanding then
+		return currentCap
+	end
+
 	local previousState = session.previousState
 	if not previousState then
 		return currentCap
@@ -587,6 +725,10 @@ local function createSession(player: Player, humanoid: Humanoid, rootPart: BaseP
 		lastTransitionAt = os.clock(),
 		crouchHeld = false,
 		doubleJumpUsed = false,
+		crouchSuppressed = false,
+		preAirborneLocomotion = nil,
+		peakHeight = nil,
+		hardLandingLockUntil = nil,
 		traversalEntryAt = nil,
 		speedSanitySuspendedUntil = nil,
 		traversalRateLimiter = RateLimiter.new(TRAVERSAL_CLAIMS_PER_SECOND, 1),
@@ -618,6 +760,28 @@ local function createSession(player: Player, humanoid: Humanoid, rootPart: BaseP
 		-- that's actually a cap decrease worth gracing.
 		session.previousState = previous
 		session.lastTransitionAt = now
+
+		-- HardLanding fall-height bookkeeping (docs/MOVEMENT.md §10 rework) --
+		-- mirrors Movement/init.luau's own client-side edge exactly: seeded on
+		-- the real takeoff edge (`next == Airborne`, excluding the Airborne <->
+		-- DoubleJump hop so the peak survives it), cleared the instant a
+		-- landing actually resolves.
+		if next == MovementStates.Airborne then
+			if previous ~= MovementStates.DoubleJump then
+				session.peakHeight = rootPart.Position.Y
+			end
+		elseif GROUNDED_STATES[next] then
+			session.peakHeight = nil
+		end
+
+		-- HardLanding lock deadline (docs/MOVEMENT.md §10 rework) -- mirrors
+		-- the client's own `HardLandingState.Enter` timestamp exactly, off
+		-- this session's own EFFECTIVE tuning (never a client-claimed
+		-- duration) so `mirrorPassiveTransitions`'s own HardLanding branch
+		-- knows exactly when the client-side lock is expected to release.
+		if next == MovementStates.HardLanding then
+			session.hardLandingLockUntil = now + MovementTuningState.GetEffective(player).HardLandingDurationSeconds
+		end
 
 		-- Passability (docs/MOVEMENT.md §9): the SERVER's own copy, keyed off
 		-- its own mirrored state -- never the client's. This is the
@@ -899,6 +1063,10 @@ local function onRequestMovementTransition(player: Player, claim: Network.Claima
 		return
 	elseif claim == "CrouchUp" then
 		session.crouchHeld = false
+		-- Crouch-lock re-arm (SlideJump landing fix): mirrors the client's own
+		-- `crouchSuppressed` clear on the same real key-up edge -- this claim
+		-- IS that edge server-side, there's no separate signal to wait for.
+		session.crouchSuppressed = false
 		return
 	end
 
@@ -972,6 +1140,7 @@ function MovementValidationService.Init()
 	RunService.Heartbeat:Connect(function()
 		for _, session in sessions do
 			local constants = MovementTuningState.GetEffective(session.player)
+			updatePeakHeight(session)
 			mirrorPassiveTransitions(session)
 			updateSlideGroundQuery(session, constants)
 			enforceSpeedSanity(session, constants)

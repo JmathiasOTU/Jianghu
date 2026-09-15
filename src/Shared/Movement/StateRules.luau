@@ -23,8 +23,12 @@ end
 -- reach Slide (never Crouch directly) -- Slide is what's earned by pressing
 -- Ctrl while running, per the design; the crouch states themselves are only
 -- ever reached from Slide once its decay crosses the threshold.
--- `Airborne -> Run` was already unused topology (landing never attempts Run,
--- see docs/MOVEMENT.md §2) and is left as-is, untouched by this pass.
+-- `Airborne -> Run`/`Airborne -> Sprint` (landing-resume fix): landing CAN now
+-- target Run or Sprint directly -- `AirborneState.ResolveLandingTarget`
+-- resumes whichever of those two this life was in the instant it left the
+-- ground, provided forward is still held on touchdown -- so both need to be
+-- real, reachable edges here, not just unused topology the way `-> Run` used
+-- to be before this pass.
 local Transitions: { [MovementState]: { MovementState } } = {
 	[MovementStates.Idle] = {
 		MovementStates.Walk,
@@ -55,9 +59,11 @@ local Transitions: { [MovementState]: { MovementState } } = {
 		MovementStates.Idle,
 		MovementStates.Walk,
 		MovementStates.Run,
+		MovementStates.Sprint,
 		MovementStates.CrouchIdle,
 		MovementStates.CrouchWalk,
 		MovementStates.DoubleJump,
+		MovementStates.HardLanding,
 	},
 	[MovementStates.CrouchIdle] = {
 		MovementStates.Idle,
@@ -91,8 +97,31 @@ local Transitions: { [MovementState]: { MovementState } } = {
 		MovementStates.Airborne,
 		MovementStates.Idle,
 		MovementStates.Walk,
+		MovementStates.Run,
+		MovementStates.Sprint,
 		MovementStates.CrouchIdle,
 		MovementStates.CrouchWalk,
+		MovementStates.HardLanding,
+	},
+
+	-- HardLanding (docs/MOVEMENT.md §10 rework): a real, timed lock state
+	-- entered instead of the normal landing target when the fall was big
+	-- enough (see `AirborneState.ResolveLandingTarget`'s `fallHeight` check).
+	-- Resolves back out to whichever grounded state the held input actually
+	-- calls for once its own lock duration elapses (`HardLandingState.Update`,
+	-- and the server's matching `mirrorPassiveTransitions` branch, both just
+	-- re-run `ResolveLandingTarget` at that point) -- so every ordinary
+	-- grounded target is a legal edge out of it. `Airborne` is included too,
+	-- same defensive "ground can vanish out from under a locked player" edge
+	-- CrouchIdle/CrouchWalk already carry.
+	[MovementStates.HardLanding] = {
+		MovementStates.Idle,
+		MovementStates.Walk,
+		MovementStates.Run,
+		MovementStates.Sprint,
+		MovementStates.CrouchIdle,
+		MovementStates.CrouchWalk,
+		MovementStates.Airborne,
 	},
 }
 
@@ -122,8 +151,23 @@ local CanEnter: { [MovementState]: (context: MovementContext) -> boolean } = {
 	end,
 
 	[MovementStates.Sprint] = function(context: MovementContext): boolean
+		if not context.grounded then
+			return false
+		end
+		-- Landing-resume fix: a landing that resolves straight back to Sprint
+		-- (`AirborneState.ResolveLandingTarget`) has no `runDuration` to check --
+		-- `fsm.current` is still Airborne, not Run, at the instant this runs.
+		-- `preAirborneLocomotion` already encodes that this life was legitimately
+		-- IN Sprint (past its own dwell check) the instant it left the ground, so
+		-- re-checking the dwell timer here would only ever reject a resume that
+		-- has already earned it once -- this is a carry-through, not a fresh
+		-- grant, same distinction the landing-momentum speed grace already draws
+		-- for a decreasing cap.
+		if context.preAirborneLocomotion == MovementStates.Sprint then
+			return true
+		end
 		local threshold = context.constants.SprintThresholdSeconds
-		return context.grounded and context.runDuration ~= nil and (context.runDuration :: number) >= threshold
+		return context.runDuration ~= nil and (context.runDuration :: number) >= threshold
 	end,
 
 	[MovementStates.Airborne] = function(context: MovementContext): boolean
@@ -168,6 +212,13 @@ local CanEnter: { [MovementState]: (context: MovementContext) -> boolean } = {
 	-- clean per-life reset hook.
 	[MovementStates.DoubleJump] = function(context: MovementContext): boolean
 		return not context.grounded and not context.doubleJumpUsed
+	end,
+
+	-- Same shape as Idle's own predicate (docs/MOVEMENT.md §10 rework) --
+	-- "was this landing big enough" is `ResolveLandingTarget`'s decision, not
+	-- CanEnter's; this only ever needs to confirm the landing is real.
+	[MovementStates.HardLanding] = function(context: MovementContext): boolean
+		return context.grounded
 	end,
 }
 

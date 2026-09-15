@@ -23,8 +23,9 @@ export type TunableConstantName =
 	| "SlideDecayRate"
 	| "SlideEntrySpeedMultiplier"
 	| "SlideJumpBoostAmount"
-	| "HardLandingFallSpeedThreshold"
 	| "LandingAnimationHoldSeconds"
+	| "HardLandingHeightThreshold"
+	| "HardLandingDurationSeconds"
 	| "DoubleJumpForce"
 	| "DoubleJumpDecayDurationSeconds"
 	| "SlideSlopeAngleThresholdDegrees"
@@ -53,8 +54,9 @@ export type EffectiveMovementConstants = {
 	SlideDecayRate: number,
 	SlideEntrySpeedMultiplier: number,
 	SlideJumpBoostAmount: number,
-	HardLandingFallSpeedThreshold: number,
 	LandingAnimationHoldSeconds: number,
+	HardLandingHeightThreshold: number,
+	HardLandingDurationSeconds: number,
 	DoubleJumpForce: number,
 	DoubleJumpDecayDurationSeconds: number,
 	SlideSlopeAngleThresholdDegrees: number,
@@ -78,8 +80,9 @@ local TUNABLE_NAMES: { TunableConstantName } = {
 	"SlideDecayRate",
 	"SlideEntrySpeedMultiplier",
 	"SlideJumpBoostAmount",
-	"HardLandingFallSpeedThreshold",
 	"LandingAnimationHoldSeconds",
+	"HardLandingHeightThreshold",
+	"HardLandingDurationSeconds",
 	"DoubleJumpForce",
 	"DoubleJumpDecayDurationSeconds",
 	"SlideSlopeAngleThresholdDegrees",
@@ -107,8 +110,14 @@ local VALID_RANGES: { [TunableConstantName]: { min: number, max: number } } = {
 	SlideDecayRate = { min = 0.1, max = 500 },
 	SlideEntrySpeedMultiplier = { min = 0.5, max = 5 },
 	SlideJumpBoostAmount = { min = 0, max = 500 },
-	HardLandingFallSpeedThreshold = { min = 0, max = 500 },
 	LandingAnimationHoldSeconds = { min = 0, max = 5 },
+	-- Height threshold, not a speed -- wide enough to cover both a low-ceiling
+	-- test map and a tall Qinggong-scale drop without needing a re-range later.
+	HardLandingHeightThreshold = { min = 0, max = 2000 },
+	-- Bounded well above the real ~1.11s clip length so a developer can still
+	-- stretch it for testing, but can't zero it out into a permanent lock nor
+	-- push it absurdly long by fat-fingering the F4 input box.
+	HardLandingDurationSeconds = { min = 0.1, max = 10 },
 	DoubleJumpForce = { min = 0, max = 500 },
 	DoubleJumpDecayDurationSeconds = { min = 0.05, max = 5 },
 	SlideSlopeAngleThresholdDegrees = { min = 0, max = 89 },
@@ -137,8 +146,9 @@ function MovementTuning.Defaults(): EffectiveMovementConstants
 		SlideDecayRate = MovementConstants.SlideDecayRate,
 		SlideEntrySpeedMultiplier = MovementConstants.SlideEntrySpeedMultiplier,
 		SlideJumpBoostAmount = MovementConstants.SlideJumpBoostAmount,
-		HardLandingFallSpeedThreshold = MovementConstants.HardLandingFallSpeedThreshold,
 		LandingAnimationHoldSeconds = MovementConstants.LandingAnimationHoldSeconds,
+		HardLandingHeightThreshold = MovementConstants.HardLandingHeightThreshold,
+		HardLandingDurationSeconds = MovementConstants.HardLandingDurationSeconds,
 		DoubleJumpForce = MovementConstants.DoubleJumpForce,
 		DoubleJumpDecayDurationSeconds = MovementConstants.DoubleJumpDecayDurationSeconds,
 		SlideSlopeAngleThresholdDegrees = MovementConstants.SlideSlopeAngleThresholdDegrees,

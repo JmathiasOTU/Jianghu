@@ -10,6 +10,7 @@ local CollisionGroups = require(ReplicatedStorage.Shared.Movement.CollisionGroup
 local MovementTypes = require(ReplicatedStorage.Shared.Types.MovementTypes)
 local MovementConstants = require(ReplicatedStorage.Shared.Constants.MovementConstants)
 local MovementTuning = require(ReplicatedStorage.Shared.Movement.MovementTuning)
+local TraversalMath = require(ReplicatedStorage.Shared.Movement.TraversalMath)
 local DeveloperAllowlist = require(ReplicatedStorage.Shared.Constants.DeveloperAllowlist)
 local RateLimiter = require(ReplicatedStorage.Shared.Util.RateLimiter)
 local ViolationTracker = require(ReplicatedStorage.Shared.Util.ViolationTracker)
@@ -18,6 +19,7 @@ local Network = require(script.Parent.Parent.Network.network)
 local CharacterTeleported = require(script.Parent.Parent.Events.CharacterTeleported)
 local MovementTuningState = require(script.Parent.Parent.State.MovementTuningState)
 local NoclipState = require(script.Parent.Parent.State.NoclipState)
+local DebugOverlayState = require(script.Parent.Parent.State.DebugOverlayState)
 
 type MovementState = MovementStates.MovementState
 type MovementContext = MovementTypes.MovementContext
@@ -37,6 +39,7 @@ local DEBUG_STATE_NAMES: { [MovementState]: Network.DebugMovementState } = {
 	[MovementStates.CrouchWalk] = "CrouchWalk",
 	[MovementStates.Slide] = "Slide",
 	[MovementStates.SlideJump] = "SlideJump",
+	[MovementStates.DoubleJump] = "DoubleJump",
 }
 
 type PlayerSession = {
@@ -61,6 +64,29 @@ type PlayerSession = {
 	-- mirrored passively off this flag by `mirrorPassiveTransitions`, the same
 	-- way Idle<->Walk already is off `moveIntent`.
 	crouchHeld: boolean,
+	-- DoubleJump per-life flag (TRAVERSAL-ROADMAP.md §4/§7) -- mirrors the
+	-- client's own flag 1:1: set on an accepted "DoubleJump" claim, reset the
+	-- instant this session's mirror lands (same "Airborne -> grounded" edge
+	-- `mirrorPassiveTransitions` already detects for the crouched-landing
+	-- branch).
+	doubleJumpUsed: boolean,
+	-- Entry snapshot for DoubleJump's resimulation (TRAVERSAL-ROADMAP.md §7.1)
+	-- -- this server's OWN `os.clock()` the instant it accepted the claim,
+	-- never anything the client sends. `enforceDoubleJumpTrajectory` measures
+	-- elapsed time from this, and `mirrorPassiveTransitions` uses it to decide
+	-- when the mirror should hand back to Airborne on its own initiative.
+	traversalEntryAt: number?,
+	-- Set the instant a ClaimTraversalMove is accepted, cleared once expired
+	-- (TRAVERSAL-ROADMAP.md §7.4) -- suspends `enforceSpeedSanity`'s
+	-- horizontal check for `TraversalSpeedSanityGraceSeconds` so a legitimate
+	-- traversal move's own residual momentum on landing doesn't get
+	-- immediately flagged as a violation.
+	speedSanitySuspendedUntil: number?,
+	-- Independent rate limit for ClaimTraversalMove (TRAVERSAL-ROADMAP.md §11)
+	-- -- kept separate from `rateLimiter` (RequestMovementTransition's own),
+	-- same orthogonal-cooldown principle Run/Sprint's limiter already
+	-- established, just applied to the new event.
+	traversalRateLimiter: RateLimiter.RateLimiter,
 }
 
 -- Rate limit for RequestMovementTransition, independent of the FSM's own legality
@@ -68,6 +94,19 @@ type PlayerSession = {
 -- network-layer concern, not gameplay tuning, so it lives here rather than in
 -- MovementConstants.
 local TRANSITION_CLAIMS_PER_SECOND = 5
+
+-- Rate limit for ClaimTraversalMove, independent of RequestMovementTransition's
+-- own limiter above (TRAVERSAL-ROADMAP.md §11) -- same reasoning, separate
+-- counter so a burst against one event can never eat into the other's budget.
+local TRAVERSAL_CLAIMS_PER_SECOND = 5
+
+-- Starting-point tolerance for `enforceDoubleJumpTrajectory` below -- flagged
+-- unmeasured on purpose (docs/MOVEMENT.md §9's "measured, not guessed" bar has
+-- no data yet for this brand-new check): generous enough to absorb ordinary
+-- gravity/replication variance on top of the claimed impulse without being a
+-- no-op. Revisit with a real playtest capture, same as SpeedToleranceMultiplier
+-- was.
+local TRAVERSAL_VERTICAL_VELOCITY_TOLERANCE = 15
 
 -- Temporary instrumentation for the 2026-09-13 Sprint-rubber-banding
 -- investigation (docs/MOVEMENT.md §5) -- prints real numbers instead of guessing
@@ -172,9 +211,26 @@ local function buildContext(session: PlayerSession): MovementContext
 		grounded = isGrounded(session.humanoid:GetState()),
 		jumping = session.humanoid:GetState() == Enum.HumanoidStateType.Jumping,
 		crouchHeld = session.crouchHeld,
+		doubleJumpUsed = session.doubleJumpUsed,
 		runDuration = runDuration,
 		constants = constants,
 	}
+end
+
+-- Landing target resolution, shared between the Airborne and DoubleJump
+-- branches below (TRAVERSAL-ROADMAP.md §4) -- mirrors
+-- `AirborneState.ResolveLandingTarget` client-side exactly, single source of
+-- truth for "which grounded state does a landing input pattern resolve to"
+-- rather than a second inline copy for DoubleJump's own mid-impulse-landing
+-- case.
+local function resolveLandingTarget(context: MovementContext): MovementState
+	local hasInput = StateRules.HasMoveInput(context)
+	if context.crouchHeld then
+		return if hasInput then MovementStates.CrouchWalk else MovementStates.CrouchIdle
+	elseif hasInput then
+		return MovementStates.Walk
+	end
+	return MovementStates.Idle
 end
 
 -- Idle/Walk/Airborne need no remote (Humanoid state already replicates), so the
@@ -204,17 +260,44 @@ local function mirrorPassiveTransitions(session: PlayerSession)
 
 	if current == MovementStates.Airborne then
 		if context.grounded then
-			local hasInput = StateRules.HasMoveInput(context)
-			local target
 			-- Landing while Ctrl is held goes to the crouch-variant instead of
 			-- Idle/Walk (docs/MOVEMENT.md §9) -- a single-tick decision, same
 			-- as AirborneState.Update's own client-side landing logic.
-			if context.crouchHeld then
-				target = if hasInput then MovementStates.CrouchWalk else MovementStates.CrouchIdle
-			else
-				target = if hasInput then MovementStates.Walk else MovementStates.Idle
+			if session.fsm:RequestTransition(resolveLandingTarget(context), context) then
+				-- DoubleJump reset (TRAVERSAL-ROADMAP.md §4): mirrors the
+				-- client's own reset on the identical "landed" edge.
+				session.doubleJumpUsed = false
 			end
-			session.fsm:RequestTransition(target, context)
+		end
+		return
+	end
+
+	-- DoubleJump hands itself back to Airborne once its own decay curve
+	-- finishes (TRAVERSAL-ROADMAP.md §4/§7.2), on the server's own initiative,
+	-- off its own entry-snapshot timestamp, never anything the client asserts
+	-- about when its impulse "should" end. Checked BEFORE the generic
+	-- "not grounded -> Airborne" fallback below, which would otherwise fire
+	-- every single Heartbeat while DoubleJump is active (it's airborne by
+	-- definition) and immediately evict the mirror out of DoubleJump the
+	-- instant the claim was accepted.
+	--
+	-- Landing mid-impulse is its OWN branch, not folded into "-> Airborne":
+	-- `Airborne.CanEnter` requires `not grounded`, already false by the
+	-- instant `context.grounded` reads true here, so that transition would
+	-- simply be rejected and leave the mirror stuck in DoubleJump -- resolves
+	-- straight to the real grounded target instead, same fix as the client's
+	-- own DoubleJumpState.Update.
+	if current == MovementStates.DoubleJump then
+		if context.grounded then
+			if session.fsm:RequestTransition(resolveLandingTarget(context), context) then
+				session.doubleJumpUsed = false
+			end
+			return
+		end
+
+		local elapsed = os.clock() - (session.traversalEntryAt or session.lastTransitionAt)
+		if elapsed >= context.constants.DoubleJumpDecayDurationSeconds then
+			session.fsm:RequestTransition(MovementStates.Airborne, context)
 		end
 		return
 	end
@@ -277,16 +360,16 @@ local function mirrorPassiveTransitions(session: PlayerSession)
 	-- From here on, `current` is one of Idle/Walk/Run/Sprint -- Crouch/Slide
 	-- takes priority over the ordinary family the instant Ctrl is held,
 	-- exactly the same priority every client state module's own Update
-	-- already gives it (docs/MOVEMENT.md §9).
+	-- already gives it (docs/MOVEMENT.md §9). CrouchWalk is gated behind
+	-- CrouchIdle (mirrors IdleState/WalkState client-side), so Idle/Walk
+	-- always land in CrouchIdle first, even with move input already held --
+	-- the CrouchIdle branch above re-checks input the very next tick.
 	if context.crouchHeld then
 		if current == MovementStates.Run or current == MovementStates.Sprint then
 			session.fsm:RequestTransition(MovementStates.Slide, context)
 			return
 		end
-		session.fsm:RequestTransition(
-			if StateRules.HasMoveInput(context) then MovementStates.CrouchWalk else MovementStates.CrouchIdle,
-			context
-		)
+		session.fsm:RequestTransition(MovementStates.CrouchIdle, context)
 		return
 	end
 
@@ -369,7 +452,12 @@ local function maxSpeedForState(state: MovementState, constants: EffectiveMoveme
 		or state == MovementStates.Airborne
 		or state == MovementStates.Slide
 		or state == MovementStates.SlideJump
+		or state == MovementStates.DoubleJump
 	then
+		-- DoubleJump only ever touches vertical velocity (§2's
+		-- vertical-only MaxAxesForce) -- horizontal speed carries through
+		-- from whatever tier was active at takeoff, same "ceiling, not a
+		-- guessed tier" reasoning Airborne already uses.
 		return constants.SprintSpeed
 	elseif state == MovementStates.CrouchIdle or state == MovementStates.CrouchWalk then
 		return constants.CrouchSpeed
@@ -427,6 +515,10 @@ local function createSession(player: Player, humanoid: Humanoid, rootPart: BaseP
 		previousState = nil,
 		lastTransitionAt = os.clock(),
 		crouchHeld = false,
+		doubleJumpUsed = false,
+		traversalEntryAt = nil,
+		speedSanitySuspendedUntil = nil,
+		traversalRateLimiter = RateLimiter.new(TRAVERSAL_CLAIMS_PER_SECOND, 1),
 	}
 
 	-- Reset the speed-sanity baseline on EVERY FSM transition, not just Sprint
@@ -509,6 +601,18 @@ local function enforceSpeedSanity(session: PlayerSession, constants: EffectiveMo
 		return
 	end
 
+	-- Traversal exemption window (TRAVERSAL-ROADMAP.md §7.4) -- suspended
+	-- entirely (not just baseline-reset) for a short grace after a
+	-- ClaimTraversalMove is accepted, so a legitimate move's own residual
+	-- momentum on landing doesn't immediately read as a violation. Cleared
+	-- lazily here rather than on a timer -- once expired, this check simply
+	-- stops short-circuiting and the field is left stale until the next
+	-- claim overwrites it, same "no separate invalidation bookkeeping"
+	-- reasoning `buildContext`'s own comment already uses for `constants`.
+	if session.speedSanitySuspendedUntil and os.clock() < session.speedSanitySuspendedUntil then
+		return
+	end
+
 	local now = os.clock()
 	local elapsed = now - session.speedCheckAt
 	if elapsed < MovementConstants.SpeedCheckIntervalSeconds then
@@ -569,6 +673,15 @@ local function broadcastDebugState(session: PlayerSession)
 	if not DeveloperAllowlist.IsDeveloper(session.player) then
 		return
 	end
+	-- Gated on the panel actually being open (docs/MOVEMENT.md §10,
+	-- `TRAVERSAL-ROADMAP.md` Phase 0 cleanup), not just on developer status --
+	-- this used to fire every Heartbeat to every connected developer
+	-- regardless of whether they had F4 open at all, which is exactly the
+	-- "no blanket per-Heartbeat network cost" mistake this file's own
+	-- optimization standards (§7/§11) warn against for new code.
+	if not DebugOverlayState.IsOpen(session.player) then
+		return
+	end
 
 	local context = buildContext(session)
 	local violation = speedViolations:Get(session.player)
@@ -593,6 +706,68 @@ local function broadcastDebugState(session: PlayerSession)
 		violationCount = if violation then violation.count else 0,
 		violations = violationEntries,
 	})
+end
+
+-- DoubleJump's own resimulation slice (TRAVERSAL-ROADMAP.md §7.2) -- the
+-- simplest possible version of the "full trajectory resimulation" decision,
+-- proportionate to DoubleJump having no spatial claim and no continuous
+-- input: compares real vertical velocity against
+-- `TraversalMath.DoubleJumpVerticalVelocity` (the SAME function the client's
+-- own DoubleJumpState calls) seeded from this session's own entry-snapshot
+-- timestamp, never the client-reported one. Vertical only -- horizontal
+-- speed during DoubleJump is already covered by `enforceSpeedSanity`'s own
+-- cap via `maxSpeedForState`.
+local function enforceDoubleJumpTrajectory(session: PlayerSession, constants: EffectiveMovementConstants)
+	if session.fsm.current ~= MovementStates.DoubleJump or not session.traversalEntryAt then
+		return
+	end
+
+	local elapsed = os.clock() - (session.traversalEntryAt :: number)
+	local expected =
+		TraversalMath.DoubleJumpVerticalVelocity(elapsed, constants.DoubleJumpForce, constants.DoubleJumpDecayDurationSeconds)
+	local actual = session.rootPart.AssemblyLinearVelocity.Y
+
+	if actual > expected + TRAVERSAL_VERTICAL_VELOCITY_TOLERANCE then
+		local velocity = session.rootPart.AssemblyLinearVelocity
+		session.rootPart.AssemblyLinearVelocity = Vector3.new(velocity.X, expected, velocity.Z)
+	end
+end
+
+-- The real exploit surface for the new traversal moves (TRAVERSAL-ROADMAP.md
+-- §6/§7): a modified client could claim DoubleJump without ever earning it
+-- (already airborne, air-jump not yet spent). Legality is checked the same
+-- way as every other claim in this file -- against this session's OWN
+-- mirrored FSM/context, never anything the client asserts.
+local function onClaimTraversalMove(player: Player, claim: Network.ClaimableTraversalMove)
+	local session = sessions[player]
+	if not session then
+		return
+	end
+
+	if not session.traversalRateLimiter:tryAcquire() then
+		return
+	end
+
+	-- Only "DoubleJump" exists yet (Phase 1) -- Dash/WallRun/WallClimb/Vault
+	-- get their own branches here as their own phases land.
+	local claimedState = if claim == "DoubleJump" then MovementStates.DoubleJump else nil
+	if not claimedState then
+		return
+	end
+
+	local context = buildContext(session)
+	if session.fsm:RequestTransition(claimedState, context) then
+		session.doubleJumpUsed = true
+		session.traversalEntryAt = os.clock()
+
+		-- Exemption window (TRAVERSAL-ROADMAP.md §7.4, shipped alongside
+		-- Phase 1 per the roadmap's own risk register -- without it, this
+		-- move's residual momentum on landing would immediately rubber-band
+		-- against `enforceSpeedSanity`'s cap for the tier it's landing into).
+		session.speedCheckPosition = session.rootPart.Position
+		session.speedCheckAt = os.clock()
+		session.speedSanitySuspendedUntil = os.clock() + MovementConstants.TraversalSpeedSanityGraceSeconds
+	end
 end
 
 local function onPlayerAdded(player: Player)
@@ -707,6 +882,7 @@ function MovementValidationService.Init()
 	end
 
 	Network.RequestMovementTransition.SetCallback(onRequestMovementTransition)
+	Network.ClaimTraversalMove.SetCallback(onClaimTraversalMove)
 
 	-- See DevToolsService's teleport handler: this is fired for any out-of-band
 	-- character move (today, only the debug overlay's developer teleport) so
@@ -722,8 +898,10 @@ function MovementValidationService.Init()
 
 	RunService.Heartbeat:Connect(function()
 		for _, session in sessions do
+			local constants = MovementTuningState.GetEffective(session.player)
 			mirrorPassiveTransitions(session)
-			enforceSpeedSanity(session, MovementTuningState.GetEffective(session.player))
+			enforceSpeedSanity(session, constants)
+			enforceDoubleJumpTrajectory(session, constants)
 			broadcastDebugState(session)
 		end
 	end)

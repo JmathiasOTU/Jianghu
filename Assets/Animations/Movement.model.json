@@ -5,7 +5,7 @@
       "Name": "Idle",
       "ClassName": "Animation",
       "Properties": {
-        "AnimationId": "rbxassetid://90674629106604"
+        "AnimationId": "rbxassetid://86346199484484"
       }
     },
     {
@@ -55,6 +55,41 @@
       "ClassName": "Animation",
       "Properties": {
         "AnimationId": "rbxassetid://110056936636927"
+      }
+    },
+    {
+      "Name": "Jump",
+      "ClassName": "Animation",
+      "Properties": {
+        "AnimationId": "rbxassetid://136691088380409"
+      }
+    },
+    {
+      "Name": "DoubleJump",
+      "ClassName": "Animation",
+      "Properties": {
+        "AnimationId": "rbxassetid://99058288155526"
+      }
+    },
+    {
+      "Name": "Fall",
+      "ClassName": "Animation",
+      "Properties": {
+        "AnimationId": "rbxassetid://105063110345261"
+      }
+    },
+    {
+      "Name": "Land",
+      "ClassName": "Animation",
+      "Properties": {
+        "AnimationId": "rbxassetid://114458701500759"
+      }
+    },
+    {
+      "Name": "LandHard",
+      "ClassName": "Animation",
+      "Properties": {
+        "AnimationId": "rbxassetid://91642419132068"
       }
     }
   ]

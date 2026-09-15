@@ -333,6 +333,13 @@ function DebugOverlayController.Init()
 		end
 		isOpen = open
 
+		-- Tells the server whether to bother broadcasting MovementDebugState
+		-- at all (docs/MOVEMENT.md §10, `TRAVERSAL-ROADMAP.md` Phase 0
+		-- cleanup) -- every open/close path (F4, corner tab, close button)
+		-- already routes through this one function, so this is the single
+		-- place that needs to fire it.
+		Network.RequestSetDebugOverlayOpen.Fire(open)
+
 		if open then
 			cornerTab.Visible = false
 			panel.Visible = true

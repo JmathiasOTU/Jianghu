@@ -26,6 +26,8 @@ generous air control.
 | Facing + animation (Step 3) | Logic done 2026-09-13, **animations still needed** | `Client/Controllers/Movement/Presentation/{FacingController,LocomotionAnimator}.luau`, `Assets/Animations/Movement.model.json` |
 | Exploit + perf pass (Step 4) | Done — 2026-09-13 | `Server/Services/MovementValidationService.luau`, `Shared/Util/ViolationTracker.luau`, `Shared/Constants/MovementConstants.luau` |
 | Crouch/Slide/SlideJump (Step 5) | Done — 2026-09-14, **not yet playtested/tuned** | `Shared/FSM/MovementStates.luau`, `Shared/Movement/{StateRules,CollisionGroups}.luau`, `Client/Controllers/Movement/States/{CrouchIdleState,CrouchWalkState,SlideState,SlideJumpState}.luau`, `Server/Services/MovementValidationService.luau` — see §9 |
+| Landing/falling animation (`TRAVERSAL-ROADMAP.md` Phase 0) | Done — 2026-09-14, **no clips authored yet** | `Client/Controllers/Movement/{CharacterMover,Presentation/LocomotionAnimator}.luau`, `Shared/Constants/MovementConstants.luau`, `Shared/Movement/MovementTuning.luau`, `Server/Services/MovementTuningService.luau`, `network.zap`, `Assets/Animations/Movement.model.json` — see §10 |
+| DoubleJump (`TRAVERSAL-ROADMAP.md` Phase 1) | Done — 2026-09-14, **not yet playtested/tuned** | `Shared/FSM/MovementStates.luau`, `Shared/Movement/{StateRules,TraversalMath,MovementTuning}.luau`, `Shared/Types/MovementTypes.luau`, `Shared/Constants/MovementConstants.luau`, `Client/Controllers/Movement/{CharacterMover,InputController,init}.luau`, `Client/Controllers/Movement/States/{AirborneState,DoubleJumpState}.luau`, `Server/Services/{MovementValidationService,MovementTuningService}.luau`, `network.zap` — see §11 |
 
 ---
 
@@ -840,6 +842,24 @@ existing instances — it never constructs a single UI element.
   the whole point of the panel, given this doc's own rubber-banding investigation
   above — by recoloring the server state value and showing a dedicated mismatch
   label whenever the two differ.
+  **Gated on the panel actually being open, added 2026-09-14
+  (`TRAVERSAL-ROADMAP.md` Phase 0 cleanup):** originally fired unconditionally
+  to every connected developer regardless of whether F4 was even open — real,
+  observed cost, not theoretical: a fresh join burst enough unheard `Unreliable`
+  fires (server sends from the moment the session exists; the client's own
+  listener only attaches once `DebugOverlayController.Init`'s long
+  `WaitForChild` chain finishes) to trip Zap's own "events in queue, did you
+  forget to attach a listener?" warning. Fixed with a new
+  `RequestSetDebugOverlayOpen` claim (`Client -> Server`, `Reliable`,
+  dev-gated like every other dev-only remote) fired from `setOpen` — the
+  single choke point every open/close path (F4, corner tab, close button)
+  already routes through — into a new `Server/State/DebugOverlayState.luau`
+  (same per-player record shape as `NoclipState.luau`) that
+  `broadcastDebugState` now checks before firing at all. Harmless as a queued
+  warning (nothing was ever functionally lost, the listener catches up fine),
+  but a real unconditional per-Heartbeat network cost is exactly the mistake
+  this doc's own optimization standards (§7/§11) tell *new* code not to make —
+  this closes the same gap in code that predates that standard.
 - **Teleport tool**: coordinate entry or click-a-point-in-workspace (a
   `Workspace:Raycast` from the mouse), firing `RequestDevTeleport` (`network.zap`,
   `Client -> Server`) like any other remote — never a raw `RemoteEvent`. Authorized
@@ -1033,12 +1053,12 @@ on and adjust from the F4 overlay's Tuning tab before trusting the feel.
 
 ```
 Idle <──────────────> Walk           Run ──> Sprint
- │  \                  │  \           │  \      │
- │   > CrouchIdle <────┤   > CrouchWalk        Slide <── (Ctrl, either)
- │        │  \         │        │  \            │  \
- │        │   >────────┘        │   >───────────┘   > SlideJump ──> Airborne
- v        v                     v                    v (jump)
-Airborne (landing: Ctrl-held routes to CrouchIdle/CrouchWalk instead of Idle/Walk)
+ │                     │              │  \      │
+ │   > CrouchIdle <────┤             Slide <── (Ctrl, either)
+ │        │                                 \
+ │        v                                  > SlideJump ──> Airborne
+ v   CrouchWalk                                   v (jump)
+Airborne (landing: Ctrl-toggled-on routes to CrouchIdle/CrouchWalk instead of Idle/Walk)
 ```
 
 Not a literal render of `StateRules.Transitions` (see that file for the exact
@@ -1046,12 +1066,16 @@ edge lists) — just enough to show the two new families hang off Idle/Walk and
 Run/Sprint respectively, both landable-into directly from Airborne, and that
 `SlideJump` only ever exits into `Airborne`.
 
-**CrouchIdle/CrouchWalk mirror Idle/Walk exactly** — same split, same
-reasoning, just at `CrouchSpeed` instead of `WalkSpeed`, and both are directly
-reachable from Idle, Walk, *and* Airborne's own landing decision (not funneled
-through each other first) so a simultaneous Ctrl+W press or a Ctrl-held
-landing resolves in one tick, not a two-tick CrouchIdle-then-CrouchWalk
-cascade. "Can't jump while crouched" blocks the jump **input**, not
+**CrouchIdle/CrouchWalk mirror Idle/Walk exactly** in speed and jump-blocking,
+but unlike Idle/Walk, `CrouchWalk` is deliberately **gated behind
+`CrouchIdle`** — Idle/Walk/Airborne's landing decision all route into
+`CrouchIdle` when Ctrl is toggled on, never straight into `CrouchWalk`, even
+with move input already held. `CrouchIdle`'s own `Update` re-checks move input
+every tick, so a Ctrl+W press still reaches `CrouchWalk` the very next tick
+rather than requiring a fresh W press — but it always passes through
+`CrouchIdle` first, if only for that one tick, so crouch-walking is something
+you reach *from* crouch-idling, not a shortcut earned directly from a normal
+walk. "Can't jump while crouched" blocks the jump **input**, not
 `Airborne`'s reachability — a crouched player walking off a ledge is
 involuntary ground loss, not the jump action, and falls normally; only the
 input itself is blocked, via `CharacterMover:SetJumpBlocked`
@@ -1062,12 +1086,12 @@ boost, which drives off `WalkSpeed` carrying into a normal jump exactly like
 every other state's takeoff speed, is unaffected).
 
 **Slide inherits real velocity, decays linearly, and is not "held-for-as-long-
-as-Ctrl."** Once entered, releasing Ctrl mid-slide does **not** cancel it —
-Slide is a committed action that decays on its own via friction and only ever
-exits (to `CrouchWalk`/`CrouchIdle`, chosen by current move input) once decayed
-speed crosses `CrouchSpeed`; if Ctrl was already released by then, that
-resulting Crouch state's own next `Update` immediately notices and releases
-into `Walk`/`Idle` a tick later. `SlideState.Enter` reads
+as-Ctrl."** Once entered, toggling crouch off mid-slide does **not** cancel it
+— Slide is a committed action that decays on its own via friction and only
+ever exits (to `CrouchWalk`/`CrouchIdle`, chosen by current move input) once
+decayed speed crosses `CrouchSpeed`; if crouch was already toggled off by
+then, that resulting Crouch state's own next `Update` immediately notices and
+releases into `Walk`/`Idle` a tick later. `SlideState.Enter` reads
 `CharacterMover:GetSpeed()` (real flattened `AssemblyLinearVelocity`
 magnitude, not the nominal `RunSpeed`/`SprintSpeed` constant for whichever
 state Slide came from) specifically so residual-momentum transients — e.g.
@@ -1108,35 +1132,39 @@ target STATE being earned, because the gesture (double-tap, dwell) has no
 other representation. Crouch has the opposite problem: WASD direction is
 reconstructable server-side from the already-replicated
 `humanoid.MoveDirection` (which is how Idle↔Walk have never needed a remote),
-but **"is Ctrl currently held" has no equivalent naturally-replicated
+but **"is crouch currently toggled on" has no equivalent naturally-replicated
 signal** — the server only ever knows it because the client explicitly says
 so. Rather than extend `NETWORK_CLAIM_NAMES` with per-target-state claims
 (`"CrouchIdle"`/`"CrouchWalk"`/`"Slide"`, which would just duplicate the
 context-dependent decision `mirrorPassiveTransitions` already has to make for
 Idle/Walk/Run/Sprint every Heartbeat), `network.zap`'s `ClaimableMovementState`
-gained two claims that name the Ctrl key's own press/release **edge** instead:
-`"CrouchDown"`/`"CrouchUp"`. The server only ever uses these to set/clear one
-session flag (`PlayerSession.crouchHeld`); every resulting transition —
-CrouchIdle/CrouchWalk/Slide entry and exit, a crouched landing — is then
-mirrored passively off that flag by `mirrorPassiveTransitions`, the same way
-Idle↔Walk already is off `moveIntent`. This is a deliberate deviation from
-this doc's own literal precedent ("extend `NETWORK_CLAIM_NAMES`") because it
-solves a real correctness gap a literal per-state-claim design would have
-missed: fired from `InputController.CrouchChanged` (the raw key edge, not any
-`fsm.changed`), `"CrouchDown"` reaches the server even while `Airborne` —
-solving the mid-air-anticipation case, e.g. pressing Ctrl mid-jump so a
+gained two claims that name the toggle's own **edge** instead:
+`"CrouchDown"`/`"CrouchUp"`. Crouch itself is a **toggle, not a hold** —
+pressing Ctrl flips `InputController._crouchHeld` and fires whichever claim
+matches the new state; releasing Ctrl does nothing (`InputEnded` deliberately
+ignores `LeftControl`), so leaving crouch requires a second, deliberate Ctrl
+press, not letting go of the key. The server only ever uses these two claims
+to set/clear one session flag (`PlayerSession.crouchHeld`); every resulting
+transition — CrouchIdle/CrouchWalk/Slide entry and exit, a crouched landing —
+is then mirrored passively off that flag by `mirrorPassiveTransitions`, the
+same way Idle↔Walk already is off `moveIntent`. This is a deliberate deviation
+from this doc's own literal precedent ("extend `NETWORK_CLAIM_NAMES`") because
+it solves a real correctness gap a literal per-state-claim design would have
+missed: fired from `InputController.CrouchChanged` (the toggle's own flip, not
+any `fsm.changed`), `"CrouchDown"` reaches the server even while `Airborne` —
+solving the mid-air-anticipation case, e.g. toggling crouch on mid-jump so a
 crouched landing is decided correctly on the very tick you land, not a tick
-after. `"CrouchDown"` also gets the same periodic-resync-while-held treatment
-as Run/Sprint (`CLAIM_RESYNC_INTERVAL_SECONDS`, self-healing against a dropped
-packet); `"CrouchUp"` deliberately doesn't need it — released is a one-shot,
-Reliable-transport claim into a target (`Idle`/`Walk`, deterministic, no
-dwell-timer race the way Sprint's boundary-timing claim has) that can't
-plausibly fail the one time it's sent, unlike a timeout-implied release (which
-was seriously considered and rejected: it would leave the server's mirror
-stuck at the *lower* Crouch cap for up to a timeout window after a real
-release, which is exactly the false-positive rubber-banding class this whole
-doc has fought since §5 — an explicit signal has none of that risk).
-`onRequestMovementTransition`'s handling of these two is correspondingly
+after. `"CrouchDown"` also gets the same periodic-resync-while-toggled-on
+treatment as Run/Sprint (`CLAIM_RESYNC_INTERVAL_SECONDS`, self-healing against
+a dropped packet); `"CrouchUp"` deliberately doesn't need it — toggling off is
+a one-shot, Reliable-transport claim into a target (`Idle`/`Walk`,
+deterministic, no dwell-timer race the way Sprint's boundary-timing claim has)
+that can't plausibly fail the one time it's sent, unlike a timeout-implied
+release (which was seriously considered and rejected: it would leave the
+server's mirror stuck at the *lower* Crouch cap for up to a timeout window
+after a real toggle-off, which is exactly the false-positive rubber-banding
+class this whole doc has fought since §5 — an explicit signal has none of that
+risk). `onRequestMovementTransition`'s handling of these two is correspondingly
 simpler than Sprint's — no dwell-timestamp machinery, just a boolean flip.
 
 The server never simulates Slide's exact decay curve for enforcement — its
@@ -1208,6 +1236,216 @@ place. Fixed by moving `CrouchIdle`/`CrouchWalk`/`Slide` to top-level
 three missing `loadTrack` calls plus their `_update()` branches.
 `SlideJump` still has no clip of its own, same as `Airborne` — both are brief,
 already covered by "add a clip here once one exists."
+
+---
+
+## 10. Landing & Falling Animation (`TRAVERSAL-ROADMAP.md` Phase 0)
+
+Not Qinggong-specific, and not part of the five new traversal states that
+roadmap adds later — this closes an existing gap in Phase 1's own `Airborne`
+state, which had zero animation (this file's own §9 bug note already flagged
+`SlideJump`/`Airborne` as clip-less; `LocomotionAnimator`'s comment said "add
+clips for these here once they exist"). Done first, ahead of `DoubleJump`/
+`Dash`/etc., because every one of those new moves that can end mid-air routes
+back through `Airborne` on its own way down (the roadmap's own §4 correction),
+so this is inherited free by all of them rather than needing its own pass
+later. **Entirely presentation-layer** — no new FSM states, no new network
+events, no gameplay logic.
+
+**Rising vs. falling**, while `Airborne`: `Humanoid:GetState()` already
+distinguishes `Jumping` (ascent) from `Freefall` (descent) — the same read
+`CharacterMover:IsJumping()` uses for `SlideJump`'s own entry gate.
+`LocomotionAnimator` now stores `humanoid` (it already received it in `.new`,
+previously only used locally to destroy the default `Animate` script) and
+branches on that read each frame: `Jumping` → `Jump` (one-shot), `Freefall` →
+`Fall` (looped — a fall can last arbitrarily long).
+
+**Landing**, on any edge out of `Airborne`: `LocomotionAnimator` already holds
+a `Trove`-owned connection to the FSM's own `changed` signal for its transition
+handling elsewhere, so landing detection reuses that same connection rather
+than adding a new coupling — watches for `previous == Airborne`, regardless of
+which grounded state it's landing *into* (`Idle`/`Walk`/`CrouchIdle`/
+`CrouchWalk` all qualify; nothing here needs to enumerate them, since the
+condition is "left Airborne," not "entered one of these specific states"). At
+that instant it reads `CharacterMover:GetVerticalVelocity()` (new method,
+mirrors `GetSpeed()`'s own doc comment exactly — real
+`AssemblyLinearVelocity.Y`, not a nominal constant) and compares the negated
+value (falling is negative Y; the threshold constant is expressed as a
+positive fall speed) against `HardLandingFallSpeedThreshold` — below it, `Land`
+(light one-shot); at or above it, `LandHard`.
+
+**The one-shot has to win over the landed state's own key for a fixed
+window** (`LandingAnimationHoldSeconds`): by the time the `changed` edge
+fires, the FSM has already transitioned to `Idle`/`Walk`/etc, so `_update`'s
+normal per-state resolution would pick that state's own key the very same
+frame and the landing clip would never be seen. `_update` now checks a
+landing-hold deadline at its very top and, while still inside the window,
+plays the held landing key unconditionally — bypassing (not replacing) the
+normal per-state `if/elseif` chain below it — then falls through to normal
+resolution once the window elapses.
+
+**`loadTrack` gained a `looped: boolean` parameter.** Every original Step 3
+slot was a continuous locomotion loop, so `Looped` was unconditionally forced
+`true` inside `loadTrack` itself. `Jump`/`Land`/`LandHard` are one-shots and
+need `AnimationTrack.Looped`'s real default (`false`) preserved; `Fall` stays
+looped. Existing call sites were updated to pass `true` explicitly rather than
+silently changing their behavior by omission.
+
+**Four new top-level slots** in `Assets/Animations/Movement.model.json`:
+`Jump`, `Fall`, `Land`, `LandHard` — flat, non-directional, same shape as
+`Idle`/`Run`/`Sprint`, `AnimationId` left blank (same "not authored yet, skip
+gracefully" handling `loadTrack` already has for any blank clip) until real
+animations are picked.
+
+**New constants** (`MovementConstants.luau`, both wired through
+`Shared/Movement/MovementTuning.luau` → `network.zap`'s `TunableConstantName`/
+`TuningState` → `MovementTuningService.luau`'s payload mapping →
+`TuningSnapshot`, same live-tuning pipeline as every other movement number,
+so both are adjustable from the F4 overlay's Tuning tab without a republish):
+`HardLandingFallSpeedThreshold` (studs/s, starting-point value, not measured)
+and `LandingAnimationHoldSeconds` (the hold window above). `LocomotionAnimator`
+reads both through `TuningSnapshot.Get()` — it had no reason to read tuned
+constants before this.
+
+**Not done — flagged, not required for this phase:** `SlideJumpState` still
+has no clip, same as before (its own comment already notes `Enter` hands off
+to `Airborne` synchronously within the same tick, so `Update` never really
+runs a real frame — `LocomotionAnimator` would see `SlideJump` for
+effectively zero `RenderStepped` frames even if a clip existed). A one-line
+extension to reuse the `Jump` key was considered per the roadmap but skipped;
+revisit if it turns out to be visible in practice.
+
+---
+
+## 11. DoubleJump (`TRAVERSAL-ROADMAP.md` Phase 1)
+
+First of the five Qinggong traversal moves, and deliberately the simplest —
+built first as a proof-of-concept for the new `CharacterMover` velocity-
+override primitive and the `ClaimTraversalMove`/resimulation plumbing every
+later phase (Dash/WallRun/WallClimb/Vault) reuses, before any spatial-query
+complexity gets layered on. A decaying vertical impulse, gated by "already
+airborne, air-jump not yet spent this life" — no raycasting, no continuous
+input, no `Qinggong` resource gate yet (the roadmap's own §0 leaves that
+"still open," wired later without a rewrite).
+
+**New FSM symbol and topology.** `DoubleJump` (`Shared/FSM/MovementStates.luau`)
+reachable only from `Airborne` (`StateRules.Transitions`), `CanEnter` is
+`not context.grounded and not context.doubleJumpUsed`. `doubleJumpUsed` is a
+per-life flag with no natural replicated signal — same category as `crouchHeld`
+(§9) — tracked in `Movement/init.luau`'s closure client-side and
+`PlayerSession` server-side, set the instant `DoubleJump` is entered and reset
+the instant either mirror actually lands, mirroring the reference controller's
+"resets once grounded" behavior without its raw 5-second timer (that timer was
+only ever compensating for the reference codebase having no clean per-life
+reset hook).
+
+**Entry trigger: `UserInputService.JumpRequest`, not `Humanoid.GetState()`.**
+Roblox's own ground controller only re-enters the `Jumping` state from a
+grounded takeoff — a second jump press while already airborne produces no
+Humanoid state change at all to observe, so `SlideJump`'s "watch `IsJumping()`"
+pattern doesn't work here. `InputController` gained a `JumpRequested` signal
+wired directly to `UserInputService.JumpRequest` (fires regardless of grounded
+state), connected in `Movement/init.luau` the same way `RunRequested` already
+is — no explicit "currently Airborne" guard needed at the call site, since
+topology alone already makes the attempt a no-op from any other state.
+
+**Landing mid-impulse is its own branch, not folded into "hand back to
+Airborne."** `Airborne.CanEnter` requires `not grounded`; if the character
+lands while the impulse is still decaying, that condition has already failed,
+so a `DoubleJump -> Airborne` transition at that instant would simply be
+rejected and leave the FSM stuck. Fixed by extracting the landing-target
+decision (crouch/hasInput → `CrouchWalk`/`CrouchIdle`/`Walk`/`Idle`) out of
+`AirborneState.Update` into a reusable `AirborneState.ResolveLandingTarget`,
+which `DoubleJumpState.Update` calls directly for this case instead of
+bouncing through an `Airborne` hop — `StateRules.Transitions[DoubleJump]`
+includes those four grounded states alongside `Airborne` for exactly this.
+`MovementValidationService.mirrorPassiveTransitions` mirrors the identical
+two-branch logic server-side, off the same extracted `resolveLandingTarget`
+helper (a second copy of the branching, not an import, since client/server
+state modules are architecturally separate — see `ClientMovementContext`'s own
+comment on why states never require each other directly).
+
+**Physics: `LinearVelocity`, vertical-axis-only, created once per life.**
+`CharacterMover` gained `SetVelocityOverride(velocity, maxForce?)`/
+`ClearVelocityOverride()`, backed by an `Attachment` + `LinearVelocity`
+constraint created once in `CharacterMover.new`, Trove-owned, left parented
+but inert (`MaxAxesForce = Vector3.zero`) between uses — never re-instanced
+per jump, the structural fix over the reference controller's per-move
+`Instance.new("BodyVelocity")` churn (`TRAVERSAL-ROADMAP.md` §2/§11).
+`ForceLimitMode = PerAxis` is what lets `DoubleJumpState` drive only the Y
+axis (`maxForce = Vector3.new(0, math.huge, 0)`) without fighting the
+Humanoid's own `WalkSpeed`-driven horizontal movement — `AlignOrientation`/
+`AlignPosition` are NOT added yet, since nothing in this phase consumes them;
+added when Dash/WallClimb actually need them, not speculatively now.
+
+**Math lives in `Shared/Movement/TraversalMath.luau`, called identically by
+client and server.** `DoubleJumpVerticalVelocity(elapsed, force, decayDuration)`
+is a pure function — starts at `force`, decays toward half of itself by
+`decayDuration` — with no stored state, so client prediction
+(`DoubleJumpState.Enter`/`Update`) and server resimulation
+(`enforceDoubleJumpTrajectory`) can never drift into two hand-synced copies of
+the same curve. This is the first entry in a module every later traversal
+phase adds its own function to, per the roadmap's own §3.
+
+**Server validation: a new `ClaimTraversalMove` event, its own rate limiter,
+and a scoped-down resimulation.** `network.zap` gained `ClaimTraversalMove`
+(`Client -> Server`, `Reliable`) carrying a `ClaimableTraversalMove` enum —
+only `"DoubleJump"` exists yet, Dash/WallRun/WallClimb/Vault get their own
+enum values as their own phases land, never all five speculatively up front.
+`MovementValidationService.onClaimTraversalMove` validates the claim against
+this session's own mirrored context (never anything the client asserts),
+captures an entry snapshot (`session.traversalEntryAt`, this server's own
+`os.clock()`), and `enforceDoubleJumpTrajectory` compares real
+`AssemblyLinearVelocity.Y` against `TraversalMath.DoubleJumpVerticalVelocity`
+seeded from that snapshot, correcting down if it diverges past a flat,
+explicitly-unmeasured tolerance (`TRAVERSAL_VERTICAL_VELOCITY_TOLERANCE`,
+flagged the same way `SpeedToleranceMultiplier` originally was, pending a real
+playtest capture). Deliberately does **not** yet add the roadmap's
+`TraversalInput` continuous-input stream or `TraversalReconciliation`
+snap-correction broadcast — DoubleJump's curve is a pure function of elapsed
+time alone, nothing for the player to steer mid-impulse, so there's no input
+to replay yet. Both get built when Dash (Phase 2) actually needs continuous
+steering.
+
+**`enforceSpeedSanity` exemption window, shipped with this phase per the
+roadmap's own risk register** (§7.4/§10: "otherwise the first working
+DoubleJump immediately rubber-bands and looks like a regression"). Two
+independent fixes, not one: (1) `maxSpeedForState` now caps `DoubleJump` at the
+same `SprintSpeed` ceiling as `Airborne`/`Slide`/`SlideJump` — the impulse is
+vertical-only, horizontal speed carries through from whatever tier was active
+at takeoff, same reasoning as those three; without this it would've fallen
+through to the `WalkSpeed` default and rubber-banded almost immediately at any
+non-trivial horizontal speed. (2) A genuinely new mechanism,
+`session.speedSanitySuspendedUntil`, set to `os.clock() +
+TraversalSpeedSanityGraceSeconds` the instant a `ClaimTraversalMove` is
+accepted (alongside the existing baseline reset) — `enforceSpeedSanity` short-
+circuits entirely while still inside that window. Both are needed: (1) alone
+handles DoubleJump's own horizontal cap, but the suspension window is the
+general mechanism every later phase's much larger horizontal impulses (Dash,
+Vault) will actually lean on.
+
+**Bug found and fixed while wiring this up — `LocomotionAnimator`'s landing
+detection (§10) assumed every edge out of `Airborne` was a landing.** That was
+true before this phase: `Airborne`'s only exits were grounded states. Adding
+`DoubleJump` as a real `Airborne` exit broke the assumption — `Airborne ->
+DoubleJump` is still airborne, not a landing, but the old `previous ==
+Airborne` check alone would have fired the `Land`/`LandHard` one-shot (and
+sampled vertical velocity for severity) the instant a player double-jumped.
+Fixed by additionally requiring `CharacterMover:IsGrounded()` at the moment of
+the transition — a real landing now needs "came from an airborne-family state
+(`Airborne` or `DoubleJump`) AND is actually grounded right now," which also
+correctly catches the reverse edge case (`DoubleJump -> ` a grounded state
+directly, the mid-impulse-landing branch above) that a bare `previous ==
+Airborne` check would have missed entirely.
+
+**Not done — flagged, not required for this phase:** the `Qinggong` resource
+context field (`TRAVERSAL-ROADMAP.md` §0/§3) — `DoubleJump.CanEnter` doesn't
+gate on it yet, consistent with the roadmap's own "nothing below Phase 1
+blocks on it" note. `AlignOrientation`/`AlignPosition` constraints — added
+when Dash/WallClimb need them. Playtesting/tuning `DoubleJumpForce`/
+`DoubleJumpDecayDurationSeconds` and the new server-side tolerance constants —
+all starting-point values, same as every other "Fast & fluid" number in this
+file.
 
 ---
 

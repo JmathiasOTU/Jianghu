@@ -29,6 +29,7 @@ local CrouchIdleState = require(script.States.CrouchIdleState)
 local CrouchWalkState = require(script.States.CrouchWalkState)
 local SlideState = require(script.States.SlideState)
 local SlideJumpState = require(script.States.SlideJumpState)
+local DoubleJumpState = require(script.States.DoubleJumpState)
 
 type MovementState = MovementStates.MovementState
 type ClientMovementContext = ClientMovementContextModule.ClientMovementContext
@@ -51,6 +52,7 @@ local States = {
 	[MovementStates.CrouchWalk] = CrouchWalkState,
 	[MovementStates.Slide] = SlideState,
 	[MovementStates.SlideJump] = SlideJumpState,
+	[MovementStates.DoubleJump] = DoubleJumpState,
 }
 
 -- Only Run/Sprint are earned, exploit-relevant transitions that need a server
@@ -79,6 +81,22 @@ local DEBUG_STATE_NAMES: { [MovementState]: Network.DebugMovementState } = {
 	[MovementStates.CrouchWalk] = "CrouchWalk",
 	[MovementStates.Slide] = "Slide",
 	[MovementStates.SlideJump] = "SlideJump",
+	[MovementStates.DoubleJump] = "DoubleJump",
+}
+
+-- Grounded-family states (TRAVERSAL-ROADMAP.md §4) -- landing into any of
+-- these is what resets `doubleJumpUsed` back to available, mirrored 1:1 by
+-- MovementValidationService's own PlayerSession. Deliberately a plain set,
+-- not derived from StateRules.Transitions -- "which states count as grounded"
+-- and "which states can reach which" are different questions that happen to
+-- share some membership.
+local GROUNDED_STATES: { [MovementState]: boolean } = {
+	[MovementStates.Idle] = true,
+	[MovementStates.Walk] = true,
+	[MovementStates.Run] = true,
+	[MovementStates.Sprint] = true,
+	[MovementStates.CrouchIdle] = true,
+	[MovementStates.CrouchWalk] = true,
 }
 
 -- How often the current Run/Sprint claim is re-sent while held, not just on the
@@ -112,7 +130,7 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 	-- Presentation: purely cosmetic, never touched by states or the FSM (they only
 	-- read it) -- docs/MOVEMENT.md §3/§4.
 	lifeTrove:Add(FacingController.new(humanoid, rootPart))
-	lifeTrove:Add(LocomotionAnimator.new(humanoid, rootPart, fsm, input))
+	lifeTrove:Add(LocomotionAnimator.new(humanoid, rootPart, fsm, input, characterMover))
 
 	-- Live tuning (docs/MOVEMENT.md §8): pushes the server's effective-constants
 	-- broadcast into TuningSnapshot and re-applies JumpPower immediately, since
@@ -132,6 +150,10 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 			CrouchSpeed = value.crouchSpeed,
 			SlideDecayRate = value.slideDecayRate,
 			SlideJumpBoostAmount = value.slideJumpBoostAmount,
+			HardLandingFallSpeedThreshold = value.hardLandingFallSpeedThreshold,
+			LandingAnimationHoldSeconds = value.landingAnimationHoldSeconds,
+			DoubleJumpForce = value.doubleJumpForce,
+			DoubleJumpDecayDurationSeconds = value.doubleJumpDecayDurationSeconds,
 		})
 		characterMover:SetJumpPower(value.jumpPower)
 	end))
@@ -147,6 +169,13 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 		noclip:SetActive(enabled)
 	end))
 
+	-- Per-life flag, not derivable from Humanoid replication
+	-- (TRAVERSAL-ROADMAP.md §4) -- same "owned by the FSM lifecycle, not any
+	-- one state module" treatment as `noclipActive`/the claim-resync
+	-- timestamps below, since both DoubleJump (consumes it) and the landing
+	-- edge (resets it) need to touch it without requiring each other.
+	local doubleJumpUsed = false
+
 	local function buildContext(): ClientMovementContext
 		local runDuration = if fsm.current == MovementStates.Run
 			then RunState.GetDuration()
@@ -156,6 +185,7 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 			grounded = characterMover:IsGrounded(),
 			jumping = characterMover:IsJumping(),
 			crouchHeld = input:IsCrouchHeld(),
+			doubleJumpUsed = doubleJumpUsed,
 			runDuration = runDuration,
 			constants = TuningSnapshot.Get(),
 			characterMover = characterMover,
@@ -196,10 +226,33 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 		if claimName then
 			fireClaim(claimName)
 		end
+
+		-- DoubleJump bookkeeping (TRAVERSAL-ROADMAP.md §4): consumed the
+		-- instant it's entered, reset the instant the character actually
+		-- lands -- checked as two separate branches (not "next == DoubleJump
+		-- else GROUNDED_STATES[next]") since landing can happen directly from
+		-- Airborne without ever touching DoubleJump this life.
+		if next == MovementStates.DoubleJump then
+			doubleJumpUsed = true
+			Network.ClaimTraversalMove.Fire("DoubleJump")
+		elseif GROUNDED_STATES[next] then
+			doubleJumpUsed = false
+		end
 	end)
 
 	lifeTrove:Connect(input.RunRequested, function()
 		fsm:RequestTransition(MovementStates.Run, buildContext())
+	end)
+
+	-- DoubleJump's own entry trigger (TRAVERSAL-ROADMAP.md §4) -- fires on
+	-- EVERY jump-action request regardless of grounded state (see
+	-- InputController.JumpRequested's own doc comment for why that has to be
+	-- the signal); no explicit "currently Airborne" guard needed here, same
+	-- reasoning as SlideJump's own CanEnter comment -- topology alone already
+	-- makes this a no-op unless DoubleJump is actually reachable from the
+	-- current state.
+	lifeTrove:Connect(input.JumpRequested, function()
+		fsm:RequestTransition(MovementStates.DoubleJump, buildContext())
 	end)
 
 	-- Crouch/Slide claim (docs/MOVEMENT.md §9): unlike Run/Sprint's claims

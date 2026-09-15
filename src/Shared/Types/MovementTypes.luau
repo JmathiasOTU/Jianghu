@@ -38,11 +38,18 @@ export type MoveIntent = {
 -- "CrouchUp" claims, docs/MOVEMENT.md §9), stored per-session
 -- (`PlayerSession.crouchHeld`) rather than derived fresh each frame the way
 -- everything else in this type is.
+-- `doubleJumpUsed` (TRAVERSAL-ROADMAP.md §4, Phase 1) is the one other signal
+-- in this type that isn't derivable fresh from Humanoid replication each
+-- frame -- like `crouchHeld`, it has to be tracked as per-life state by
+-- whoever owns the FSM lifecycle (`Movement/init.luau` client-side,
+-- `PlayerSession` server-side), reset the instant the character lands and
+-- set once DoubleJump is entered, never recomputed from a physics read.
 export type MovementContext = {
 	moveIntent: MoveIntent,
 	grounded: boolean,
 	jumping: boolean,
 	crouchHeld: boolean,
+	doubleJumpUsed: boolean,
 	runDuration: number?,
 	constants: MovementTuning.EffectiveMovementConstants,
 }

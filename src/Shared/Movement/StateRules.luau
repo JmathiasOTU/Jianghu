@@ -15,30 +15,28 @@ end
 -- not "is it legal right now" -- that's CanEnter below. Shared client/server so both
 -- FSM mirrors are built from the identical graph.
 --
--- Crouch/Slide additions (docs/MOVEMENT.md §9): CrouchIdle/CrouchWalk are
--- reachable directly from BOTH Idle and Walk (and from Airborne, on landing),
--- not funneled through each other first -- a player holding Ctrl+W from a
--- dead stop should land in CrouchWalk the same tick, not CrouchIdle-then-
--- CrouchWalk a frame later. Run/Sprint each only reach Slide (never Crouch
--- directly) -- Slide is what's earned by pressing Ctrl while running, per the
--- design; the crouch states themselves are only ever reached from Slide once
--- its decay crosses the threshold. `Airborne -> Run` was already unused
--- topology (landing never attempts Run, see docs/MOVEMENT.md §2) and is left
--- as-is, untouched by this pass.
+-- Crouch/Slide additions (docs/MOVEMENT.md §9): CrouchIdle is reachable
+-- directly from BOTH Idle and Walk (and from Airborne, on landing), but
+-- CrouchWalk is gated behind CrouchIdle -- pressing Ctrl always lands you in
+-- CrouchIdle first, and CrouchWalk is only earned from there (or from
+-- Airborne, on landing) once move input is present. Run/Sprint each only
+-- reach Slide (never Crouch directly) -- Slide is what's earned by pressing
+-- Ctrl while running, per the design; the crouch states themselves are only
+-- ever reached from Slide once its decay crosses the threshold.
+-- `Airborne -> Run` was already unused topology (landing never attempts Run,
+-- see docs/MOVEMENT.md §2) and is left as-is, untouched by this pass.
 local Transitions: { [MovementState]: { MovementState } } = {
 	[MovementStates.Idle] = {
 		MovementStates.Walk,
 		MovementStates.Run,
 		MovementStates.Airborne,
 		MovementStates.CrouchIdle,
-		MovementStates.CrouchWalk,
 	},
 	[MovementStates.Walk] = {
 		MovementStates.Idle,
 		MovementStates.Run,
 		MovementStates.Airborne,
 		MovementStates.CrouchIdle,
-		MovementStates.CrouchWalk,
 	},
 	[MovementStates.Run] = {
 		MovementStates.Idle,
@@ -59,6 +57,7 @@ local Transitions: { [MovementState]: { MovementState } } = {
 		MovementStates.Run,
 		MovementStates.CrouchIdle,
 		MovementStates.CrouchWalk,
+		MovementStates.DoubleJump,
 	},
 	[MovementStates.CrouchIdle] = {
 		MovementStates.Idle,
@@ -79,6 +78,22 @@ local Transitions: { [MovementState]: { MovementState } } = {
 		MovementStates.Airborne,
 	},
 	[MovementStates.SlideJump] = { MovementStates.Airborne },
+
+	-- DoubleJump hands back to Airborne once its impulse ends -- the character
+	-- is still airborne, just with new vertical velocity, same as SlideJump's
+	-- own single edge back out. The grounded targets alongside it cover the
+	-- rarer "landed mid-impulse" case (TRAVERSAL-ROADMAP.md §4): Airborne's
+	-- own CanEnter requires `not grounded`, which has already failed by the
+	-- time that case is detected, so DoubleJumpState resolves the landing
+	-- target directly (AirborneState.ResolveLandingTarget) instead of
+	-- bouncing through an Airborne hop that would be rejected.
+	[MovementStates.DoubleJump] = {
+		MovementStates.Airborne,
+		MovementStates.Idle,
+		MovementStates.Walk,
+		MovementStates.CrouchIdle,
+		MovementStates.CrouchWalk,
+	},
 }
 
 -- CanEnter: is this transition legal RIGHT NOW, given live context. Shared
@@ -140,6 +155,19 @@ local CanEnter: { [MovementState]: (context: MovementContext) -> boolean } = {
 	-- alone enforces "currently in Slide."
 	[MovementStates.SlideJump] = function(context: MovementContext): boolean
 		return not context.grounded
+	end,
+
+	-- Reachable only from Airborne (topology above), needs the one midair jump
+	-- not yet spent this life (TRAVERSAL-ROADMAP.md §4) -- `doubleJumpUsed` is
+	-- reset the instant the character actually lands (see
+	-- Client/Controllers/Movement/init.luau and
+	-- Server/Services/MovementValidationService.luau, both of which reset it
+	-- on the same "entered a grounded state" edge), mirroring the reference
+	-- controller's "resets once grounded" behavior without its raw 5-second
+	-- timer, which was only there to compensate for that codebase having no
+	-- clean per-life reset hook.
+	[MovementStates.DoubleJump] = function(context: MovementContext): boolean
+		return not context.grounded and not context.doubleJumpUsed
 	end,
 }
 

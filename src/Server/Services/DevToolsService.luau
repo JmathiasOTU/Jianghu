@@ -8,6 +8,7 @@ local RateLimiter = require(ReplicatedStorage.Shared.Util.RateLimiter)
 local Network = require(script.Parent.Parent.Network.network)
 local CharacterTeleported = require(script.Parent.Parent.Events.CharacterTeleported)
 local NoclipState = require(script.Parent.Parent.State.NoclipState)
+local DebugOverlayState = require(script.Parent.Parent.State.DebugOverlayState)
 
 -- Rate limits for the dev-only remotes below, independent of the authorization
 -- check (docs/ARCHITECTURE.md §10) -- a network-layer concern, not gameplay
@@ -15,11 +16,17 @@ local NoclipState = require(script.Parent.Parent.State.NoclipState)
 -- same reasoning as MovementValidationService's own TRANSITION_CLAIMS_PER_SECOND.
 local TELEPORT_CLAIMS_PER_SECOND = 3
 local NOCLIP_CLAIMS_PER_SECOND = 2
+-- Open/close is a rare, deliberate user action (F4 press or a button click),
+-- not a per-frame stream -- this ceiling only exists so the remote isn't
+-- exempt from the "every player-initiated remote gets a rate limit" rule
+-- (docs/ARCHITECTURE.md §10), same as every other dev-only remote here.
+local DEBUG_OVERLAY_OPEN_CLAIMS_PER_SECOND = 5
 
 local DevToolsService = {}
 
 local teleportRateLimiters: { [Player]: RateLimiter.RateLimiter } = {}
 local noclipRateLimiters: { [Player]: RateLimiter.RateLimiter } = {}
+local debugOverlayOpenRateLimiters: { [Player]: RateLimiter.RateLimiter } = {}
 
 -- The one, single-source-of-truth developer gate every dev-only remote in this
 -- codebase routes through (docs/MOVEMENT.md §8) -- extracted 2026-09-14 BEFORE
@@ -112,9 +119,24 @@ local onRequestSetNoclip = DevToolsService.RegisterDevOnly(function(player: Play
 	Network.NoclipState.Fire(player, enabled)
 end)
 
+-- F4 overlay open/close (docs/MOVEMENT.md §10, `TRAVERSAL-ROADMAP.md` Phase
+-- 0 cleanup). `DebugOverlayState` is what `MovementValidationService.
+-- broadcastDebugState` gates its per-Heartbeat broadcast on -- without this,
+-- that broadcast runs unconditionally for every connected developer
+-- regardless of whether their panel is even visible.
+local onRequestSetDebugOverlayOpen = DevToolsService.RegisterDevOnly(function(player: Player, isOpen: boolean)
+	local limiter = debugOverlayOpenRateLimiters[player]
+	if not limiter or not limiter:tryAcquire() then
+		return
+	end
+
+	DebugOverlayState.SetOpen(player, isOpen)
+end)
+
 local function onPlayerAdded(player: Player)
 	teleportRateLimiters[player] = RateLimiter.new(TELEPORT_CLAIMS_PER_SECOND, 1)
 	noclipRateLimiters[player] = RateLimiter.new(NOCLIP_CLAIMS_PER_SECOND, 1)
+	debugOverlayOpenRateLimiters[player] = RateLimiter.new(DEBUG_OVERLAY_OPEN_CLAIMS_PER_SECOND, 1)
 
 	player.CharacterAdded:Connect(function()
 		-- A fresh character never inherits noclip from the previous life --
@@ -127,7 +149,9 @@ end
 local function onPlayerRemoving(player: Player)
 	teleportRateLimiters[player] = nil
 	noclipRateLimiters[player] = nil
+	debugOverlayOpenRateLimiters[player] = nil
 	NoclipState.Clear(player)
+	DebugOverlayState.Clear(player)
 end
 
 function DevToolsService.Init()
@@ -139,6 +163,7 @@ function DevToolsService.Init()
 
 	Network.RequestDevTeleport.SetCallback(onRequestDevTeleport)
 	Network.RequestSetNoclip.SetCallback(onRequestSetNoclip)
+	Network.RequestSetDebugOverlayOpen.SetCallback(onRequestSetDebugOverlayOpen)
 end
 
 return DevToolsService

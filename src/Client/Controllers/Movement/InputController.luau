@@ -13,11 +13,29 @@ type MoveIntent = MovementTypes.MoveIntent
 
 export type InputController = {
 	RunRequested: LemonSignal.Signal<()>,
-	-- Fires the Ctrl key's own press/release EDGE (docs/MOVEMENT.md §9) --
-	-- `true` on press, `false` on release -- not a per-frame poll. Distinct
+	-- Fires the toggled crouch state (docs/MOVEMENT.md §9) -- `true`/`false`
+	-- each time Ctrl is PRESSED, alternating; release does nothing. Distinct
 	-- from `RunRequested`'s "()" shape since Crouch's claim needs to know
-	-- WHICH edge just happened, not just that Ctrl was touched.
+	-- which state it just toggled INTO, not just that Ctrl was pressed.
 	CrouchChanged: LemonSignal.Signal<boolean>,
+	-- Fires once per PHYSICAL press of the jump key, grounded or not
+	-- (TRAVERSAL-ROADMAP.md §4, Phase 1) -- deliberately NOT
+	-- `Humanoid.Jumping`/`GetState()`: Roblox's own ground controller only
+	-- ever re-enters the `Jumping` state from a grounded takeoff, so a second
+	-- press while already airborne produces no Humanoid state change at all
+	-- to observe. This is what DoubleJump's entry needs to react to.
+	--
+	-- Edge-tracked off raw `Space` `InputBegan`/`InputEnded` (same pattern as
+	-- `LeftControl` below), NOT `UserInputService.JumpRequest` -- that engine
+	-- event is documented to fire repeatedly for a single held press (a
+	-- long-standing Roblox engine quirk, see devforum "JumpRequest fires
+	-- rapidly"), not just once on press. Wiring DoubleJump's entry straight to
+	-- it meant a single space-bar tap -- which spans several frames -- could
+	-- refire `JumpRequest` again right after the character left the ground,
+	-- while the FSM had already advanced to `Airborne`, instantly consuming
+	-- the double jump with no separate second press. Tracking the key edge
+	-- ourselves fires exactly once per physical press-release cycle.
+	JumpRequested: LemonSignal.Signal<()>,
 	GetMoveIntent: (self: InputController) -> MoveIntent,
 	IsCrouchHeld: (self: InputController) -> boolean,
 	Destroy: (self: InputController) -> (),
@@ -42,6 +60,7 @@ function InputController.new(): InputController
 	self._trove = Trove.new()
 	self.RunRequested = self._trove:Add(LemonSignal.new(), "Destroy")
 	self.CrouchChanged = self._trove:Add(LemonSignal.new(), "Destroy")
+	self.JumpRequested = self._trove:Add(LemonSignal.new(), "Destroy")
 
 	self._forward = false
 	self._backward = false
@@ -49,6 +68,7 @@ function InputController.new(): InputController
 	self._strafeRight = false
 	self._lastWPressAt = nil :: number?
 	self._crouchHeld = false
+	self._jumpHeld = false
 
 	self._trove:Connect(
 		UserInputService.InputBegan,
@@ -58,10 +78,21 @@ function InputController.new(): InputController
 			end
 
 			if input.KeyCode == Enum.KeyCode.LeftControl then
-				if not self._crouchHeld then
-					self._crouchHeld = true
-					self.CrouchChanged:Fire(true)
+				self._crouchHeld = not self._crouchHeld
+				self.CrouchChanged:Fire(self._crouchHeld)
+				return
+			end
+
+			-- Edge-triggered, not a raw `JumpRequest` passthrough -- see
+			-- `JumpRequested`'s doc comment above for why. `_jumpHeld` guards
+			-- against a stray double-fire of `InputBegan` itself; the actual
+			-- debounce this exists for is the `InputEnded` pairing below.
+			if input.KeyCode == Enum.KeyCode.Space then
+				if self._jumpHeld then
+					return
 				end
+				self._jumpHeld = true
+				self.JumpRequested:Fire()
 				return
 			end
 
@@ -89,11 +120,11 @@ function InputController.new(): InputController
 	self._trove:Connect(
 		UserInputService.InputEnded,
 		function(input: InputObject, _gameProcessedEvent: boolean)
-			if input.KeyCode == Enum.KeyCode.LeftControl then
-				if self._crouchHeld then
-					self._crouchHeld = false
-					self.CrouchChanged:Fire(false)
-				end
+			-- LeftControl release is deliberately ignored -- crouch is a toggle
+			-- (press to enter, press again to leave), not a hold, so only
+			-- InputBegan above ever touches `_crouchHeld`.
+			if input.KeyCode == Enum.KeyCode.Space then
+				self._jumpHeld = false
 				return
 			end
 

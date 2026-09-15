@@ -9,6 +9,8 @@ local MovementStates = require(ReplicatedStorage.Shared.FSM.MovementStates)
 local MovementTypes = require(ReplicatedStorage.Shared.Types.MovementTypes)
 
 local InputController = require(script.Parent.Parent.InputController)
+local CharacterMover = require(script.Parent.Parent.CharacterMover)
+local TuningSnapshot = require(script.Parent.Parent.TuningSnapshot)
 
 type MovementState = MovementStates.MovementState
 type MovementContext = MovementTypes.MovementContext
@@ -73,11 +75,18 @@ end
 -- version-controlled and editable in Studio instead of hardcoded strings. A missing
 -- child (timeout) or one nobody's authored yet (blank AnimationId) are both treated
 -- as "not ready" and skipped, exactly like the old nil-string check did.
+-- `looped` (docs/MOVEMENT.md §10) -- every original Step 3 slot was a
+-- continuous locomotion loop, so `Looped` was unconditionally forced true
+-- here (`AnimationTrack.Looped` defaults to false, which would play once and
+-- freeze). Jump/Land/LandHard are one-shots and need that default false
+-- behavior preserved; Fall stays looped like the original set, since a fall
+-- can last arbitrarily long.
 local function loadTrack(
 	animator: Animator,
 	container: Instance,
 	name: string,
-	trove: Trove.Trove
+	trove: Trove.Trove,
+	looped: boolean
 ): AnimationTrack?
 	local animation = container:WaitForChild(name, ANIMATION_LOOKUP_TIMEOUT_SECONDS) :: Animation?
 	if not animation then
@@ -110,9 +119,7 @@ local function loadTrack(
 		)
 	)
 	local track = trove:Add(animator:LoadAnimation(animation), "Destroy")
-	-- Every slot here is a continuous locomotion loop (Idle/Walk/Run/Sprint) --
-	-- AnimationTrack.Looped defaults to false, which would play once and freeze.
-	track.Looped = true
+	track.Looped = looped
 	return track
 end
 
@@ -128,14 +135,24 @@ function LocomotionAnimator.new(
 	humanoid: Humanoid,
 	rootPart: BasePart,
 	fsm: StateMachine.StateMachine<MovementState, MovementContext>,
-	inputController: InputController.InputController
+	inputController: InputController.InputController,
+	characterMover: CharacterMover.CharacterMover
 ): LocomotionAnimator
 	local self = setmetatable({}, LocomotionAnimator) :: any
 	self._trove = Trove.new()
+	self._humanoid = humanoid
 	self._rootPart = rootPart
 	self._fsm = fsm
 	self._inputController = inputController
+	self._characterMover = characterMover
 	self._currentKey = nil :: string?
+	-- Landing one-shot hold (docs/MOVEMENT.md §10): when set, `_update` plays
+	-- `_landingKey` unconditionally until `os.clock()` passes this, overriding
+	-- normal per-state resolution -- by the time a landing is detected the FSM
+	-- has already transitioned off Airborne, so without this the one-shot
+	-- would never be seen.
+	self._landingKey = nil :: string?
+	self._landingHoldUntil = nil :: number?
 
 	-- Roblox auto-adds a default "Animate" script to every character, which plays
 	-- its own walk/idle/jump animations on this same Humanoid/Animator
@@ -161,24 +178,59 @@ function LocomotionAnimator.new(
 	local animator = humanoid:WaitForChild("Animator") :: Animator
 
 	self._tracks = {} :: { [string]: AnimationTrack? }
-	self._tracks.Idle = loadTrack(animator, ANIMATIONS_ROOT, "Idle", self._trove)
-	self._tracks.Run = loadTrack(animator, ANIMATIONS_ROOT, "Run", self._trove)
-	self._tracks.Sprint = loadTrack(animator, ANIMATIONS_ROOT, "Sprint", self._trove)
+	self._tracks.Idle = loadTrack(animator, ANIMATIONS_ROOT, "Idle", self._trove, true)
+	self._tracks.Run = loadTrack(animator, ANIMATIONS_ROOT, "Run", self._trove, true)
+	self._tracks.Sprint = loadTrack(animator, ANIMATIONS_ROOT, "Sprint", self._trove, true)
 	-- CrouchIdle/CrouchWalk/Slide (docs/MOVEMENT.md §9): single non-directional
 	-- clips, same as Idle/Run/Sprint above -- read from ANIMATIONS_ROOT, not
 	-- WALK_FOLDER, even though they were first authored as stray children of the
 	-- Walk folder (moved out in Assets/Animations/Movement.model.json alongside
 	-- this fix; found and fixed together, since the animator never referenced
 	-- them under either name until now). SlideJump has no clip of its own --
-	-- it's a brief mid-air hop immediately followed by Airborne, which has none
-	-- either (see the Airborne comment below).
-	self._tracks.CrouchIdle = loadTrack(animator, ANIMATIONS_ROOT, "CrouchIdle", self._trove)
-	self._tracks.CrouchWalk = loadTrack(animator, ANIMATIONS_ROOT, "CrouchWalk", self._trove)
-	self._tracks.Slide = loadTrack(animator, ANIMATIONS_ROOT, "Slide", self._trove)
+	-- it's a brief mid-air hop immediately followed by Airborne (see below);
+	-- flagged in the Traversal Roadmap as a one-line extension to reuse "Jump"
+	-- if wanted later, not done here.
+	self._tracks.CrouchIdle = loadTrack(animator, ANIMATIONS_ROOT, "CrouchIdle", self._trove, true)
+	self._tracks.CrouchWalk = loadTrack(animator, ANIMATIONS_ROOT, "CrouchWalk", self._trove, true)
+	self._tracks.Slide = loadTrack(animator, ANIMATIONS_ROOT, "Slide", self._trove, true)
 	for _, direction in DIRECTION_NAMES do
 		self._tracks["Walk_" .. direction] =
-			loadTrack(animator, WALK_FOLDER, direction, self._trove)
+			loadTrack(animator, WALK_FOLDER, direction, self._trove, true)
 	end
+	-- Landing/falling (Traversal Roadmap §8 Phase 0, docs/MOVEMENT.md §10):
+	-- Jump/Fall read every frame while Airborne (below); Land/LandHard are
+	-- one-shots played on the Airborne->grounded edge. Fall stays looped (a
+	-- fall can last arbitrarily long); Jump/Land/LandHard do not.
+	self._tracks.Jump = loadTrack(animator, ANIMATIONS_ROOT, "Jump", self._trove, false)
+	self._tracks.Fall = loadTrack(animator, ANIMATIONS_ROOT, "Fall", self._trove, true)
+	self._tracks.Land = loadTrack(animator, ANIMATIONS_ROOT, "Land", self._trove, false)
+	self._tracks.LandHard = loadTrack(animator, ANIMATIONS_ROOT, "LandHard", self._trove, false)
+	-- DoubleJump (TRAVERSAL-ROADMAP.md Phase 1): a one-shot, not looped -- the
+	-- impulse itself is a short, fixed-duration decay (DoubleJumpDecayDurationSeconds),
+	-- same treatment as Jump rather than the indefinite Fall loop.
+	self._tracks.DoubleJump = loadTrack(animator, ANIMATIONS_ROOT, "DoubleJump", self._trove, false)
+
+	-- Landing detection (docs/MOVEMENT.md §10; corrected TRAVERSAL-ROADMAP.md
+	-- Phase 1): an edge out of an airborne-family state (Airborne or
+	-- DoubleJump) is only a LANDING if it actually arrives grounded --
+	-- checking `previous` alone stopped being sufficient the moment
+	-- `DoubleJump` became a real Airborne exit that ISN'T a landing
+	-- (Airborne -> DoubleJump is still airborne, just a new impulse). Also
+	-- covers the rarer reverse case, DoubleJump -> a grounded state directly
+	-- (landed mid-impulse, `DoubleJumpState.Update`'s own mid-air-landing
+	-- branch) -- `previous == DoubleJump` alone would otherwise miss it.
+	-- Reads vertical speed at this exact instant -- one frame later and the
+	-- Landed->grounded physics state has already damped it.
+	self._trove:Connect(fsm.changed, function(_next: MovementState, previous: MovementState)
+		local fromAirborneFamily = previous == MovementStates.Airborne or previous == MovementStates.DoubleJump
+		if not fromAirborneFamily or not self._characterMover:IsGrounded() then
+			return
+		end
+		local fallSpeed = -self._characterMover:GetVerticalVelocity()
+		local hardThreshold = TuningSnapshot.Get().HardLandingFallSpeedThreshold
+		self._landingKey = if fallSpeed >= hardThreshold then "LandHard" else "Land"
+		self._landingHoldUntil = os.clock() + TuningSnapshot.Get().LandingAnimationHoldSeconds
+	end)
 
 	self._trove:Connect(RunService.RenderStepped, function()
 		self:_update()
@@ -188,6 +240,18 @@ function LocomotionAnimator.new(
 end
 
 function LocomotionAnimator:_update()
+	-- Landing one-shot hold (docs/MOVEMENT.md §10) wins over normal per-state
+	-- resolution below until the window elapses -- see the fsm.changed
+	-- connection in `.new` for why this can't just be handled inline below.
+	if self._landingHoldUntil then
+		if os.clock() < self._landingHoldUntil then
+			self:_playKey(self._landingKey)
+			return
+		end
+		self._landingHoldUntil = nil
+		self._landingKey = nil
+	end
+
 	local state = self._fsm.current
 	local key: string? = nil
 
@@ -221,10 +285,24 @@ function LocomotionAnimator:_update()
 			end
 			key = "Walk_" .. bucket
 		end
+	elseif state == MovementStates.Airborne then
+		-- Rising vs falling (docs/MOVEMENT.md §10): `Humanoid:GetState()`
+		-- already distinguishes `Jumping` (ascent) from `Freefall` (descent) --
+		-- the same read `CharacterMover:IsJumping()` uses for SlideJump's entry
+		-- gate. Anything else (e.g. the single tick `Landed` reports before the
+		-- FSM's own `changed` fires) falls through to nil, same as before.
+		local humanoidState = self._humanoid:GetState()
+		if humanoidState == Enum.HumanoidStateType.Jumping then
+			key = "Jump"
+		elseif humanoidState == Enum.HumanoidStateType.Freefall then
+			key = "Fall"
+		end
+	elseif state == MovementStates.DoubleJump then
+		key = "DoubleJump"
 	end
-	-- Airborne/SlideJump, or Walk with no move direction this frame: key stays
-	-- nil, fading out whatever was last playing. Jump/fall animations aren't
-	-- part of this pass -- add clips for these here once they exist.
+	-- SlideJump, or Walk with no move direction this frame: key stays nil,
+	-- fading out whatever was last playing -- same "add a clip here once one
+	-- exists" deferred treatment SlideJump still has.
 
 	self:_playKey(key)
 end

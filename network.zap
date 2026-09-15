@@ -47,6 +47,23 @@ event RequestMovementTransition = {
 	data: ClaimableMovementState,
 }
 
+-- Qinggong traversal claims (TRAVERSAL-ROADMAP.md §6) -- DIFFERENT in kind
+-- from RequestMovementTransition above: these are the five new expansion
+-- moves, each validated server-side via its own resimulation
+-- (MovementValidationService) rather than the passive-mirror/dwell-timestamp
+-- model Run/Sprint use, since they involve real physics impulses a modified
+-- client could otherwise fake outright. Only "DoubleJump" exists yet (Phase
+-- 1) -- Dash/WallRun/WallClimb/Vault are added to this enum as their own
+-- phases land, never all five speculatively up front.
+type ClaimableTraversalMove = enum { "DoubleJump" }
+
+event ClaimTraversalMove = {
+	from: Client,
+	type: Reliable,
+	call: SingleAsync,
+	data: ClaimableTraversalMove,
+}
+
 -- Debug overlay (F4, developer-only) ------------------------------------------
 --
 -- One-way server -> owning-client broadcast of MovementValidationService's
@@ -64,6 +81,7 @@ type DebugMovementState = enum {
 	"CrouchWalk",
 	"Slide",
 	"SlideJump",
+	"DoubleJump",
 }
 
 -- One recent speed-sanity correction (Shared/Util/ViolationTracker.luau's
@@ -123,6 +141,10 @@ type TunableConstantName = enum {
 	"CrouchSpeed",
 	"SlideDecayRate",
 	"SlideJumpBoostAmount",
+	"HardLandingFallSpeedThreshold",
+	"LandingAnimationHoldSeconds",
+	"DoubleJumpForce",
+	"DoubleJumpDecayDurationSeconds",
 }
 
 event RequestSetTuning = {
@@ -160,6 +182,10 @@ event TuningState = {
 		crouchSpeed: f32,
 		slideDecayRate: f32,
 		slideJumpBoostAmount: f32,
+		hardLandingFallSpeedThreshold: f32,
+		landingAnimationHoldSeconds: f32,
+		doubleJumpForce: f32,
+		doubleJumpDecayDurationSeconds: f32,
 	},
 }
 
@@ -183,5 +209,24 @@ event NoclipState = {
 	from: Server,
 	type: Reliable,
 	call: SingleSync,
+	data: boolean,
+}
+
+-- F4 overlay open/close signal (developer-only) ------------------------------
+--
+-- `MovementDebugState` above broadcasts every server Heartbeat -- without this,
+-- that broadcast runs unconditionally for every developer session regardless
+-- of whether their panel is even open, which is exactly the "no blanket
+-- per-Heartbeat cost" mistake docs/MOVEMENT.md's own optimization standards
+-- warn against elsewhere. `DebugOverlayController.setOpen` is the single
+-- choke point every open/close path (F4, corner tab, close button) already
+-- routes through, so this fires from there. Dev-gated server-side like every
+-- other dev-only remote (DevToolsService.RegisterDevOnly) even though a
+-- non-developer's client never sends it at all (DebugOverlayController.Init
+-- returns early for them).
+event RequestSetDebugOverlayOpen = {
+	from: Client,
+	type: Reliable,
+	call: SingleAsync,
 	data: boolean,
 }

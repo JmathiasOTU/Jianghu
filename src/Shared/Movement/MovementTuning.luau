@@ -22,6 +22,10 @@ export type TunableConstantName =
 	| "CrouchSpeed"
 	| "SlideDecayRate"
 	| "SlideJumpBoostAmount"
+	| "HardLandingFallSpeedThreshold"
+	| "LandingAnimationHoldSeconds"
+	| "DoubleJumpForce"
+	| "DoubleJumpDecayDurationSeconds"
 
 -- A named-field record (not a `{ [TunableConstantName]: number }` indexer
 -- type) specifically so consumers get plain dot-access
@@ -43,6 +47,10 @@ export type EffectiveMovementConstants = {
 	CrouchSpeed: number,
 	SlideDecayRate: number,
 	SlideJumpBoostAmount: number,
+	HardLandingFallSpeedThreshold: number,
+	LandingAnimationHoldSeconds: number,
+	DoubleJumpForce: number,
+	DoubleJumpDecayDurationSeconds: number,
 }
 
 -- Iteration order for the overlay's Tuning tab and for anything else that
@@ -59,6 +67,10 @@ local TUNABLE_NAMES: { TunableConstantName } = {
 	"CrouchSpeed",
 	"SlideDecayRate",
 	"SlideJumpBoostAmount",
+	"HardLandingFallSpeedThreshold",
+	"LandingAnimationHoldSeconds",
+	"DoubleJumpForce",
+	"DoubleJumpDecayDurationSeconds",
 }
 
 -- Sanity bounds for RequestSetTuning (Server/Services/MovementTuningService.luau)
@@ -79,6 +91,10 @@ local VALID_RANGES: { [TunableConstantName]: { min: number, max: number } } = {
 	CrouchSpeed = { min = 0, max = 500 },
 	SlideDecayRate = { min = 0.1, max = 500 },
 	SlideJumpBoostAmount = { min = 0, max = 500 },
+	HardLandingFallSpeedThreshold = { min = 0, max = 500 },
+	LandingAnimationHoldSeconds = { min = 0, max = 5 },
+	DoubleJumpForce = { min = 0, max = 500 },
+	DoubleJumpDecayDurationSeconds = { min = 0.05, max = 5 },
 }
 
 local MovementTuning = {}
@@ -100,6 +116,10 @@ function MovementTuning.Defaults(): EffectiveMovementConstants
 		CrouchSpeed = MovementConstants.CrouchSpeed,
 		SlideDecayRate = MovementConstants.SlideDecayRate,
 		SlideJumpBoostAmount = MovementConstants.SlideJumpBoostAmount,
+		HardLandingFallSpeedThreshold = MovementConstants.HardLandingFallSpeedThreshold,
+		LandingAnimationHoldSeconds = MovementConstants.LandingAnimationHoldSeconds,
+		DoubleJumpForce = MovementConstants.DoubleJumpForce,
+		DoubleJumpDecayDurationSeconds = MovementConstants.DoubleJumpDecayDurationSeconds,
 	}
 end
 

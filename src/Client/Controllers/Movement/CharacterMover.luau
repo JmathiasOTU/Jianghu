@@ -20,7 +20,10 @@ export type CharacterMover = {
 	SetJumpPower: (self: CharacterMover, jumpPower: number) -> (),
 	IsGrounded: (self: CharacterMover) -> boolean,
 	IsJumping: (self: CharacterMover) -> boolean,
+	GetVerticalVelocity: (self: CharacterMover) -> number,
 	SetJumpBlocked: (self: CharacterMover, blocked: boolean) -> (),
+	SetVelocityOverride: (self: CharacterMover, velocity: Vector3, maxForce: Vector3?) -> (),
+	ClearVelocityOverride: (self: CharacterMover) -> (),
 	Destroy: (self: CharacterMover) -> (),
 }
 
@@ -39,6 +42,34 @@ CharacterMover.__index = CharacterMover
 -- (docs/MOVEMENT.md §8, live tuning) -- the caller (Movement/init.luau) sources
 -- it from TuningSnapshot, this session's effective value, and re-pushes any
 -- later change via SetJumpPower.
+
+-- Backing constraint for SetVelocityOverride/ClearVelocityOverride
+-- (TRAVERSAL-ROADMAP.md §2/§11, Phase 1's DoubleJump) -- created ONCE per
+-- character life here, Trove-owned, left parented-but-inert (zero
+-- MaxAxesForce) between uses, never re-instanced per move. This is the
+-- structural fix over the reference controller, which does
+-- `Instance.new("BodyVelocity")` per move and churns instances constantly.
+-- `ForceLimitMode = PerAxis` + a per-axis `maxForce` (rather than a single
+-- `LineForce` magnitude) is what lets a caller drive only SOME axes (e.g.
+-- DoubleJump's vertical-only impulse) without fighting the Humanoid's own
+-- WalkSpeed-driven horizontal movement on the other two.
+local function createVelocityOverride(rootPart: BasePart): (Attachment, LinearVelocity)
+	local attachment = Instance.new("Attachment")
+	attachment.Name = "MovementVelocityOverrideAttachment"
+	attachment.Parent = rootPart
+
+	local linearVelocity = Instance.new("LinearVelocity")
+	linearVelocity.Name = "MovementVelocityOverride"
+	linearVelocity.Attachment0 = attachment
+	linearVelocity.RelativeTo = Enum.ActuatorRelativeTo.World
+	linearVelocity.ForceLimitMode = Enum.ForceLimitMode.PerAxis
+	linearVelocity.MaxAxesForce = Vector3.zero
+	linearVelocity.VectorVelocity = Vector3.zero
+	linearVelocity.Parent = rootPart
+
+	return attachment, linearVelocity
+end
+
 function CharacterMover.new(humanoid: Humanoid, jumpPower: number): CharacterMover
 	local self = setmetatable({}, CharacterMover) :: any
 	self._trove = Trove.new()
@@ -51,6 +82,11 @@ function CharacterMover.new(humanoid: Humanoid, jumpPower: number): CharacterMov
 	-- 2026-09-13). Forcing it off unconditionally broke normal camera orbiting.
 	humanoid.UseJumpPower = true
 	humanoid.JumpPower = jumpPower
+
+	local rootPart = humanoid.RootPart :: BasePart
+	local attachment, linearVelocity = createVelocityOverride(rootPart)
+	self._trove:Add(attachment)
+	self._linearVelocity = self._trove:Add(linearVelocity)
 
 	return self
 end
@@ -92,6 +128,18 @@ function CharacterMover:IsJumping(): boolean
 	return self._humanoid:GetState() == Enum.HumanoidStateType.Jumping
 end
 
+-- Real instant-in-time vertical speed (docs/MOVEMENT.md §10), mirroring
+-- `GetSpeed`'s own doc comment exactly -- just the `Y` component instead of
+-- the flattened `X`/`Z`. Landing-severity classification (Land vs LandHard)
+-- reads this the instant Airborne exits, not a nominal constant.
+function CharacterMover:GetVerticalVelocity(): number
+	local rootPart = self._humanoid.RootPart
+	if not rootPart then
+		return 0
+	end
+	return rootPart.AssemblyLinearVelocity.Y
+end
+
 -- "Can't jump while crouched" (docs/MOVEMENT.md §9) blocks the jump INPUT
 -- itself, not JumpPower/UseJumpPower -- those stay untouched so a real
 -- SlideJump boost (which drives off WalkSpeed carrying into a normal jump,
@@ -113,6 +161,26 @@ function CharacterMover:SetJumpBlocked(blocked: boolean)
 	else
 		ContextActionService:UnbindAction(JUMP_BLOCK_ACTION_NAME)
 	end
+end
+
+-- Drives the rootPart toward `velocity` along whichever axes `maxForce`
+-- actually allows (TRAVERSAL-ROADMAP.md §2) -- an axis with zero max force is
+-- left entirely to the Humanoid's own WalkSpeed-driven movement, so e.g.
+-- DoubleJump's `Vector3.new(0, maxForce.Y, 0)` only ever touches vertical
+-- velocity. Omitting `maxForce` drives all three axes at full strength, for a
+-- caller that genuinely wants to override the full vector (a future state's
+-- choice to make, not this method's).
+function CharacterMover:SetVelocityOverride(velocity: Vector3, maxForce: Vector3?)
+	self._linearVelocity.VectorVelocity = velocity
+	self._linearVelocity.MaxAxesForce = maxForce or Vector3.new(math.huge, math.huge, math.huge)
+end
+
+-- Leaves the constraint parented but inert (docs/MOVEMENT.md §11) -- zero
+-- MaxAxesForce means it applies no force at all until the next
+-- SetVelocityOverride, never destroyed/recreated between moves.
+function CharacterMover:ClearVelocityOverride()
+	self._linearVelocity.MaxAxesForce = Vector3.zero
+	self._linearVelocity.VectorVelocity = Vector3.zero
 end
 
 function CharacterMover:Destroy()

@@ -16,19 +16,16 @@ function IdleState.Enter(context: ClientMovementContext)
 end
 
 -- Crouch is checked before the ordinary Walk check (docs/MOVEMENT.md §9) --
--- Ctrl takes priority the instant it's held, deciding directly between
--- CrouchIdle/CrouchWalk from here rather than always landing in CrouchIdle
--- first (both are directly reachable from Idle, see StateRules.Transitions),
--- so a simultaneous Ctrl+W press lands in CrouchWalk the same tick instead of
--- one frame later.
+-- Ctrl takes priority the instant it's held. CrouchWalk is gated behind
+-- CrouchIdle (only reachable from there or from Airborne on landing), so
+-- holding Ctrl always lands in CrouchIdle first, even with W already held --
+-- CrouchIdle's own Update immediately re-checks move input and advances to
+-- CrouchWalk the very next tick if so.
 function IdleState.Update(_dt: number, context: ClientMovementContext)
 	if not context.grounded then
 		context.fsm:RequestTransition(MovementStates.Airborne, context)
 	elseif context.crouchHeld then
-		context.fsm:RequestTransition(
-			if StateRules.HasMoveInput(context) then MovementStates.CrouchWalk else MovementStates.CrouchIdle,
-			context
-		)
+		context.fsm:RequestTransition(MovementStates.CrouchIdle, context)
 	elseif StateRules.HasMoveInput(context) then
 		context.fsm:RequestTransition(MovementStates.Walk, context)
 	end

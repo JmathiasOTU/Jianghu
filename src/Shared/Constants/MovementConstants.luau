@@ -64,6 +64,39 @@ local MovementConstants = {
 	-- (`> 0`) let a spoofed `MoveDirection` with a razor-thin forward lean count
 	-- as "forward" while moving almost entirely sideways (found 2026-09-13).
 	SprintForwardDeadzone = 0.5,
+
+	-- Landing/falling animation (Traversal Roadmap §8 Phase 0, docs/MOVEMENT.md
+	-- §10) -- original design, no reference source. Vertical speed (studs/s,
+	-- CharacterMover:GetVerticalVelocity() at the instant of landing) at or
+	-- above this plays LandHard instead of the default light Land clip.
+	-- Starting-point value, not measured -- retune after playtesting a real
+	-- fall alongside the other "Fast & fluid" numbers above.
+	HardLandingFallSpeedThreshold = 65,
+	-- How long the one-shot Land/LandHard clip is allowed to win over the
+	-- landed-state's own animation key before falling through to normal
+	-- per-state resolution (docs/MOVEMENT.md §10) -- the FSM has already
+	-- transitioned to Idle/Walk/etc. by the time landing is detected, so
+	-- without this window the one-shot would never be seen at all.
+	LandingAnimationHoldSeconds = 0.35,
+
+	-- DoubleJump (TRAVERSAL-ROADMAP.md §5/§8 Phase 1) -- starting-point values,
+	-- not yet playtested, chosen the same "Fast & fluid" way as the original
+	-- speed/jump tiers. Initial upward velocity applied on entry; decays
+	-- toward roughly half of itself (Shared/Movement/TraversalMath.luau) over
+	-- DoubleJumpDecayDurationSeconds, at which point the state hands back to
+	-- Airborne (or straight to a grounded state, if it lands mid-impulse).
+	DoubleJumpForce = 50,
+	DoubleJumpDecayDurationSeconds = 0.4,
+
+	-- Server-only anti-cheat plumbing (MovementValidationService), not a
+	-- gameplay-feel number -- deliberately NOT in MovementTuning's live-tunable
+	-- set, same reasoning as SpeedCheckIntervalSeconds above. The moment a
+	-- ClaimTraversalMove is accepted, the speed-sanity baseline resets and the
+	-- horizontal check is suspended for this long (TRAVERSAL-ROADMAP.md §7.4)
+	-- before resuming against the resimulated position -- otherwise a
+	-- legitimate traversal move's own residual momentum on landing gets
+	-- flagged as a violation the instant it lands.
+	TraversalSpeedSanityGraceSeconds = 0.5,
 }
 
 return MovementConstants

@@ -52,10 +52,11 @@ event RequestMovementTransition = {
 -- moves, each validated server-side via its own resimulation
 -- (MovementValidationService) rather than the passive-mirror/dwell-timestamp
 -- model Run/Sprint use, since they involve real physics impulses a modified
--- client could otherwise fake outright. Only "DoubleJump" exists yet (Phase
--- 1) -- Dash/WallRun/WallClimb/Vault are added to this enum as their own
--- phases land, never all five speculatively up front.
-type ClaimableTraversalMove = enum { "DoubleJump" }
+-- client could otherwise fake outright. "DoubleJump" (Phase 1) and
+-- "WallRun"/"WallClimb" (Phase 4) exist so far -- Dash was deliberately
+-- skipped (docs/MOVEMENT.md), and Vault is added to this enum only once its
+-- own phase lands, never all speculatively up front.
+type ClaimableTraversalMove = enum { "DoubleJump", "WallRun", "WallClimb" }
 
 event ClaimTraversalMove = {
 	from: Client,
@@ -83,6 +84,8 @@ type DebugMovementState = enum {
 	"SlideJump",
 	"DoubleJump",
 	"HardLanding",
+	"WallRun",
+	"WallClimb",
 }
 
 -- One recent speed-sanity correction (Shared/Util/ViolationTracker.luau's
@@ -143,6 +146,7 @@ type TunableConstantName = enum {
 	"SlideDecayRate",
 	"SlideEntrySpeedMultiplier",
 	"SlideJumpBoostAmount",
+	"AnimationFadeTimeSeconds",
 	"LandingAnimationHoldSeconds",
 	"HardLandingHeightThreshold",
 	"HardLandingDurationSeconds",
@@ -152,6 +156,13 @@ type TunableConstantName = enum {
 	"SlideMaxWalkableSlopeDegrees",
 	"SlideSlopeAmplificationCap",
 	"SlideGroundRaycastThrottleSeconds",
+	"WallDetectMaxUpDot",
+	"WallDetectRaycastThrottleSeconds",
+	"WallRunSpeed",
+	"WallRunMaxDurationSeconds",
+	"WallClimbSpeed",
+	"WallClimbSnapDistance",
+	"WallClimbJumpForce",
 }
 
 event RequestSetTuning = {
@@ -190,6 +201,7 @@ event TuningState = {
 		slideDecayRate: f32,
 		slideEntrySpeedMultiplier: f32,
 		slideJumpBoostAmount: f32,
+		animationFadeTimeSeconds: f32,
 		landingAnimationHoldSeconds: f32,
 		hardLandingHeightThreshold: f32,
 		hardLandingDurationSeconds: f32,
@@ -199,6 +211,13 @@ event TuningState = {
 		slideMaxWalkableSlopeDegrees: f32,
 		slideSlopeAmplificationCap: f32,
 		slideGroundRaycastThrottleSeconds: f32,
+		wallDetectMaxUpDot: f32,
+		wallDetectRaycastThrottleSeconds: f32,
+		wallRunSpeed: f32,
+		wallRunMaxDurationSeconds: f32,
+		wallClimbSpeed: f32,
+		wallClimbSnapDistance: f32,
+		wallClimbJumpForce: f32,
 	},
 }
 

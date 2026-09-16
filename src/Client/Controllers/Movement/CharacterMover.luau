@@ -24,11 +24,19 @@ export type CharacterMover = {
 	GetVerticalVelocity: (self: CharacterMover) -> number,
 	GetHorizontalVelocity: (self: CharacterMover) -> Vector3,
 	SetHorizontalVelocity: (self: CharacterMover, velocity: Vector3) -> (),
+	SetVerticalVelocity: (self: CharacterMover, y: number) -> (),
 	GetFacingDirection: (self: CharacterMover) -> Vector3,
+	GetPosition: (self: CharacterMover) -> Vector3,
 	SetJumpBlocked: (self: CharacterMover, blocked: boolean) -> (),
 	SetVelocityOverride: (self: CharacterMover, velocity: Vector3, maxForce: Vector3?) -> (),
 	ClearVelocityOverride: (self: CharacterMover) -> (),
+	SetOrientationOverride: (self: CharacterMover, cframe: CFrame) -> (),
+	ClearOrientationOverride: (self: CharacterMover) -> (),
+	SetPositionHold: (self: CharacterMover, target: Vector3) -> (),
+	ClearPositionHold: (self: CharacterMover) -> (),
 	QueryGround: (self: CharacterMover, castDistance: number?) -> SpatialQueries.GroundQueryResult?,
+	QueryWall: (self: CharacterMover, rayLength: number?) -> SpatialQueries.WallQueryResult?,
+	IsLedgeAbove: (self: CharacterMover, rayLength: number?) -> boolean,
 	Destroy: (self: CharacterMover) -> (),
 }
 
@@ -75,6 +83,52 @@ local function createVelocityOverride(rootPart: BasePart): (Attachment, LinearVe
 	return attachment, linearVelocity
 end
 
+-- Backing constraints for SetOrientationOverride/ClearOrientationOverride and
+-- SetPositionHold/ClearPositionHold (TRAVERSAL-ROADMAP.md §0/§2, Phase 4's
+-- WallClimb) -- same "created ONCE per character life, Trove-owned, left
+-- parented-but-inert between uses" treatment `createVelocityOverride` above
+-- already established, just the two constraint kinds neither DoubleJump nor
+-- Slide ever needed: `AlignOrientation` for "face this direction" (Dash
+-- facing, WallClimb) and `AlignPosition` for "stick to this point in space"
+-- (WallClimb's wall-snap, Vault's windup-lerp) -- §0's own decision record on
+-- why a real position-hold constraint beats faking it out of zero-velocity
+-- damping. `MaxTorque`/`MaxForce` are the inert switch here, the same role
+-- `MaxAxesForce = Vector3.zero` plays for the LinearVelocity above -- zero
+-- means "parented but applying no force at all" until the next Set call.
+local function createOrientationOverride(rootPart: BasePart): (Attachment, AlignOrientation)
+	local attachment = Instance.new("Attachment")
+	attachment.Name = "MovementOrientationOverrideAttachment"
+	attachment.Parent = rootPart
+
+	local alignOrientation = Instance.new("AlignOrientation")
+	alignOrientation.Name = "MovementOrientationOverride"
+	alignOrientation.Attachment0 = attachment
+	alignOrientation.Mode = Enum.OrientationAlignmentMode.OneAttachment
+	alignOrientation.MaxTorque = 0
+	alignOrientation.Responsiveness = 25
+	alignOrientation.CFrame = CFrame.new()
+	alignOrientation.Parent = rootPart
+
+	return attachment, alignOrientation
+end
+
+local function createPositionHold(rootPart: BasePart): (Attachment, AlignPosition)
+	local attachment = Instance.new("Attachment")
+	attachment.Name = "MovementPositionHoldAttachment"
+	attachment.Parent = rootPart
+
+	local alignPosition = Instance.new("AlignPosition")
+	alignPosition.Name = "MovementPositionHold"
+	alignPosition.Attachment0 = attachment
+	alignPosition.Mode = Enum.PositionAlignmentMode.OneAttachment
+	alignPosition.MaxForce = 0
+	alignPosition.Responsiveness = 25
+	alignPosition.Position = rootPart.Position
+	alignPosition.Parent = rootPart
+
+	return attachment, alignPosition
+end
+
 function CharacterMover.new(humanoid: Humanoid, jumpPower: number): CharacterMover
 	local self = setmetatable({}, CharacterMover) :: any
 	self._trove = Trove.new()
@@ -92,6 +146,14 @@ function CharacterMover.new(humanoid: Humanoid, jumpPower: number): CharacterMov
 	local attachment, linearVelocity = createVelocityOverride(rootPart)
 	self._trove:Add(attachment)
 	self._linearVelocity = self._trove:Add(linearVelocity)
+
+	local orientationAttachment, alignOrientation = createOrientationOverride(rootPart)
+	self._trove:Add(orientationAttachment)
+	self._alignOrientation = self._trove:Add(alignOrientation)
+
+	local positionAttachment, alignPosition = createPositionHold(rootPart)
+	self._trove:Add(positionAttachment)
+	self._alignPosition = self._trove:Add(alignPosition)
 
 	return self
 end
@@ -143,6 +205,19 @@ function CharacterMover:GetFacingDirection(): Vector3
 	return Vector3.new(lookVector.X, 0, lookVector.Z)
 end
 
+-- WallClimb's own hold-height seed (TRAVERSAL-ROADMAP.md §8 Phase 4) -- the
+-- one narrow rootPart-position read states need that none of the existing
+-- methods already cover (added now because a state genuinely needs it, not
+-- speculatively -- same standard this file's own top comment sets for
+-- RequestJump/Disable).
+function CharacterMover:GetPosition(): Vector3
+	local rootPart = self._humanoid.RootPart
+	if not rootPart then
+		return Vector3.zero
+	end
+	return rootPart.Position
+end
+
 -- A single direct, one-shot physical write to `AssemblyLinearVelocity`'s
 -- horizontal axes (docs/MOVEMENT.md's Y-component equivalent already reads
 -- this same property elsewhere) -- NOT constraint-backed like
@@ -161,6 +236,22 @@ function CharacterMover:SetHorizontalVelocity(velocity: Vector3)
 	end
 	local current = rootPart.AssemblyLinearVelocity
 	rootPart.AssemblyLinearVelocity = Vector3.new(velocity.X, current.Y, velocity.Z)
+end
+
+-- The vertical-axis complement to `SetHorizontalVelocity` above -- same
+-- direct, one-shot write (not constraint-backed), for the identical reason:
+-- WallClimbState.ClimbJump (mechanic 5a) transitions synchronously into
+-- Airborne in the same call it fires from, so a constraint-backed
+-- SetVelocityOverride would just get cleared by Exit before the physics
+-- engine ever integrates it into real velocity (see SetHorizontalVelocity's
+-- own doc comment -- SlideJumpState's boost hit the exact same problem).
+function CharacterMover:SetVerticalVelocity(y: number)
+	local rootPart = self._humanoid.RootPart
+	if not rootPart then
+		return
+	end
+	local current = rootPart.AssemblyLinearVelocity
+	rootPart.AssemblyLinearVelocity = Vector3.new(current.X, y, current.Z)
 end
 
 function CharacterMover:SetJumpPower(jumpPower: number)
@@ -235,6 +326,35 @@ function CharacterMover:ClearVelocityOverride()
 	self._linearVelocity.VectorVelocity = Vector3.zero
 end
 
+-- WallClimb's facing-lock (TRAVERSAL-ROADMAP.md §2/§8 Phase 4) -- drives the
+-- rootPart's orientation toward `cframe` via the AlignOrientation created
+-- once in `.new` above, the same "constraint stays parented, only the
+-- force/torque toggles" shape SetVelocityOverride already uses.
+-- `math.huge` mirrors SetVelocityOverride's own "no maxForce given, drive at
+-- full strength" default -- there's no partial-strength caller for
+-- orientation the way DoubleJump's per-axis mask needed for velocity.
+function CharacterMover:SetOrientationOverride(cframe: CFrame)
+	self._alignOrientation.CFrame = cframe
+	self._alignOrientation.MaxTorque = math.huge
+end
+
+function CharacterMover:ClearOrientationOverride()
+	self._alignOrientation.MaxTorque = 0
+end
+
+-- WallClimb's wall-stick (TRAVERSAL-ROADMAP.md §0/§2/§8 Phase 4) -- via the
+-- AlignPosition created once in `.new` above. This is the "genuinely need a
+-- constraint built for holding a point in space, not a velocity-zeroing
+-- workaround" case §0's own decision record calls out.
+function CharacterMover:SetPositionHold(target: Vector3)
+	self._alignPosition.Position = target
+	self._alignPosition.MaxForce = math.huge
+end
+
+function CharacterMover:ClearPositionHold()
+	self._alignPosition.MaxForce = 0
+end
+
 -- Slide's own ground-normal probe (TRAVERSAL-ROADMAP.md §8 Phase 3, mechanic
 -- 3a) -- delegates straight to `Shared/Movement/SpatialQueries.QueryGround`,
 -- the SAME pure function server-side resimulation calls, seeded from this
@@ -247,6 +367,26 @@ function CharacterMover:QueryGround(castDistance: number?): SpatialQueries.Groun
 		return nil
 	end
 	return SpatialQueries.QueryGround(rootPart, self._humanoid.Parent :: Instance, castDistance)
+end
+
+-- WallRun/WallClimb's own wall probe (TRAVERSAL-ROADMAP.md §8 Phase 4) --
+-- same delegation shape as QueryGround above, the SAME pure function server
+-- resimulation calls too (Shared/Movement/SpatialQueries.QueryWall).
+function CharacterMover:QueryWall(rayLength: number?): SpatialQueries.WallQueryResult?
+	local rootPart = self._humanoid.RootPart
+	if not rootPart then
+		return nil
+	end
+	return SpatialQueries.QueryWall(rootPart, self._humanoid.Parent :: Instance, rayLength)
+end
+
+-- WallClimb's top-out probe (mechanic 5) -- same delegation shape.
+function CharacterMover:IsLedgeAbove(rayLength: number?): boolean
+	local rootPart = self._humanoid.RootPart
+	if not rootPart then
+		return false
+	end
+	return SpatialQueries.QueryLedgeAbove(rootPart, self._humanoid.Parent :: Instance, rayLength)
 end
 
 function CharacterMover:Destroy()

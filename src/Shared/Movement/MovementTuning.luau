@@ -23,6 +23,7 @@ export type TunableConstantName =
 	| "SlideDecayRate"
 	| "SlideEntrySpeedMultiplier"
 	| "SlideJumpBoostAmount"
+	| "AnimationFadeTimeSeconds"
 	| "LandingAnimationHoldSeconds"
 	| "HardLandingHeightThreshold"
 	| "HardLandingDurationSeconds"
@@ -32,6 +33,13 @@ export type TunableConstantName =
 	| "SlideMaxWalkableSlopeDegrees"
 	| "SlideSlopeAmplificationCap"
 	| "SlideGroundRaycastThrottleSeconds"
+	| "WallDetectMaxUpDot"
+	| "WallDetectRaycastThrottleSeconds"
+	| "WallRunSpeed"
+	| "WallRunMaxDurationSeconds"
+	| "WallClimbSpeed"
+	| "WallClimbSnapDistance"
+	| "WallClimbJumpForce"
 
 -- A named-field record (not a `{ [TunableConstantName]: number }` indexer
 -- type) specifically so consumers get plain dot-access
@@ -54,6 +62,7 @@ export type EffectiveMovementConstants = {
 	SlideDecayRate: number,
 	SlideEntrySpeedMultiplier: number,
 	SlideJumpBoostAmount: number,
+	AnimationFadeTimeSeconds: number,
 	LandingAnimationHoldSeconds: number,
 	HardLandingHeightThreshold: number,
 	HardLandingDurationSeconds: number,
@@ -63,6 +72,13 @@ export type EffectiveMovementConstants = {
 	SlideMaxWalkableSlopeDegrees: number,
 	SlideSlopeAmplificationCap: number,
 	SlideGroundRaycastThrottleSeconds: number,
+	WallDetectMaxUpDot: number,
+	WallDetectRaycastThrottleSeconds: number,
+	WallRunSpeed: number,
+	WallRunMaxDurationSeconds: number,
+	WallClimbSpeed: number,
+	WallClimbSnapDistance: number,
+	WallClimbJumpForce: number,
 }
 
 -- Iteration order for the overlay's Tuning tab and for anything else that
@@ -80,6 +96,7 @@ local TUNABLE_NAMES: { TunableConstantName } = {
 	"SlideDecayRate",
 	"SlideEntrySpeedMultiplier",
 	"SlideJumpBoostAmount",
+	"AnimationFadeTimeSeconds",
 	"LandingAnimationHoldSeconds",
 	"HardLandingHeightThreshold",
 	"HardLandingDurationSeconds",
@@ -89,6 +106,13 @@ local TUNABLE_NAMES: { TunableConstantName } = {
 	"SlideMaxWalkableSlopeDegrees",
 	"SlideSlopeAmplificationCap",
 	"SlideGroundRaycastThrottleSeconds",
+	"WallDetectMaxUpDot",
+	"WallDetectRaycastThrottleSeconds",
+	"WallRunSpeed",
+	"WallRunMaxDurationSeconds",
+	"WallClimbSpeed",
+	"WallClimbSnapDistance",
+	"WallClimbJumpForce",
 }
 
 -- Sanity bounds for RequestSetTuning (Server/Services/MovementTuningService.luau)
@@ -110,6 +134,7 @@ local VALID_RANGES: { [TunableConstantName]: { min: number, max: number } } = {
 	SlideDecayRate = { min = 0.1, max = 500 },
 	SlideEntrySpeedMultiplier = { min = 0.5, max = 5 },
 	SlideJumpBoostAmount = { min = 0, max = 500 },
+	AnimationFadeTimeSeconds = { min = 0, max = 2 },
 	LandingAnimationHoldSeconds = { min = 0, max = 5 },
 	-- Height threshold, not a speed -- wide enough to cover both a low-ceiling
 	-- test map and a tall Qinggong-scale drop without needing a re-range later.
@@ -124,6 +149,13 @@ local VALID_RANGES: { [TunableConstantName]: { min: number, max: number } } = {
 	SlideMaxWalkableSlopeDegrees = { min = 0.1, max = 89 },
 	SlideSlopeAmplificationCap = { min = 0, max = 500 },
 	SlideGroundRaycastThrottleSeconds = { min = 0.02, max = 2 },
+	WallDetectMaxUpDot = { min = 0.01, max = 1 },
+	WallDetectRaycastThrottleSeconds = { min = 0.02, max = 2 },
+	WallRunSpeed = { min = 0, max = 500 },
+	WallRunMaxDurationSeconds = { min = 0.1, max = 30 },
+	WallClimbSpeed = { min = 0, max = 500 },
+	WallClimbSnapDistance = { min = 0.5, max = 10 },
+	WallClimbJumpForce = { min = 0, max = 500 },
 }
 
 local MovementTuning = {}
@@ -146,6 +178,7 @@ function MovementTuning.Defaults(): EffectiveMovementConstants
 		SlideDecayRate = MovementConstants.SlideDecayRate,
 		SlideEntrySpeedMultiplier = MovementConstants.SlideEntrySpeedMultiplier,
 		SlideJumpBoostAmount = MovementConstants.SlideJumpBoostAmount,
+		AnimationFadeTimeSeconds = MovementConstants.AnimationFadeTimeSeconds,
 		LandingAnimationHoldSeconds = MovementConstants.LandingAnimationHoldSeconds,
 		HardLandingHeightThreshold = MovementConstants.HardLandingHeightThreshold,
 		HardLandingDurationSeconds = MovementConstants.HardLandingDurationSeconds,
@@ -155,6 +188,13 @@ function MovementTuning.Defaults(): EffectiveMovementConstants
 		SlideMaxWalkableSlopeDegrees = MovementConstants.SlideMaxWalkableSlopeDegrees,
 		SlideSlopeAmplificationCap = MovementConstants.SlideSlopeAmplificationCap,
 		SlideGroundRaycastThrottleSeconds = MovementConstants.SlideGroundRaycastThrottleSeconds,
+		WallDetectMaxUpDot = MovementConstants.WallDetectMaxUpDot,
+		WallDetectRaycastThrottleSeconds = MovementConstants.WallDetectRaycastThrottleSeconds,
+		WallRunSpeed = MovementConstants.WallRunSpeed,
+		WallRunMaxDurationSeconds = MovementConstants.WallRunMaxDurationSeconds,
+		WallClimbSpeed = MovementConstants.WallClimbSpeed,
+		WallClimbSnapDistance = MovementConstants.WallClimbSnapDistance,
+		WallClimbJumpForce = MovementConstants.WallClimbJumpForce,
 	}
 end
 

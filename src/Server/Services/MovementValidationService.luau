@@ -5,6 +5,8 @@ local RunService = game:GetService("RunService")
 
 local StateMachine = require(ReplicatedStorage.Shared.FSM.StateMachine)
 local MovementStates = require(ReplicatedStorage.Shared.FSM.MovementStates)
+local MovementStateGroups = require(ReplicatedStorage.Shared.FSM.MovementStateGroups)
+local MovementStateNames = require(ReplicatedStorage.Shared.FSM.MovementStateNames)
 local StateRules = require(ReplicatedStorage.Shared.Movement.StateRules)
 local CollisionGroups = require(ReplicatedStorage.Shared.Movement.CollisionGroups)
 local MovementTypes = require(ReplicatedStorage.Shared.Types.MovementTypes)
@@ -12,6 +14,7 @@ local MovementConstants = require(ReplicatedStorage.Shared.Constants.MovementCon
 local MovementTuning = require(ReplicatedStorage.Shared.Movement.MovementTuning)
 local TraversalMath = require(ReplicatedStorage.Shared.Movement.TraversalMath)
 local SpatialQueries = require(ReplicatedStorage.Shared.Movement.SpatialQueries)
+local LandingResolution = require(ReplicatedStorage.Shared.Movement.LandingResolution)
 local DeveloperAllowlist = require(ReplicatedStorage.Shared.Constants.DeveloperAllowlist)
 local RateLimiter = require(ReplicatedStorage.Shared.Util.RateLimiter)
 local ViolationTracker = require(ReplicatedStorage.Shared.Util.ViolationTracker)
@@ -27,38 +30,19 @@ type MovementContext = MovementTypes.MovementContext
 type EffectiveMovementConstants = MovementTuning.EffectiveMovementConstants
 
 -- Symbol -> the plain string literal Network.MovementDebugState's payload needs
--- (Zap enums are string unions, not Symbols) -- same lookup-table shape as
--- init.luau's NETWORK_CLAIM_NAMES, so a typo here fails to compile rather than
--- silently sending "Unknown" forever.
-local DEBUG_STATE_NAMES: { [MovementState]: Network.DebugMovementState } = {
-	[MovementStates.Idle] = "Idle",
-	[MovementStates.Walk] = "Walk",
-	[MovementStates.Run] = "Run",
-	[MovementStates.Sprint] = "Sprint",
-	[MovementStates.Airborne] = "Airborne",
-	[MovementStates.CrouchIdle] = "CrouchIdle",
-	[MovementStates.CrouchWalk] = "CrouchWalk",
-	[MovementStates.Slide] = "Slide",
-	[MovementStates.SlideJump] = "SlideJump",
-	[MovementStates.DoubleJump] = "DoubleJump",
-	[MovementStates.HardLanding] = "HardLanding",
-}
+-- (Zap enums are string unions, not Symbols) -- see
+-- Shared/FSM/MovementStateNames.luau (unified there during the 2026-09-15
+-- cleanup pass; this used to be a second, hand-duplicated copy of the
+-- client's own DEBUG_STATE_NAMES in Movement/init.luau).
+local DEBUG_STATE_NAMES = MovementStateNames.DebugNames
 
--- Grounded-family states (docs/MOVEMENT.md §10 rework) -- mirrors
--- Movement/init.luau's own client-side `GROUNDED_STATES` 1:1, same "which
--- states count as grounded" question `session.peakHeight`'s seed/clear edge
--- (below, in `createSession`'s `fsm.changed` handler) needs answered
--- server-side too. Deliberately a plain set, not derived from
--- `StateRules.Transitions`, same reasoning as the client's own copy.
-local GROUNDED_STATES: { [MovementState]: boolean } = {
-	[MovementStates.Idle] = true,
-	[MovementStates.Walk] = true,
-	[MovementStates.Run] = true,
-	[MovementStates.Sprint] = true,
-	[MovementStates.CrouchIdle] = true,
-	[MovementStates.CrouchWalk] = true,
-	[MovementStates.HardLanding] = true,
-}
+-- Grounded-family states (docs/MOVEMENT.md §10 rework) -- same "which states
+-- count as grounded" question `session.peakHeight`'s seed/clear edge (below,
+-- in `createSession`'s `fsm.changed` handler) needs answered server-side. See
+-- Shared/FSM/MovementStateGroups.luau (unified there during the 2026-09-15
+-- cleanup pass; this used to be a second, hand-duplicated copy of the
+-- client's own GROUNDED_STATES in Movement/init.luau).
+local GROUNDED_STATES = MovementStateGroups.Grounded
 
 type PlayerSession = {
 	player: Player,
@@ -150,6 +134,18 @@ type PlayerSession = {
 	-- `maxSpeedForState`'s cap for an unrelated state.
 	slideGroundQuery: SpatialQueries.GroundQueryResult?,
 	slideGroundQueryAt: number,
+	-- WallRun/WallClimb's own wall probe, server side (TRAVERSAL-ROADMAP.md
+	-- §8 Phase 4) -- the server's own copy of `SpatialQueries.QueryWall`,
+	-- refreshed every Heartbeat WHILE AIRBORNE (unlike `slideGroundQuery`,
+	-- which only matters once already mirrored into Slide/SlideJump): unlike
+	-- Slide's own CanEnter, WallRun/WallClimb's CanEnter needs live geometry
+	-- BEFORE the mirror ever enters either state, to validate the claim the
+	-- instant it arrives (ARCHITECTURE.md §3's "sanity raycasts... checked
+	-- against real geometry" mandate, named for exactly this feature). Never
+	-- populated while grounded -- `updateWallQuery` clears it immediately, so
+	-- a stale wall from moments before landing can't leak into a fresh claim.
+	wallQuery: SpatialQueries.WallQueryResult?,
+	wallQueryAt: number,
 }
 
 -- Rate limit for RequestMovementTransition, independent of the FSM's own legality
@@ -167,13 +163,23 @@ local TRAVERSAL_CLAIMS_PER_SECOND = 5
 -- unmeasured on purpose (docs/MOVEMENT.md §9's "measured, not guessed" bar has
 -- no data yet for this brand-new check): generous enough to absorb ordinary
 -- gravity/replication variance on top of the claimed impulse without being a
--- no-op. Revisit with a real playtest capture, same as SpeedToleranceMultiplier
--- was.
+-- no-op. Revisit only with real measured data from
+-- TRAVERSAL_TRAJECTORY_DEBUG_LOGGING below -- the same "capture before
+-- retuning" pattern SpeedToleranceMultiplier's own comment
+-- (MovementConstants.luau) already established for SPEED_SANITY_DEBUG_LOGGING.
 local TRAVERSAL_VERTICAL_VELOCITY_TOLERANCE = 15
 
 -- Absorbs standing-still jitter during HardLanding's WalkSpeed=0 lock without
 -- tolerating a real WASD movement attempt.
 local HARD_LANDING_RESIDUAL_SPEED_TOLERANCE = 6
+
+-- Diagnostic capture for `enforceDoubleJumpTrajectory`, same pattern as
+-- SPEED_SANITY_DEBUG_LOGGING below -- off by default, prints actual/expected/
+-- delta vertical velocity every Heartbeat DoubleJump is active so
+-- TRAVERSAL_VERTICAL_VELOCITY_TOLERANCE above can eventually be sized from a
+-- real playtest capture instead of the unmeasured starting-point guess it is
+-- today (docs/MOVEMENT.md §9).
+local TRAVERSAL_TRAJECTORY_DEBUG_LOGGING = false
 
 -- Temporary instrumentation for the 2026-09-13 Sprint-rubber-banding
 -- investigation (docs/MOVEMENT.md §5) -- prints real numbers instead of guessing
@@ -282,34 +288,13 @@ local function buildContext(session: PlayerSession): MovementContext
 		runDuration = runDuration,
 		preAirborneLocomotion = session.preAirborneLocomotion,
 		fallHeight = if session.peakHeight then session.peakHeight - session.rootPart.Position.Y else nil,
+		wallQuery = session.wallQuery,
+		-- Still an open design decision (TRAVERSAL-ROADMAP.md §0/§3) --
+		-- "always available" until a real Qinggong/stamina resource exists,
+		-- same placeholder the client uses.
+		qinggong = math.huge,
 		constants = constants,
 	}
-end
-
--- Landing target resolution, shared between the Airborne and DoubleJump
--- branches below (TRAVERSAL-ROADMAP.md §4) -- mirrors
--- `AirborneState.ResolveLandingTarget` client-side exactly, single source of
--- truth for "which grounded state does a landing input pattern resolve to"
--- rather than a second inline copy for DoubleJump's own mid-impulse-landing
--- case. Landing-resume fix: resumes `context.preAirborneLocomotion`
--- (Run/Sprint) instead of always falling to Walk when forward is still held
--- -- see AirborneState.luau's own copy of this function for the full
--- reasoning, identical here. HardLanding rework: `fallHeight` is checked
--- FIRST, same override-everything priority as the client's own copy.
-local function resolveLandingTarget(context: MovementContext): MovementState
-	if context.fallHeight and context.fallHeight >= context.constants.HardLandingHeightThreshold then
-		return MovementStates.HardLanding
-	end
-	local hasInput = StateRules.HasMoveInput(context)
-	if context.crouchHeld then
-		return if hasInput then MovementStates.CrouchWalk else MovementStates.CrouchIdle
-	elseif hasInput then
-		if context.moveIntent.forward and context.preAirborneLocomotion then
-			return context.preAirborneLocomotion :: MovementState
-		end
-		return MovementStates.Walk
-	end
-	return MovementStates.Idle
 end
 
 -- Idle/Walk/Airborne need no remote (Humanoid state already replicates), so the
@@ -346,7 +331,7 @@ local function mirrorPassiveTransitions(session: PlayerSession)
 			-- Landing while Ctrl is held goes to the crouch-variant instead of
 			-- Idle/Walk (docs/MOVEMENT.md §9) -- a single-tick decision, same
 			-- as AirborneState.Update's own client-side landing logic.
-			if session.fsm:RequestTransition(resolveLandingTarget(context), context) then
+			if session.fsm:RequestTransition(LandingResolution.Resolve(context), context) then
 				-- DoubleJump reset (TRAVERSAL-ROADMAP.md §4): mirrors the
 				-- client's own reset on the identical "landed" edge.
 				session.doubleJumpUsed = false
@@ -375,7 +360,7 @@ local function mirrorPassiveTransitions(session: PlayerSession)
 	-- own DoubleJumpState.Update.
 	if current == MovementStates.DoubleJump then
 		if context.grounded then
-			if session.fsm:RequestTransition(resolveLandingTarget(context), context) then
+			if session.fsm:RequestTransition(LandingResolution.Resolve(context), context) then
 				session.doubleJumpUsed = false
 				-- Landing-resume fix: same consume-on-landing edge as the
 				-- Airborne branch above -- `preAirborneLocomotion` survives the
@@ -388,6 +373,68 @@ local function mirrorPassiveTransitions(session: PlayerSession)
 
 		local elapsed = os.clock() - (session.traversalEntryAt or session.lastTransitionAt)
 		if elapsed >= context.constants.DoubleJumpDecayDurationSeconds then
+			session.fsm:RequestTransition(MovementStates.Airborne, context)
+		end
+		return
+	end
+
+	-- WallRun (TRAVERSAL-ROADMAP.md §7/§8 Phase 4): unlike DoubleJump's own
+	-- fixed decay-duration exit, this mirrors WallRunState.Update's own three
+	-- exit conditions in the same order -- losing the wall (the real
+	-- "sanity raycast against real geometry" ARCHITECTURE.md §3 mandates) and
+	-- the safety-duration ceiling are both checked server-side, off this
+	-- session's OWN `wallQuery` (updateWallQuery, never anything the client
+	-- asserts) and entry timestamp, same trust boundary as every other
+	-- resimulation slice here. Landing mid-run is its own branch, not folded
+	-- into "-> Airborne", for the identical reason DoubleJump's own landing
+	-- branch is: `Airborne.CanEnter` would reject it.
+	if current == MovementStates.WallRun then
+		if context.grounded then
+			if session.fsm:RequestTransition(LandingResolution.Resolve(context), context) then
+				-- Landing reset (TRAVERSAL-ROADMAP.md §4): mirrors the
+				-- generic "entered a grounded state -> reset" edge the
+				-- client's own fsm.changed handler applies unconditionally
+				-- for every airborne-family exit -- this branch needs it
+				-- spelled out explicitly since the server has no equivalent
+				-- single generic hook, same as the Airborne/DoubleJump
+				-- landing branches above.
+				session.doubleJumpUsed = false
+				session.preAirborneLocomotion = nil
+			end
+			return
+		end
+
+		if not context.wallQuery then
+			session.fsm:RequestTransition(MovementStates.Airborne, context)
+			return
+		end
+
+		local elapsed = os.clock() - (session.traversalEntryAt or session.lastTransitionAt)
+		if elapsed >= context.constants.WallRunMaxDurationSeconds then
+			session.fsm:RequestTransition(MovementStates.Airborne, context)
+		end
+		return
+	end
+
+	-- WallClimb (TRAVERSAL-ROADMAP.md §7/§8 Phase 4): mirrors WallClimbState.
+	-- Update's own "lost the wall" exit -- ClimbJump's own launch (a direct,
+	-- one-shot velocity write, same as SlideJump's boost) and the top-out
+	-- nudge both replicate as ordinary physics, so the mirror simply follows
+	-- along once the geometry it's holding onto disappears, same reasoning
+	-- WallRun's branch above uses. No duration cap here (mechanic 5a/§5's own
+	-- table names no WallClimb timer, unlike WallRun's explicit safety
+	-- ceiling) -- Qinggong drain is the intended real limiter once that
+	-- resource exists (§0).
+	if current == MovementStates.WallClimb then
+		if context.grounded then
+			if session.fsm:RequestTransition(LandingResolution.Resolve(context), context) then
+				session.doubleJumpUsed = false
+				session.preAirborneLocomotion = nil
+			end
+			return
+		end
+
+		if not context.wallQuery then
 			session.fsm:RequestTransition(MovementStates.Airborne, context)
 		end
 		return
@@ -411,7 +458,7 @@ local function mirrorPassiveTransitions(session: PlayerSession)
 		if session.hardLandingLockUntil and os.clock() < session.hardLandingLockUntil then
 			return
 		end
-		session.fsm:RequestTransition(resolveLandingTarget(context), context)
+		session.fsm:RequestTransition(LandingResolution.Resolve(context), context)
 		return
 	end
 
@@ -554,8 +601,8 @@ end
 -- landing Heartbeat, `context.grounded` has already flipped true by the time
 -- `mirrorPassiveTransitions` reads it to make the landing decision -- if this
 -- reset `session.peakHeight` off that same read, `fallHeight` would already
--- be ~0 by the time `resolveLandingTarget` consults it moments later in the
--- SAME frame. Resetting is left entirely to the `fsm.changed` handler in
+-- be ~0 by the time `LandingResolution.Resolve` consults it moments later in
+-- the SAME frame. Resetting is left entirely to the `fsm.changed` handler in
 -- `createSession`, which only fires (synchronously, inside
 -- `mirrorPassiveTransitions`'s own `RequestTransition` call) AFTER the
 -- landing decision has already consumed the real peak.
@@ -586,6 +633,31 @@ local function updateSlideGroundQuery(session: PlayerSession, constants: Effecti
 	end
 	session.slideGroundQueryAt = now
 	session.slideGroundQuery = SpatialQueries.QueryGround(session.rootPart, session.humanoid.Parent :: Instance)
+end
+
+-- WallRun/WallClimb's own wall probe, server side (TRAVERSAL-ROADMAP.md
+-- §7.5/§8 Phase 4) -- unlike `updateSlideGroundQuery` above (which only
+-- matters once a session is ALREADY mirrored into Slide/SlideJump), this has
+-- to run for every AIRBORNE session regardless of current state: WallRun/
+-- WallClimb's own `CanEnter` (Shared/Movement/StateRules.luau) needs live
+-- geometry knowledge the instant a `ClaimTraversalMove` arrives, not just
+-- while already inside one of the two states. Still throttled the same way
+-- (an `os.clock()`-delta accumulator, since this file's Heartbeat loop
+-- carries no `dt` of its own), and still cleared to nil the moment the
+-- session is grounded so a stale wall from moments before landing can never
+-- leak into a fresh claim's legality check.
+local function updateWallQuery(session: PlayerSession, constants: EffectiveMovementConstants)
+	if isGrounded(session.humanoid:GetState()) then
+		session.wallQuery = nil
+		return
+	end
+
+	local now = os.clock()
+	if now - session.wallQueryAt < constants.WallDetectRaycastThrottleSeconds then
+		return
+	end
+	session.wallQueryAt = now
+	session.wallQuery = SpatialQueries.QueryWall(session.rootPart, session.humanoid.Parent :: Instance)
 end
 
 -- Companion to the client's own slope-amplification read (SlideState.Update)
@@ -659,6 +731,21 @@ local function maxSpeedForState(state: MovementState, constants: EffectiveMoveme
 		return constants.SprintSpeed
 	elseif state == MovementStates.CrouchIdle or state == MovementStates.CrouchWalk then
 		return constants.CrouchSpeed
+	elseif state == MovementStates.WallRun then
+		-- WallRun's own tangent-projected LinearVelocity magnitude
+		-- (TRAVERSAL-ROADMAP.md §8 Phase 4) -- a dedicated tier, same "own
+		-- ceiling" treatment as Walk/Run/CrouchSpeed above, not a guessed
+		-- fraction of an existing one.
+		return constants.WallRunSpeed
+	elseif state == MovementStates.WallClimb then
+		-- WallClimb drives no real horizontal AssemblyLinearVelocity at all
+		-- (position-held via AlignPosition, not a LinearVelocity override) --
+		-- this cap only exists so `enforceSpeedSanity`'s flatDelta check has
+		-- SOME ceiling to compare against rather than falling through to
+		-- WalkSpeed's unrelated tier; WallClimbSpeed is generous enough for
+		-- the small per-tick horizontal correction the hold itself produces
+		-- while tracking an uneven wall surface.
+		return constants.WallClimbSpeed
 	elseif state == MovementStates.HardLanding then
 		-- Not a literal 0 -- that made maxDistance always exactly 0, flagging
 		-- even standing-still jitter every single check.
@@ -734,6 +821,8 @@ local function createSession(player: Player, humanoid: Humanoid, rootPart: BaseP
 		traversalRateLimiter = RateLimiter.new(TRAVERSAL_CLAIMS_PER_SECOND, 1),
 		slideGroundQuery = nil,
 		slideGroundQueryAt = 0,
+		wallQuery = nil,
+		wallQueryAt = 0,
 	}
 
 	-- Reset the speed-sanity baseline on EVERY FSM transition, not just Sprint
@@ -964,6 +1053,18 @@ local function enforceDoubleJumpTrajectory(session: PlayerSession, constants: Ef
 		TraversalMath.DoubleJumpVerticalVelocity(elapsed, constants.DoubleJumpForce, constants.DoubleJumpDecayDurationSeconds)
 	local actual = session.rootPart.AssemblyLinearVelocity.Y
 
+	if TRAVERSAL_TRAJECTORY_DEBUG_LOGGING then
+		print(
+			string.format(
+				"[TrajectoryDebug] %s actual=%.2f expected=%.2f delta=%.2f",
+				session.player.Name,
+				actual,
+				expected,
+				actual - expected
+			)
+		)
+	end
+
 	if actual > expected + TRAVERSAL_VERTICAL_VELOCITY_TOLERANCE then
 		local velocity = session.rootPart.AssemblyLinearVelocity
 		session.rootPart.AssemblyLinearVelocity = Vector3.new(velocity.X, expected, velocity.Z)
@@ -985,16 +1086,23 @@ local function onClaimTraversalMove(player: Player, claim: Network.ClaimableTrav
 		return
 	end
 
-	-- Only "DoubleJump" exists yet (Phase 1) -- Dash/WallRun/WallClimb/Vault
-	-- get their own branches here as their own phases land.
-	local claimedState = if claim == "DoubleJump" then MovementStates.DoubleJump else nil
+	-- "DoubleJump" (Phase 1) and "WallRun"/"WallClimb" (Phase 4) have their
+	-- own branches -- Dash was skipped, Vault gets its own branch once that
+	-- phase lands.
+	local claimedState = if claim == "DoubleJump"
+		then MovementStates.DoubleJump
+		elseif claim == "WallRun" then MovementStates.WallRun
+		elseif claim == "WallClimb" then MovementStates.WallClimb
+		else nil
 	if not claimedState then
 		return
 	end
 
 	local context = buildContext(session)
 	if session.fsm:RequestTransition(claimedState, context) then
-		session.doubleJumpUsed = true
+		if claimedState == MovementStates.DoubleJump then
+			session.doubleJumpUsed = true
+		end
 		session.traversalEntryAt = os.clock()
 
 		-- Exemption window (TRAVERSAL-ROADMAP.md §7.4, shipped alongside
@@ -1137,10 +1245,17 @@ function MovementValidationService.Init()
 		end
 	end)
 
+	-- Six per-session checks run unconditionally for every player every
+	-- Heartbeat -- each is already throttled internally (see e.g.
+	-- SpeedCheckIntervalSeconds/SlideGroundRaycastThrottleSeconds), but
+	-- staggering the OUTER loop itself (which players get checked which frame)
+	-- is a real design decision, not a drive-by cleanup -- open scalability
+	-- question for whenever a future traversal phase adds a seventh check here.
 	RunService.Heartbeat:Connect(function()
 		for _, session in sessions do
 			local constants = MovementTuningState.GetEffective(session.player)
 			updatePeakHeight(session)
+			updateWallQuery(session, constants)
 			mirrorPassiveTransitions(session)
 			updateSlideGroundQuery(session, constants)
 			enforceSpeedSanity(session, constants)

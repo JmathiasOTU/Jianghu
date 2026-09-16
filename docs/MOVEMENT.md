@@ -3,11 +3,16 @@
 Living design + implementation doc for the movement FSM. Update this as states get
 built, decisions change, or numbers get tuned — this is not a one-time spec.
 
-**Active build scope (Phase 1): Idle, Walk, Run, Sprint, Airborne, CrouchIdle,
-CrouchWalk, Slide, SlideJump — nine states.** None of these nine are gated by
-stamina/Qinggong — that resource only matters for WallRun/ClimbVault/LedgeGrab, which
-aren't built yet (see §9's own note on the unrelated "Slide" name-collision with
-**Deferred**'s spatial-claim group at the bottom — not a pointer to the same move).
+**Active build scope: Idle, Walk, Run, Sprint, Airborne, CrouchIdle, CrouchWalk,
+Slide, SlideJump, DoubleJump, HardLanding, WallRun, WallClimb — thirteen states.**
+None of these are gated by a real stamina/Qinggong resource yet — `context.qinggong`
+is wired as an abstracted field (both sides default it to `math.huge`, "always
+available") so WallRun/WallClimb's gating logic is real today and can point at an
+actual resource later without a rewrite (`TRAVERSAL-ROADMAP.md` §0/§3; still an open
+decision, see **Deferred** at the bottom). See §9's own note on the unrelated
+"Slide" name-collision with **Deferred**'s spatial-claim group at the bottom — not a
+pointer to the same move. Dash (`TRAVERSAL-ROADMAP.md` Phase 2) was deliberately
+skipped; Vault (Phase 5) isn't built yet.
 
 Movement is **strafe-style while the camera is locked to the character** (Shift
 Lock or first-person): facing decouples from movement direction, you face wherever
@@ -29,6 +34,8 @@ generous air control.
 | Landing/falling animation (`TRAVERSAL-ROADMAP.md` Phase 0) | Done — 2026-09-14, **no clips authored yet** | `Client/Controllers/Movement/{CharacterMover,Presentation/LocomotionAnimator}.luau`, `Shared/Constants/MovementConstants.luau`, `Shared/Movement/MovementTuning.luau`, `Server/Services/MovementTuningService.luau`, `network.zap`, `Assets/Animations/Movement.model.json` — see §10 |
 | DoubleJump (`TRAVERSAL-ROADMAP.md` Phase 1) | Done — 2026-09-14, **not yet playtested/tuned** | `Shared/FSM/MovementStates.luau`, `Shared/Movement/{StateRules,TraversalMath,MovementTuning}.luau`, `Shared/Types/MovementTypes.luau`, `Shared/Constants/MovementConstants.luau`, `Client/Controllers/Movement/{CharacterMover,InputController,init}.luau`, `Client/Controllers/Movement/States/{AirborneState,DoubleJumpState}.luau`, `Server/Services/{MovementValidationService,MovementTuningService}.luau`, `network.zap` — see §11 |
 | Slide/SlideJump physics upgrade (`TRAVERSAL-ROADMAP.md` Phase 3) | Done — 2026-09-15, **not yet playtested/tuned** | `Shared/Movement/{SpatialQueries (new),TraversalMath,MovementTuning}.luau`, `Shared/Constants/MovementConstants.luau`, `Client/Controllers/Movement/{CharacterMover,ClientMovementContext,init}.luau`, `Client/Controllers/Movement/States/{SlideState,SlideJumpState}.luau`, `Server/Services/{MovementValidationService,MovementTuningService}.luau`, `network.zap` — see §12 |
+| Dash (`TRAVERSAL-ROADMAP.md` Phase 2) | **Deliberately skipped** — this phase reuses nothing from it and nothing downstream blocks on it | — |
+| WallRun/WallClimb (`TRAVERSAL-ROADMAP.md` Phase 4) | Done — 2026-09-15, **not yet playtested/tuned, no clips authored** | `Shared/FSM/{MovementStates,MovementStateNames}.luau`, `Shared/Movement/{StateRules,SpatialQueries,TraversalMath,MovementTuning}.luau`, `Shared/Types/MovementTypes.luau`, `Shared/Constants/MovementConstants.luau`, `Client/Controllers/Movement/{CharacterMover,init}.luau`, `Client/Controllers/Movement/States/{AirborneState,WallRunState (new),WallClimbState (new)}.luau`, `Client/Controllers/Movement/Presentation/LocomotionAnimator.luau`, `Server/Services/{MovementValidationService,MovementTuningService}.luau`, `network.zap`, `Assets/Animations/Movement.model.json` — see §13 |
 
 ---
 
@@ -1725,20 +1732,189 @@ feels too twitchy.
 
 ---
 
+## 13. WallRun / WallClimb (`TRAVERSAL-ROADMAP.md` Phase 4)
+
+Two new airborne-family traversal states, `MovementStates.WallRun`/`WallClimb`
+(`Shared/FSM/MovementStates.luau`), reachable only from `Airborne`
+(`WallClimb` also reachable from `WallRun`, for climbing mid-run) — the same
+"claimed, not passively mirrored" model DoubleJump (§11) established, not
+Slide's dwell-free passive-mirror model. Dash (Phase 2) stays skipped; this
+phase reuses nothing from it.
+
+**Entry is polling, not a discrete gesture.** Unlike DoubleJump's
+`JumpRequested` edge signal, there's no natural single input event for
+"touching a wall" — `AirborneState.Update` tries `RequestTransition(WallClimb)`
+then `RequestTransition(WallRun)` every Heartbeat while airborne (both are
+harmless no-ops when their own `CanEnter` isn't satisfied, same "topology
+alone gates it" reasoning DoubleJump's own unconditional trigger already
+relies on). WallClimb is tried first because its `CanEnter` is the stricter,
+more deliberate gesture (see below) — it has to win whenever both would
+otherwise be legal for the same wall/input frame.
+
+**Wall detection is new shared-context state, not state-module-local.**
+Slide's own ground-normal cache never needed to be part of the shared
+`MovementContext` — Slide's `CanEnter` doesn't check it. WallRun/WallClimb's
+`CanEnter` (`Shared/Movement/StateRules.luau`) genuinely needs "is there a
+wall here right now" as part of its own legality check, so `wallQuery` is a
+real `MovementContext` field (`Shared/Types/MovementTypes.luau`), populated
+by each side from its own throttled probe (`SpatialQueries.QueryWall`, new)
+*before* calling into `StateRules` — never computed inside `StateRules`
+itself. Throttled via `WallDetectRaycastThrottleSeconds`, same
+`SlideGroundRaycastThrottleSeconds` accumulator idiom, and only probed at all
+while airborne (client: a `dt`-accumulator in `Movement/init.luau`'s
+Heartbeat, cleared immediately on grounding; server: an `os.clock()`-delta
+accumulator in `MovementValidationService.updateWallQuery`, run for every
+airborne session regardless of current state — unlike Slide's own ground
+query, which only matters once already inside the state, WallRun/WallClimb's
+`CanEnter` needs live geometry *before* the mirror ever enters either one, to
+validate a claim the instant it arrives — the real "sanity raycast against
+real geometry" `docs/ARCHITECTURE.md` §3 names for exactly this feature).
+
+**`SpatialQueries` gains two pure functions** (mechanics 4/5,
+`TRAVERSAL-ROADMAP.md` §9): `QueryWall` (a low + a high forward raycast must
+both hit, and the low hit's normal must read close to horizontal — rejects a
+ramp/slope or ceiling reading as a wall) and `QueryLedgeAbove` (the same low
+ray must hit, but the high ray must miss — "wall at your feet, open air
+above," WallClimb's own top-out detection). The reference's third wall check
+("a floor raycast must miss") is deliberately not ported — redundant, since
+`not context.grounded` is already required by the time either function runs.
+
+**WallRun drives a real `LinearVelocity`, horizontal-only** (same
+`HORIZONTAL_ONLY_FORCE` mask idiom Slide already established) — the wall's
+normal and the player's current facing direction feed
+`TraversalMath.WallRunTangentVelocity` (new, mechanic 4 generalized), which
+projects out the "into the wall" component and re-applies `WallRunSpeed` as
+the output magnitude. Vertical is left entirely to gravity — no formula in
+the roadmap calls for a hover, so a wall run is a horizontal skim, still
+falling the whole time, capped by `WallRunMaxDurationSeconds` (a safety
+ceiling; Qinggong drain is meant to own the real duration once that resource
+exists). Exits: losing the wall, the duration cap, or a mid-run landing
+(resolved directly via `AirborneState.ResolveLandingTarget`, same
+"`Airborne.CanEnter` would reject it" reasoning DoubleJump's own mid-impulse
+landing branch already established) — `WallClimb` is tried first on every
+`Update` tick too, so pressing into the wall mid-run upgrades into a climb.
+
+**WallClimb holds position and orientation, drives no `LinearVelocity` at
+all** — the one state so far that needed §0's `AlignPosition`/
+`AlignOrientation` decision: `CharacterMover` gained two new constraints
+(`createOrientationOverride`/`createPositionHold`), created once per
+character life in `.new`, Trove-owned, left inert between uses, same pattern
+`createVelocityOverride` already established — and four new methods
+(`SetOrientationOverride`/`ClearOrientationOverride`,
+`SetPositionHold`/`ClearPositionHold`). `WallClimbState` re-derives a hold
+target every tick from the *latest* wall query (position offset outward
+along the wall's own normal by `WallClimbSnapDistance`, height grown/shrunk
+by held forward/backward input at `WallClimbSpeed`) rather than fixing it at
+Entry, so climbing an uneven surface doesn't drift the player into or away
+from it. `CanEnter[WallClimb]` adds one more gate on top of WallRun's own
+(airborne, resource, wall-present): a "pressing INTO the wall" dot-product
+check (`moveIntent.direction` vs. the wall's inward direction,
+`WALL_CLIMB_INPUT_DOT_THRESHOLD = 0.5`, same "comfortably admits real WASD
+angles" reasoning `SprintForwardDeadzone` already established) — this is
+what actually distinguishes "jump at a wall and climb it" from "run
+alongside it," since both would otherwise see the identical `wallQuery`.
+
+**Two exits, both direct one-shot velocity writes, not
+`SetVelocityOverride`:** topping out over a ledge (`QueryLedgeAbove` reads
+true — a small forward-and-up nudge via `SetHorizontalVelocity`/the new
+`SetVerticalVelocity`, then hands to `Airborne`) and `ClimbJump`
+(mechanic 5a — a fixed upward impulse, `WallClimbJumpForce`, plus a small
+push away from the wall). Both transition to `Airborne` *synchronously* in
+the same call, the same "no real physics step in between" problem
+`SlideJumpState`'s own boost already hit — a constraint-backed
+`SetVelocityOverride` would get cleared by `Exit` before the physics engine
+ever integrated it, so `CharacterMover` gained `SetVerticalVelocity` as the
+vertical-axis complement to the existing `SetHorizontalVelocity`. `ClimbJump`
+itself is called directly from the jump-input handler
+(`Movement/init.luau`'s `input.JumpRequested` connection now branches: if
+`fsm.current == WallClimb`, call `WallClimbState.ClimbJump(context)` instead
+of the ordinary `RequestTransition(DoubleJump)` attempt) — not through
+`RequestTransition`'s normal `CanEnter` path, since it needs to carry a real
+launch impulse, not just pick a target state. Climbing down onto real ground
+resolves the landing directly too, same mid-move-landing shape as WallRun.
+
+**Server resimulation follows the DoubleJump pattern, not Slide's.**
+`onClaimTraversalMove`'s claim dispatch grew two more branches
+(`"WallRun"`/`"WallClimb"` → `MovementStates.WallRun`/`WallClimb`, reusing
+the same `traversalRateLimiter` budget DoubleJump already shares — no new
+limiter). `mirrorPassiveTransitions` grew two new branches mirroring each
+state's own client-side exit conditions (wall lost, duration cap, mid-move
+landing) off the session's *own* `wallQuery`/entry timestamp, never anything
+the client asserts. `maxSpeedForState` gained `WallRun`→`WallRunSpeed` and
+`WallClimb`→`WallClimbSpeed` entries (the landing-momentum grace mechanism,
+`effectiveMaxSpeed`, already covers both for free — it's generic over "the
+cap decreased at the last transition," exactly as promised back in §12).
+
+**New `MovementConstants`, live-tunable** (F4 Tuning tab, 5-way-wired through
+`MovementTuning.luau`/`network.zap`'s `TunableConstantName`+`TuningState`/
+`MovementTuningService.toTuningStatePayload`/`Movement/init.luau`'s
+`TuningState.SetCallback`, same chain every existing tunable uses):
+`WallRunSpeed`, `WallRunMaxDurationSeconds`, `WallClimbSpeed`,
+`WallClimbSnapDistance`, `WallClimbJumpForce`, `WallDetectMaxUpDot`,
+`WallDetectRaycastThrottleSeconds`. `WallDetectRayLength` is structural
+(raycast reach), same exclusion as `GroundQueryCastDistance` — not
+live-tunable. `WallRunSpeed`/`WallClimbSpeed` aren't named in the roadmap's
+own §5 constants table (that table only covers ported-mechanic-specific
+values) — a real studs/second magnitude has to come from somewhere, same gap
+`DoubleJumpForce` already filled for its own move.
+
+**Network additions:** `ClaimableTraversalMove` gains `"WallRun"`/
+`"WallClimb"`; `DebugMovementState` gains the same two names, mirrored in
+`Shared/FSM/MovementStateNames.luau`'s `DebugNames`. No `TraversalInput`/
+`TraversalReconciliation`-style continuous-input event was added — neither
+state needs one: WallRun's tangent direction is fully determined by the
+wall's own geometry plus the player's current facing (no separate input
+stream to replay), and WallClimb's vertical climb input is validated
+implicitly by the server's own position-hold tracking the same wall query,
+never a client-reported velocity. If a future traversal move genuinely needs
+continuous per-tick input replay, that event still doesn't exist anywhere in
+this codebase and would need to be designed from scratch.
+
+**Animation:** `LocomotionAnimator` gained two new looped tracks (`WallRun`,
+`WallClimb`, both real multi-frame states — no one-shot animation-hold hack
+needed, unlike SlideJump/Land) and two new `_update()` branches. The
+landing-hold detection (§10) was extended to also treat `WallRun`/`WallClimb`
+as airborne-family `previous` states, so a mid-move landing out of either
+still shows the "Land"/"LandHard" one-shot instead of jumping straight to
+the landed state's own per-state key. Slots added to
+`Assets/Animations/Movement.model.json` with blank `AnimationId`s — no clips
+authored yet, same status as every animation slot added since §10.
+
+**Not done — flagged, not required for this phase:** playtesting/tuning any
+of the six new gameplay-feel constants above (all starting-point "Fast &
+fluid" values, same as every other number in this file); the Qinggong
+resource itself (still `math.huge`/always-available on both sides, per §0's
+own explicit allowance); a `WallJump` push-off mechanic distinct from
+canceling into `DoubleJump` (topology allows `WallRun → DoubleJump` so a
+jump press mid-run can consume the midair jump if unused, but there's no
+dedicated wall-jump launch — not named as its own mechanic anywhere in
+`TRAVERSAL-ROADMAP.md` §9, so not invented here); Vault (Phase 5, see
+**Deferred** below).
+
+---
+
 ## Deferred (designed earlier, not part of this build)
 
-- **WallRun / ClimbVault / LedgeGrab / Slide** — spatial-claim states needing a
-  custom `LinearVelocity`/`VectorForce` mover layer, throttled sanity raycasts, and a
-  full predict-then-validate-with-lag-compensation network loop per transition.
-  **Naming collision, see §9's own note:** the `Slide` built in §9
-  (`MovementStates.Slide`) is a different, simpler Phase 1 move — plain
-  `WalkSpeed`-driven, no stamina gate, no custom mover — that happens to share
-  this name. If this deferred spatial slide still gets built later, give it a
-  different Symbol name (e.g. `SlideUnder`) rather than reusing `Slide`.
-- **Qinggong / stamina resource** — gates those four states only, never Walk/Run/
-  Sprint. Server-owned like a cooldown: client predicts locally for UI, server drains
-  on use and regens, reconciles the client's copy. Worth deciding when you get here:
-  your architecture doc already names `Qi` as a custom profile value alongside HP and
+- **Vault** (`TRAVERSAL-ROADMAP.md` Phase 5) — ledge-detection raycast (mechanic
+  6) plus a momentum-inheritance launch impulse (mechanic 6a). WallRun/WallClimb
+  (§13) are done; Vault is the one state from the original "WallRun / ClimbVault /
+  LedgeGrab / Slide" spatial-claim group still not built. **Naming collision, see
+  §9's own note:** the `Slide` built in §9 (`MovementStates.Slide`) is a
+  different, simpler Phase 1 move — plain `WalkSpeed`-driven, no stamina gate, no
+  custom mover — that happens to share its name with the ORIGINAL deferred group's
+  own spatial "Slide" concept (LedgeGrab-adjacent, never built, not the same
+  thing). If that deferred spatial slide ever gets built, give it a different
+  Symbol name (e.g. `SlideUnder`) rather than reusing `Slide`.
+- **Dash** (`TRAVERSAL-ROADMAP.md` Phase 2) — deliberately skipped (see the status
+  table above). Nothing in Phase 4 reused or blocked on it.
+- **Qinggong / stamina resource** — still genuinely undecided (§13 inherits this
+  open question from §0/§3 of the roadmap rather than resolving it): WallRun/
+  WallClimb's own gating already reads `context.qinggong`, wired as an abstracted
+  field defaulting to `math.huge` ("always available") on both sides, real code
+  today, just not backed by a real resource yet. Server-owned like a cooldown once
+  it exists: client predicts locally for UI, server drains on use and regens,
+  reconciles the client's copy. Worth deciding when you get here: your
+  architecture doc already names `Qi` as a custom profile value alongside HP and
   posture — is Qinggong the *same* Qi pool combat abilities will spend later, or a
   separate movement-only resource? Not a decision this doc needs to make yet.
 - **`Overridden` state** — the single narrow seam combat will later use to move the

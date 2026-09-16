@@ -83,6 +83,17 @@ local MovementConstants = {
 	-- as "forward" while moving almost entirely sideways (found 2026-09-13).
 	SprintForwardDeadzone = 0.5,
 
+	-- LocomotionAnimator's discrete switch-with-crossfade between whichever
+	-- track is currently selected and the next (docs/MOVEMENT.md §4 -- "not a
+	-- weighted multi-track blend tree") -- how long that crossfade takes,
+	-- passed to both `AnimationTrack:Play`/`:Stop`. Moved here from a
+	-- module-local constant in LocomotionAnimator.luau (2026-09-15 cleanup
+	-- pass) to get the same live-tuning treatment `LandingAnimationHoldSeconds`
+	-- right below already has -- adjustable from the F4 Tuning tab without a
+	-- republish, since fade feel is exactly the kind of thing worth dialing in
+	-- once real animations exist.
+	AnimationFadeTimeSeconds = 0.15,
+
 	-- Landing/falling animation (Traversal Roadmap §8 Phase 0, docs/MOVEMENT.md
 	-- §10) -- original design, no reference source. How long the one-shot
 	-- light `Land` clip is allowed to win over the landed-state's own
@@ -107,9 +118,9 @@ local MovementConstants = {
 	-- How long `HardLanding` holds movement (WalkSpeed pinned to 0) and jump
 	-- locked, once entered -- sized to the real `LandHard` clip's length so
 	-- the lock and the animation end together. A fixed duration, not a
-	-- read-the-clip's-own-Length like SlideJump's presentation-only
-	-- animation hold (`LocomotionAnimator`'s `SLIDE_JUMP_HOLD_FALLBACK_SECONDS`):
-	-- this number is gameplay-authoritative (the server mirrors it to enforce
+	-- read-the-clip's-own-Length like SlideJump's presentation-only animation
+	-- hold (`SlideJumpHoldFallbackSeconds`, below): this number is
+	-- gameplay-authoritative (the server mirrors it to enforce
 	-- the lock, see `MovementValidationService.mirrorPassiveTransitions`), so
 	-- client and server need to agree on the exact SAME number, which reading
 	-- a client-local `AnimationTrack.Length` can never guarantee the server
@@ -161,6 +172,71 @@ local MovementConstants = {
 	-- legitimate traversal move's own residual momentum on landing gets
 	-- flagged as a violation the instant it lands.
 	TraversalSpeedSanityGraceSeconds = 0.5,
+
+	-- SlideJump's presentation-only animation hold fallback
+	-- (LocomotionAnimator.luau, moved here from a module-local constant in the
+	-- 2026-09-15 cleanup pass) -- used only if the real SlideJump
+	-- AnimationTrack's Length reads 0 (should never happen once a real clip is
+	-- authored, per that file's own comment). Not gameplay-authoritative
+	-- (unlike HardLandingDurationSeconds, which the server also enforces), so
+	-- deliberately NOT in MovementTuning's live-tunable set, same reasoning as
+	-- SpeedCheckIntervalSeconds/TraversalSpeedSanityGraceSeconds above.
+	SlideJumpHoldFallbackSeconds = 0.55,
+
+	-- Ground raycast structural reach (Shared/Movement/SpatialQueries.luau,
+	-- moved here from a module-local constant in the 2026-09-15 cleanup pass)
+	-- -- long enough to reach the ground from HumanoidRootPart's own height
+	-- above it on a standard R6 rig, plus slack for slopes/stairs, without
+	-- reaching so far it hits floors through real gaps. Structural (raycast
+	-- reach), not a gameplay-feel number -- deliberately NOT in MovementTuning's
+	-- live-tunable set, same reasoning as SpeedCheckIntervalSeconds/
+	-- TraversalSpeedSanityGraceSeconds above.
+	GroundQueryCastDistance = 4,
+
+	-- WallRun/WallClimb (TRAVERSAL-ROADMAP.md §5/§8 Phase 4) -- starting-point
+	-- values, not yet playtested, chosen the same "Fast & fluid" way as every
+	-- other tier above.
+	--
+	-- Wall detection reach (Shared/Movement/SpatialQueries.QueryWall/
+	-- QueryLedgeAbove, mechanic 4) -- structural (raycast reach), same
+	-- reasoning as GroundQueryCastDistance above, deliberately NOT in
+	-- MovementTuning's live-tunable set.
+	WallDetectRayLength = 4,
+	-- How close to horizontal (|normal:Dot(worldUp)|) a hit surface's normal
+	-- must read to count as a "wall" rather than a ramp/slope or a ceiling
+	-- (mechanic 4) -- same kind of angle-classification threshold
+	-- SlideSlopeAngleThresholdDegrees already is, so it gets the same
+	-- live-tunable treatment.
+	WallDetectMaxUpDot = 0.25,
+	-- Wall/ledge raycast throttle (ARCHITECTURE.md §6 forbids a raw per-tick
+	-- raycast) -- same accumulator idiom as SlideGroundRaycastThrottleSeconds,
+	-- and live-tunable for the same reason that one is.
+	WallDetectRaycastThrottleSeconds = 0.1,
+	-- Not named in TRAVERSAL-ROADMAP.md §5's own constants table (that table
+	-- covers only the ported-mechanic-specific values) -- the actual
+	-- studs/second WallRun's tangent-projected LinearVelocity drives at, same
+	-- "a real magnitude has to come from somewhere" gap DoubleJump/Dash's own
+	-- Force constants already fill for their moves.
+	WallRunSpeed = 30,
+	-- Safety ceiling (TRAVERSAL-ROADMAP.md §5) -- Qinggong drain should own
+	-- the real duration once that resource exists (§0); until then this is
+	-- the only thing stopping a wall run from lasting forever.
+	WallRunMaxDurationSeconds = 2.5,
+	-- Vertical studs/second WallClimb's AlignPosition hold-height moves at
+	-- while forward/backward is held -- same "not in §5's table, still needed"
+	-- gap as WallRunSpeed above. Reused for the top-out/ClimbJump exit
+	-- impulses' magnitude too (mechanic 5/5a use it as their launch's rough
+	-- scale rather than introducing yet another one-off constant for a single
+	-- short nudge).
+	WallClimbSpeed = 12,
+	-- How far off the wall surface (along its own normal) WallClimb's
+	-- AlignPosition hold sits (mechanic 5) -- far enough that a standard R6
+	-- rig's own HumanoidRootPart doesn't clip into the wall it's holding.
+	WallClimbSnapDistance = 2.2,
+	-- Climb-jump exit impulse (mechanic 5a) -- fixed upward velocity applied
+	-- the instant WallClimbState.ClimbJump fires, same "starting-point value"
+	-- treatment as DoubleJumpForce.
+	WallClimbJumpForce = 45,
 }
 
 return MovementConstants

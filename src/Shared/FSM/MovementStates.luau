@@ -17,6 +17,8 @@ local MovementStates: { [string]: MovementState } = {
 	SlideJump = Symbol("SlideJump"),
 	DoubleJump = Symbol("DoubleJump"),
 	HardLanding = Symbol("HardLanding"),
+	WallRun = Symbol("WallRun"),
+	WallClimb = Symbol("WallClimb"),
 }
 
 return MovementStates

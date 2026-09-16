@@ -11,6 +11,10 @@ local function hasMoveInput(context: MovementContext): boolean
 	return context.moveIntent.direction.Magnitude > 0
 end
 
+-- WallClimb's own "pressing into the wall" gesture threshold -- see
+-- CanEnter[WallClimb]'s own comment below for why this exists.
+local WALL_CLIMB_INPUT_DOT_THRESHOLD = 0.5
+
 -- Topology: which states can graph-wise reach which. Purely "is this edge legal",
 -- not "is it legal right now" -- that's CanEnter below. Shared client/server so both
 -- FSM mirrors are built from the identical graph.
@@ -64,6 +68,8 @@ local Transitions: { [MovementState]: { MovementState } } = {
 		MovementStates.CrouchWalk,
 		MovementStates.DoubleJump,
 		MovementStates.HardLanding,
+		MovementStates.WallRun,
+		MovementStates.WallClimb,
 	},
 	[MovementStates.CrouchIdle] = {
 		MovementStates.Idle,
@@ -122,6 +128,51 @@ local Transitions: { [MovementState]: { MovementState } } = {
 		MovementStates.CrouchIdle,
 		MovementStates.CrouchWalk,
 		MovementStates.Airborne,
+	},
+
+	-- WallRun/WallClimb (TRAVERSAL-ROADMAP.md §8 Phase 4): reachable only from
+	-- Airborne (§4's own topology table), same "claimed, not passively
+	-- mirrored" model DoubleJump already established -- see
+	-- Client/Controllers/Movement/States/AirborneState.luau's own Update,
+	-- which is what actually attempts these two on the way down. WallClimb is
+	-- ALSO reachable from WallRun (climbing up mid-run, §4's own note that
+	-- "WallClimb reachable from Airborne and WallRun"). Both carry the same
+	-- grounded-target set DoubleJump does, for the identical reason: a wall
+	-- move that resolves a landing mid-flight can't bounce through Airborne
+	-- first (`Airborne.CanEnter` already requires `not grounded` by the time
+	-- that's detected) -- WallRunState/WallClimbState.Update resolve straight
+	-- to the real grounded target instead, same as DoubleJumpState's own
+	-- mid-air-landing branch. `DoubleJump` is included on WallRun's own list
+	-- (not WallClimb's) so a jump press mid-run can cancel into a double jump
+	-- if one hasn't been spent yet -- topology alone gates this, no special
+	-- input wiring needed (same "no-op unless legal" reasoning already
+	-- established for DoubleJump's own unconditional JumpRequested trigger).
+	-- WallClimb's own jump press is a dedicated exit
+	-- (`WallClimbState.ClimbJump`, mechanic 5a) called directly rather than
+	-- through this topology, since it needs to apply a real launch impulse,
+	-- not just pick a target state -- same "call the state's own exported
+	-- function" idiom `AirborneState.ResolveLandingTarget` already uses.
+	[MovementStates.WallRun] = {
+		MovementStates.Airborne,
+		MovementStates.WallClimb,
+		MovementStates.DoubleJump,
+		MovementStates.Idle,
+		MovementStates.Walk,
+		MovementStates.Run,
+		MovementStates.Sprint,
+		MovementStates.CrouchIdle,
+		MovementStates.CrouchWalk,
+		MovementStates.HardLanding,
+	},
+	[MovementStates.WallClimb] = {
+		MovementStates.Airborne,
+		MovementStates.Idle,
+		MovementStates.Walk,
+		MovementStates.Run,
+		MovementStates.Sprint,
+		MovementStates.CrouchIdle,
+		MovementStates.CrouchWalk,
+		MovementStates.HardLanding,
 	},
 }
 
@@ -219,6 +270,48 @@ local CanEnter: { [MovementState]: (context: MovementContext) -> boolean } = {
 	-- CanEnter's; this only ever needs to confirm the landing is real.
 	[MovementStates.HardLanding] = function(context: MovementContext): boolean
 		return context.grounded
+	end,
+
+	-- WallRun (TRAVERSAL-ROADMAP.md §4/§8 Phase 4): airborne, resource-gated
+	-- (`context.qinggong`, still an abstracted "always available" placeholder
+	-- per §0), and a wall has to actually be there right now
+	-- (`context.wallQuery`, populated by each side's own throttled
+	-- SpatialQueries.QueryWall probe before this runs -- never computed here).
+	-- No explicit "not trying to climb" exclusion needed: AirborneState.Update/
+	-- WallRunState.Update both try WallClimb's own, stricter gesture check
+	-- FIRST and only fall through to this one if that fails, so the two never
+	-- race for the same input frame.
+	[MovementStates.WallRun] = function(context: MovementContext): boolean
+		return not context.grounded
+			and context.qinggong > 0
+			and context.wallQuery ~= nil
+			and hasMoveInput(context)
+	end,
+
+	-- WallClimb (TRAVERSAL-ROADMAP.md §4/§5/§8 Phase 4): same airborne/
+	-- resource/wall-present gate as WallRun, PLUS a deliberate "pressing INTO
+	-- the wall" gesture check (`moveIntent.direction` vs. the wall's own
+	-- inward-facing direction, i.e. `-normal`) -- this is what actually
+	-- distinguishes "jump at a wall and hold forward to climb it" from
+	-- "run alongside a wall while airborne," since both would otherwise see
+	-- the identical `wallQuery`. `WALL_CLIMB_INPUT_DOT_THRESHOLD` uses the
+	-- same "comfortably admits real WASD angles, rejects anything not
+	-- meaningfully forward" reasoning `SprintForwardDeadzone`
+	-- (MovementConstants.luau) already established for an analogous
+	-- direction-vs-direction check.
+	[MovementStates.WallClimb] = function(context: MovementContext): boolean
+		if context.grounded or context.qinggong <= 0 then
+			return false
+		end
+		local query = context.wallQuery
+		if not query or context.moveIntent.direction.Magnitude == 0 then
+			return false
+		end
+		local into = Vector3.new(-query.normal.X, 0, -query.normal.Z)
+		if into.Magnitude == 0 then
+			return false
+		end
+		return context.moveIntent.direction.Unit:Dot(into.Unit) > WALL_CLIMB_INPUT_DOT_THRESHOLD
 	end,
 }
 

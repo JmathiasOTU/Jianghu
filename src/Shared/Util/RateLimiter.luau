@@ -7,6 +7,9 @@ export type RateLimiter = {
 local RateLimiter = {}
 RateLimiter.__index = RateLimiter
 
+-- table.remove(timestamps, 1) is an O(n) front-removal -- fine at the current
+-- maxCalls (5, see every RateLimiter.new call site); revisit with an
+-- index-based ring buffer only if a future caller needs a much higher maxCalls.
 local function pruneExpired(self: any, now: number)
 	local timestamps = self._timestamps
 	while #timestamps > 0 and now - timestamps[1] > self._perSeconds do

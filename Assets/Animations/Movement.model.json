@@ -98,6 +98,20 @@
       "Properties": {
         "AnimationId": "rbxassetid://91642419132068"
       }
+    },
+    {
+      "Name": "WallRun",
+      "ClassName": "Animation",
+      "Properties": {
+        "AnimationId": "rbxassetid://99335883514665"
+      }
+    },
+    {
+      "Name": "WallClimb",
+      "ClassName": "Animation",
+      "Properties": {
+        "AnimationId": ""
+      }
     }
   ]
 }

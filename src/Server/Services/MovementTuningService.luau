@@ -50,6 +50,7 @@ local function toTuningStatePayload(constants: EffectiveMovementConstants)
 		slideDecayRate = constants.SlideDecayRate,
 		slideEntrySpeedMultiplier = constants.SlideEntrySpeedMultiplier,
 		slideJumpBoostAmount = constants.SlideJumpBoostAmount,
+		animationFadeTimeSeconds = constants.AnimationFadeTimeSeconds,
 		landingAnimationHoldSeconds = constants.LandingAnimationHoldSeconds,
 		hardLandingHeightThreshold = constants.HardLandingHeightThreshold,
 		hardLandingDurationSeconds = constants.HardLandingDurationSeconds,
@@ -59,6 +60,13 @@ local function toTuningStatePayload(constants: EffectiveMovementConstants)
 		slideMaxWalkableSlopeDegrees = constants.SlideMaxWalkableSlopeDegrees,
 		slideSlopeAmplificationCap = constants.SlideSlopeAmplificationCap,
 		slideGroundRaycastThrottleSeconds = constants.SlideGroundRaycastThrottleSeconds,
+		wallDetectMaxUpDot = constants.WallDetectMaxUpDot,
+		wallDetectRaycastThrottleSeconds = constants.WallDetectRaycastThrottleSeconds,
+		wallRunSpeed = constants.WallRunSpeed,
+		wallRunMaxDurationSeconds = constants.WallRunMaxDurationSeconds,
+		wallClimbSpeed = constants.WallClimbSpeed,
+		wallClimbSnapDistance = constants.WallClimbSnapDistance,
+		wallClimbJumpForce = constants.WallClimbJumpForce,
 	}
 end
 

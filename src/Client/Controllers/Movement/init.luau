@@ -6,8 +6,12 @@ local RunService = game:GetService("RunService")
 local Trove = require(ReplicatedStorage.Packages.Trove)
 local StateMachine = require(ReplicatedStorage.Shared.FSM.StateMachine)
 local MovementStates = require(ReplicatedStorage.Shared.FSM.MovementStates)
+local MovementStateGroups = require(ReplicatedStorage.Shared.FSM.MovementStateGroups)
+local MovementStateNames = require(ReplicatedStorage.Shared.FSM.MovementStateNames)
 local StateRules = require(ReplicatedStorage.Shared.Movement.StateRules)
 local CollisionGroups = require(ReplicatedStorage.Shared.Movement.CollisionGroups)
+local SpatialQueriesModule = require(ReplicatedStorage.Shared.Movement.SpatialQueries)
+type WallQueryResult = SpatialQueriesModule.WallQueryResult
 
 local CharacterMover = require(script.CharacterMover)
 local InputController = require(script.InputController)
@@ -31,6 +35,8 @@ local SlideState = require(script.States.SlideState)
 local SlideJumpState = require(script.States.SlideJumpState)
 local DoubleJumpState = require(script.States.DoubleJumpState)
 local HardLandingState = require(script.States.HardLandingState)
+local WallRunState = require(script.States.WallRunState)
+local WallClimbState = require(script.States.WallClimbState)
 
 type MovementState = MovementStates.MovementState
 type ClientMovementContext = ClientMovementContextModule.ClientMovementContext
@@ -55,6 +61,8 @@ local States = {
 	[MovementStates.SlideJump] = SlideJumpState,
 	[MovementStates.DoubleJump] = DoubleJumpState,
 	[MovementStates.HardLanding] = HardLandingState,
+	[MovementStates.WallRun] = WallRunState,
+	[MovementStates.WallClimb] = WallClimbState,
 }
 
 -- Only Run/Sprint are earned, exploit-relevant transitions that need a server
@@ -71,41 +79,20 @@ local NETWORK_CLAIM_NAMES: { [MovementState]: "Run" | "Sprint" } = {
 }
 
 -- Symbol -> plain string name for the F4 debug overlay's DebugSnapshot
--- (docs/MOVEMENT.md) -- the overlay has no reason to require MovementStates just
--- to compare Symbols for display, a string is enough for a readout.
-local DEBUG_STATE_NAMES: { [MovementState]: Network.DebugMovementState } = {
-	[MovementStates.Idle] = "Idle",
-	[MovementStates.Walk] = "Walk",
-	[MovementStates.Run] = "Run",
-	[MovementStates.Sprint] = "Sprint",
-	[MovementStates.Airborne] = "Airborne",
-	[MovementStates.CrouchIdle] = "CrouchIdle",
-	[MovementStates.CrouchWalk] = "CrouchWalk",
-	[MovementStates.Slide] = "Slide",
-	[MovementStates.SlideJump] = "SlideJump",
-	[MovementStates.DoubleJump] = "DoubleJump",
-	[MovementStates.HardLanding] = "HardLanding",
-}
+-- (docs/MOVEMENT.md) and the server's `MovementDebugState` broadcast -- see
+-- Shared/FSM/MovementStateNames.luau (unified there during the 2026-09-15
+-- cleanup pass; this used to be a second, hand-duplicated copy of the
+-- server's own DEBUG_STATE_NAMES).
+local DEBUG_STATE_NAMES = MovementStateNames.DebugNames
 
 -- Grounded-family states (TRAVERSAL-ROADMAP.md §4) -- landing into any of
 -- these is what resets `doubleJumpUsed` back to available, mirrored 1:1 by
--- MovementValidationService's own PlayerSession. Deliberately a plain set,
--- not derived from StateRules.Transitions -- "which states count as grounded"
--- and "which states can reach which" are different questions that happen to
--- share some membership.
--- HardLanding included (docs/MOVEMENT.md §10 rework): it's a real grounded
--- lock, entered only while `context.grounded` -- the same "you're on the
--- ground now" edge every doubleJumpUsed/preAirborneLocomotion/peakHeight
--- reset below already keys off.
-local GROUNDED_STATES: { [MovementState]: boolean } = {
-	[MovementStates.Idle] = true,
-	[MovementStates.Walk] = true,
-	[MovementStates.Run] = true,
-	[MovementStates.Sprint] = true,
-	[MovementStates.CrouchIdle] = true,
-	[MovementStates.CrouchWalk] = true,
-	[MovementStates.HardLanding] = true,
-}
+-- MovementValidationService's own PlayerSession. See
+-- Shared/FSM/MovementStateGroups.luau (unified there during the 2026-09-15
+-- cleanup pass; this used to be a second, hand-duplicated copy of the
+-- server's own GROUNDED_STATES) for why this is a plain set, not derived
+-- from StateRules.Transitions.
+local GROUNDED_STATES = MovementStateGroups.Grounded
 
 -- How often the current Run/Sprint claim is re-sent while held, not just on the
 -- transition edge (found 2026-09-13, docs/MOVEMENT.md §5: real playtest logs
@@ -159,6 +146,7 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 			SlideDecayRate = value.slideDecayRate,
 			SlideEntrySpeedMultiplier = value.slideEntrySpeedMultiplier,
 			SlideJumpBoostAmount = value.slideJumpBoostAmount,
+			AnimationFadeTimeSeconds = value.animationFadeTimeSeconds,
 			LandingAnimationHoldSeconds = value.landingAnimationHoldSeconds,
 			HardLandingHeightThreshold = value.hardLandingHeightThreshold,
 			HardLandingDurationSeconds = value.hardLandingDurationSeconds,
@@ -168,6 +156,13 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 			SlideMaxWalkableSlopeDegrees = value.slideMaxWalkableSlopeDegrees,
 			SlideSlopeAmplificationCap = value.slideSlopeAmplificationCap,
 			SlideGroundRaycastThrottleSeconds = value.slideGroundRaycastThrottleSeconds,
+			WallDetectMaxUpDot = value.wallDetectMaxUpDot,
+			WallDetectRaycastThrottleSeconds = value.wallDetectRaycastThrottleSeconds,
+			WallRunSpeed = value.wallRunSpeed,
+			WallRunMaxDurationSeconds = value.wallRunMaxDurationSeconds,
+			WallClimbSpeed = value.wallClimbSpeed,
+			WallClimbSnapDistance = value.wallClimbSnapDistance,
+			WallClimbJumpForce = value.wallClimbJumpForce,
 		})
 		characterMover:SetJumpPower(value.jumpPower)
 	end))
@@ -228,6 +223,19 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 	-- ResolveLandingTarget` to decide whether a landing forces `HardLanding`.
 	local peakHeight: number? = nil
 
+	-- WallRun/WallClimb's own wall probe (TRAVERSAL-ROADMAP.md §8 Phase 4) --
+	-- their CanEnter predicates (Shared/Movement/StateRules.luau) need "is
+	-- there a wall here right now" as part of the shared MovementContext, so
+	-- (unlike Slide's ground-normal cache, which is state-module-local since
+	-- Slide's own CanEnter never checks it) this has to be refreshed once per
+	-- Heartbeat, ahead of `Update`, and threaded through `buildContext` below.
+	-- Throttled via a `dt`-accumulator (ARCHITECTURE.md §6, same idiom
+	-- SlideState's own ground raycast already uses) and only probed at all
+	-- while airborne -- a grounded player never needs this, same "no blanket
+	-- per-tick cost" reasoning that raycast throttle already exists for.
+	local wallQuery: WallQueryResult? = nil
+	local wallQueryAccumulator = 0
+
 	local function buildContext(): ClientMovementContext
 		local runDuration = if fsm.current == MovementStates.Run
 			then RunState.GetDuration()
@@ -241,6 +249,11 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 			runDuration = runDuration,
 			preAirborneLocomotion = preAirborneLocomotion,
 			fallHeight = if peakHeight then peakHeight - rootPart.Position.Y else nil,
+			wallQuery = wallQuery,
+			-- Still an open design decision (TRAVERSAL-ROADMAP.md §0/§3) --
+			-- "always available" until a real Qinggong/stamina resource
+			-- exists, same placeholder both sides use.
+			qinggong = math.huge,
 			constants = TuningSnapshot.Get(),
 			characterMover = characterMover,
 			fsm = fsm,
@@ -304,6 +317,16 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 		if next == MovementStates.DoubleJump then
 			doubleJumpUsed = true
 			Network.ClaimTraversalMove.Fire("DoubleJump")
+		elseif next == MovementStates.WallRun then
+			-- WallRun/WallClimb (TRAVERSAL-ROADMAP.md §6/§8 Phase 4): claimed
+			-- the same way DoubleJump is -- fired once on entry, never a
+			-- continuous stream (no TraversalInput-style event exists in this
+			-- codebase; see MovementValidationService's own per-Heartbeat
+			-- geometry recheck for how the server keeps validating the move
+			-- afterward without one).
+			Network.ClaimTraversalMove.Fire("WallRun")
+		elseif next == MovementStates.WallClimb then
+			Network.ClaimTraversalMove.Fire("WallClimb")
 		elseif GROUNDED_STATES[next] then
 			doubleJumpUsed = false
 		end
@@ -362,6 +385,16 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 	-- makes this a no-op unless DoubleJump is actually reachable from the
 	-- current state.
 	lifeTrove:Connect(input.JumpRequested, function()
+		-- WallClimb's own jump press is a dedicated exit (ClimbJump, mechanic
+		-- 5a) that applies a real launch impulse on the way out -- routed
+		-- here instead of through RequestTransition's normal CanEnter path,
+		-- since a bare state-symbol target has nowhere to carry that impulse.
+		-- Every other state falls through to the ordinary DoubleJump attempt,
+		-- unconditionally, same as before this branch existed.
+		if fsm.current == MovementStates.WallClimb then
+			WallClimbState.ClimbJump(buildContext())
+			return
+		end
 		fsm:RequestTransition(MovementStates.DoubleJump, buildContext())
 	end)
 
@@ -395,6 +428,24 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 		-- the landing decision has already consumed the real peak.
 		if peakHeight then
 			peakHeight = math.max(peakHeight, rootPart.Position.Y)
+		end
+
+		-- Wall probe (TRAVERSAL-ROADMAP.md §8 Phase 4) -- BEFORE `Update`
+		-- below, same ordering reasoning as `peakHeight`'s own comment: this
+		-- frame's WallRun/WallClimb CanEnter check (inside AirborneState.Update
+		-- or the states' own Update) has to see a freshly-refreshed query, not
+		-- last frame's. Cleared immediately on grounding rather than left to
+		-- decay via the throttle, so a landed player's very next CanEnter
+		-- check never sees a stale wall.
+		if characterMover:IsGrounded() then
+			wallQuery = nil
+			wallQueryAccumulator = 0
+		else
+			wallQueryAccumulator += dt
+			if wallQueryAccumulator >= TuningSnapshot.Get().WallDetectRaycastThrottleSeconds then
+				wallQueryAccumulator = 0
+				wallQuery = characterMover:QueryWall()
+			end
 		end
 
 		States[fsm.current].Update(dt, buildContext())

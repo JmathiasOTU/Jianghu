@@ -7,6 +7,7 @@ local Trove = require(ReplicatedStorage.Packages.Trove)
 local StateMachine = require(ReplicatedStorage.Shared.FSM.StateMachine)
 local MovementStates = require(ReplicatedStorage.Shared.FSM.MovementStates)
 local MovementTypes = require(ReplicatedStorage.Shared.Types.MovementTypes)
+local MovementConstants = require(ReplicatedStorage.Shared.Constants.MovementConstants)
 
 local InputController = require(script.Parent.Parent.InputController)
 local CharacterMover = require(script.Parent.Parent.CharacterMover)
@@ -14,21 +15,6 @@ local TuningSnapshot = require(script.Parent.Parent.TuningSnapshot)
 
 type MovementState = MovementStates.MovementState
 type MovementContext = MovementTypes.MovementContext
-
-local FADE_TIME = 0.15
-
--- SlideJump's own FSM state lasts exactly one synchronous frame before handing
--- off to Airborne (`SlideJumpState.Enter`'s doc comment) -- `_update` runs on
--- RenderStepped, so `fsm.current` is never actually observed as SlideJump on a
--- real rendered frame, and the per-state resolution below would never pick the
--- clip. Same fix as the Land/LandHard one-shot hold: play it for a fixed
--- window starting the instant SlideJump is exited, overriding normal
--- resolution, regardless of the FSM having already moved on to Airborne.
--- Prefers the real clip length (`AnimationTrack.Length`, populated once the
--- animation asset is loaded, which it always is well before this fires) so
--- retiming the authored animation doesn't require a matching code change; this
--- is only a fallback for the (should-never-happen) case that Length reads 0.
-local SLIDE_JUMP_HOLD_FALLBACK_SECONDS = 0.55
 
 -- Short, not indefinite: these Animation instances always exist once
 -- Assets/Animations/Movement.model.json is synced (docs/MOVEMENT.md §4), so this
@@ -166,7 +152,7 @@ function LocomotionAnimator.new(
 	-- would never be seen.
 	self._landingKey = nil :: string?
 	self._landingHoldUntil = nil :: number?
-	-- SlideJump one-shot hold (see SLIDE_JUMP_HOLD_FALLBACK_SECONDS above):
+	-- SlideJump one-shot hold (see MovementConstants.SlideJumpHoldFallbackSeconds):
 	-- when set, `_update` plays "SlideJump" unconditionally until `os.clock()`
 	-- passes this.
 	self._slideJumpHoldUntil = nil :: number?
@@ -220,6 +206,13 @@ function LocomotionAnimator.new(
 	-- impulse itself is a short, fixed-duration decay (DoubleJumpDecayDurationSeconds),
 	-- same treatment as Jump rather than the indefinite Fall loop.
 	self._tracks.DoubleJump = loadTrack(animator, ANIMATIONS_ROOT, "DoubleJump", self._trove, false)
+	-- WallRun/WallClimb (TRAVERSAL-ROADMAP.md §8 Phase 4): both real,
+	-- multi-frame states (unlike SlideJump's one-synchronous-frame hand-off),
+	-- so per-state resolution below plays them for as long as `fsm.current`
+	-- says so -- looped, same treatment as Run/Sprint/Slide, no one-shot hold
+	-- hack needed.
+	self._tracks.WallRun = loadTrack(animator, ANIMATIONS_ROOT, "WallRun", self._trove, true)
+	self._tracks.WallClimb = loadTrack(animator, ANIMATIONS_ROOT, "WallClimb", self._trove, true)
 
 	-- Landing detection (docs/MOVEMENT.md §10; corrected TRAVERSAL-ROADMAP.md
 	-- Phase 1; simplified again once HardLanding became a real FSM state): an
@@ -242,13 +235,36 @@ function LocomotionAnimator.new(
 	-- plays "LandHard" for as long as `fsm.current` says so. Only a landing
 	-- into any OTHER grounded state still needs this brief "Land" overlay.
 	self._trove:Connect(fsm.changed, function(next: MovementState, previous: MovementState)
+		-- SlideJump's own FSM state lasts exactly one synchronous frame before
+		-- handing off to Airborne (`SlideJumpState.Enter`'s doc comment) --
+		-- `_update` runs on RenderStepped, so `fsm.current` is never actually
+		-- observed as SlideJump on a real rendered frame, and the per-state
+		-- resolution below would never pick the clip. Same fix as the
+		-- Land/LandHard one-shot hold: play it for a fixed window starting the
+		-- instant SlideJump is exited, overriding normal resolution. Prefers
+		-- the real clip length (`AnimationTrack.Length`, populated once the
+		-- animation asset is loaded, which it always is well before this
+		-- fires) so retiming the authored animation doesn't require a
+		-- matching code change; `MovementConstants.SlideJumpHoldFallbackSeconds`
+		-- is only a fallback for the (should-never-happen) case that Length
+		-- reads 0.
 		if previous == MovementStates.SlideJump then
 			local track = self._tracks.SlideJump
-			local duration = (track and track.Length > 0) and track.Length or SLIDE_JUMP_HOLD_FALLBACK_SECONDS
+			local duration = (track and track.Length > 0) and track.Length or MovementConstants.SlideJumpHoldFallbackSeconds
 			self._slideJumpHoldUntil = os.clock() + duration
 		end
 
-		local fromAirborneFamily = previous == MovementStates.Airborne or previous == MovementStates.DoubleJump
+		-- WallRun/WallClimb included (TRAVERSAL-ROADMAP.md §8 Phase 4): both
+		-- can resolve a landing directly, mid-move, the same way DoubleJump's
+		-- own mid-impulse landing branch already can (WallRunState/
+		-- WallClimbState.Update's own "context.grounded" branches) -- without
+		-- this, a landing straight out of either would skip the one-shot
+		-- "Land" clip entirely and jump straight to the landed state's own
+		-- per-state key.
+		local fromAirborneFamily = previous == MovementStates.Airborne
+			or previous == MovementStates.DoubleJump
+			or previous == MovementStates.WallRun
+			or previous == MovementStates.WallClimb
 		if not fromAirborneFamily or not self._characterMover:IsGrounded() or next == MovementStates.HardLanding then
 			return
 		end
@@ -342,6 +358,10 @@ function LocomotionAnimator:_update()
 		key = "SlideJump"
 	elseif state == MovementStates.HardLanding then
 		key = "LandHard"
+	elseif state == MovementStates.WallRun then
+		key = "WallRun"
+	elseif state == MovementStates.WallClimb then
+		key = "WallClimb"
 	end
 	-- Walk with no move direction this frame: key stays nil, fading out
 	-- whatever was last playing.
@@ -355,15 +375,22 @@ function LocomotionAnimator:_playKey(key: string?)
 	end
 	self._currentKey = key
 
+	-- Live-tunable (docs/MOVEMENT.md §8, moved off a module-local constant in
+	-- the 2026-09-15 cleanup pass, same TuningSnapshot pipeline
+	-- LandingAnimationHoldSeconds already uses) -- read fresh per call rather
+	-- than cached, so a Studio Tuning-tab change takes effect on the very next
+	-- state switch with no extra invalidation bookkeeping.
+	local fadeTime = TuningSnapshot.Get().AnimationFadeTimeSeconds
+
 	for trackKey, track in self._tracks do
 		if track and trackKey ~= key and track.IsPlaying then
-			track:Stop(FADE_TIME)
+			track:Stop(fadeTime)
 		end
 	end
 
 	local nextTrack = key and self._tracks[key]
 	if nextTrack and not nextTrack.IsPlaying then
-		nextTrack:Play(FADE_TIME)
+		nextTrack:Play(fadeTime)
 	end
 end
 

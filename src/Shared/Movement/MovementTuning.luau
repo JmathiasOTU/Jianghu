@@ -37,9 +37,8 @@ export type TunableConstantName =
 	| "WallDetectRaycastThrottleSeconds"
 	| "WallRunSpeed"
 	| "WallRunMaxDurationSeconds"
-	| "WallClimbSpeed"
-	| "WallClimbSnapDistance"
-	| "WallClimbJumpForce"
+	| "WallLatchSnapDistance"
+	| "WallLeapForce"
 
 -- A named-field record (not a `{ [TunableConstantName]: number }` indexer
 -- type) specifically so consumers get plain dot-access
@@ -76,9 +75,8 @@ export type EffectiveMovementConstants = {
 	WallDetectRaycastThrottleSeconds: number,
 	WallRunSpeed: number,
 	WallRunMaxDurationSeconds: number,
-	WallClimbSpeed: number,
-	WallClimbSnapDistance: number,
-	WallClimbJumpForce: number,
+	WallLatchSnapDistance: number,
+	WallLeapForce: number,
 }
 
 -- Iteration order for the overlay's Tuning tab and for anything else that
@@ -110,9 +108,8 @@ local TUNABLE_NAMES: { TunableConstantName } = {
 	"WallDetectRaycastThrottleSeconds",
 	"WallRunSpeed",
 	"WallRunMaxDurationSeconds",
-	"WallClimbSpeed",
-	"WallClimbSnapDistance",
-	"WallClimbJumpForce",
+	"WallLatchSnapDistance",
+	"WallLeapForce",
 }
 
 -- Sanity bounds for RequestSetTuning (Server/Services/MovementTuningService.luau)
@@ -153,9 +150,8 @@ local VALID_RANGES: { [TunableConstantName]: { min: number, max: number } } = {
 	WallDetectRaycastThrottleSeconds = { min = 0.02, max = 2 },
 	WallRunSpeed = { min = 0, max = 500 },
 	WallRunMaxDurationSeconds = { min = 0.1, max = 30 },
-	WallClimbSpeed = { min = 0, max = 500 },
-	WallClimbSnapDistance = { min = 0.5, max = 10 },
-	WallClimbJumpForce = { min = 0, max = 500 },
+	WallLatchSnapDistance = { min = 0.5, max = 10 },
+	WallLeapForce = { min = 0, max = 500 },
 }
 
 local MovementTuning = {}
@@ -192,9 +188,8 @@ function MovementTuning.Defaults(): EffectiveMovementConstants
 		WallDetectRaycastThrottleSeconds = MovementConstants.WallDetectRaycastThrottleSeconds,
 		WallRunSpeed = MovementConstants.WallRunSpeed,
 		WallRunMaxDurationSeconds = MovementConstants.WallRunMaxDurationSeconds,
-		WallClimbSpeed = MovementConstants.WallClimbSpeed,
-		WallClimbSnapDistance = MovementConstants.WallClimbSnapDistance,
-		WallClimbJumpForce = MovementConstants.WallClimbJumpForce,
+		WallLatchSnapDistance = MovementConstants.WallLatchSnapDistance,
+		WallLeapForce = MovementConstants.WallLeapForce,
 	}
 end
 

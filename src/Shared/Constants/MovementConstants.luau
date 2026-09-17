@@ -119,7 +119,7 @@ local MovementConstants = {
 	-- locked, once entered -- sized to the real `LandHard` clip's length so
 	-- the lock and the animation end together. A fixed duration, not a
 	-- read-the-clip's-own-Length like SlideJump's presentation-only animation
-	-- hold (`SlideJumpHoldFallbackSeconds`, below): this number is
+	-- hold (`OneShotAnimationHoldFallbackSeconds`, below): this number is
 	-- gameplay-authoritative (the server mirrors it to enforce
 	-- the lock, see `MovementValidationService.mirrorPassiveTransitions`), so
 	-- client and server need to agree on the exact SAME number, which reading
@@ -173,15 +173,14 @@ local MovementConstants = {
 	-- flagged as a violation the instant it lands.
 	TraversalSpeedSanityGraceSeconds = 0.5,
 
-	-- SlideJump's presentation-only animation hold fallback
-	-- (LocomotionAnimator.luau, moved here from a module-local constant in the
-	-- 2026-09-15 cleanup pass) -- used only if the real SlideJump
-	-- AnimationTrack's Length reads 0 (should never happen once a real clip is
-	-- authored, per that file's own comment). Not gameplay-authoritative
-	-- (unlike HardLandingDurationSeconds, which the server also enforces), so
+	-- Presentation-only animation hold fallback shared by every one-shot,
+	-- synchronous-frame state (LocomotionAnimator.luau's `_transientHold`) --
+	-- used only if the real AnimationTrack's Length reads 0 (should never
+	-- happen once a real clip is authored). Not gameplay-authoritative (unlike
+	-- HardLandingDurationSeconds, which the server also enforces), so
 	-- deliberately NOT in MovementTuning's live-tunable set, same reasoning as
 	-- SpeedCheckIntervalSeconds/TraversalSpeedSanityGraceSeconds above.
-	SlideJumpHoldFallbackSeconds = 0.55,
+	OneShotAnimationHoldFallbackSeconds = 0.55,
 
 	-- Ground raycast structural reach (Shared/Movement/SpatialQueries.luau,
 	-- moved here from a module-local constant in the 2026-09-15 cleanup pass)
@@ -193,7 +192,7 @@ local MovementConstants = {
 	-- TraversalSpeedSanityGraceSeconds above.
 	GroundQueryCastDistance = 4,
 
-	-- WallRun/WallClimb (TRAVERSAL-ROADMAP.md §5/§8 Phase 4) -- starting-point
+	-- WallRun/WallLatch (TRAVERSAL-ROADMAP.md §5/§8 Phase 4) -- starting-point
 	-- values, not yet playtested, chosen the same "Fast & fluid" way as every
 	-- other tier above.
 	--
@@ -202,6 +201,12 @@ local MovementConstants = {
 	-- reasoning as GroundQueryCastDistance above, deliberately NOT in
 	-- MovementTuning's live-tunable set.
 	WallDetectRayLength = 4,
+	-- Low/high wall-detection ray origins, relative to HumanoidRootPart's own
+	-- position on a standard R6 rig -- structural, same reasoning as
+	-- WallDetectRayLength, deliberately NOT in MovementTuning's live-tunable
+	-- set. Verify visually in Studio and adjust.
+	WallDetectLowRayOffset = -2.5,
+	WallDetectHighRayOffset = 2,
 	-- How close to horizontal (|normal:Dot(worldUp)|) a hit surface's normal
 	-- must read to count as a "wall" rather than a ramp/slope or a ceiling
 	-- (mechanic 4) -- same kind of angle-classification threshold
@@ -222,21 +227,14 @@ local MovementConstants = {
 	-- the real duration once that resource exists (§0); until then this is
 	-- the only thing stopping a wall run from lasting forever.
 	WallRunMaxDurationSeconds = 2.5,
-	-- Vertical studs/second WallClimb's AlignPosition hold-height moves at
-	-- while forward/backward is held -- same "not in §5's table, still needed"
-	-- gap as WallRunSpeed above. Reused for the top-out/ClimbJump exit
-	-- impulses' magnitude too (mechanic 5/5a use it as their launch's rough
-	-- scale rather than introducing yet another one-off constant for a single
-	-- short nudge).
-	WallClimbSpeed = 12,
-	-- How far off the wall surface (along its own normal) WallClimb's
+	-- How far off the wall surface (along its own normal) WallLatch's
 	-- AlignPosition hold sits (mechanic 5) -- far enough that a standard R6
 	-- rig's own HumanoidRootPart doesn't clip into the wall it's holding.
-	WallClimbSnapDistance = 2.2,
-	-- Climb-jump exit impulse (mechanic 5a) -- fixed upward velocity applied
-	-- the instant WallClimbState.ClimbJump fires, same "starting-point value"
-	-- treatment as DoubleJumpForce.
-	WallClimbJumpForce = 45,
+	WallLatchSnapDistance = 2.2,
+	-- WallLeap's launch impulse -- fixed upward velocity applied the instant
+	-- WallLeapState.Enter fires, same "starting-point value" treatment as
+	-- DoubleJumpForce.
+	WallLeapForce = 45,
 }
 
 return MovementConstants

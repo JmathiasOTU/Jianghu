@@ -110,4 +110,16 @@ function TraversalMath.WallRunTangentVelocity(wallNormal: Vector3, moveDirection
 	return tangent.Unit * speed
 end
 
+-- Which side of the character the wall is on, for picking WallRunLeft vs.
+-- WallRunRight. Sign convention unverified against real geometry -- flip if
+-- the animations come out mirrored in Studio.
+function TraversalMath.WallRunSide(wallNormal: Vector3, characterRight: Vector3): string
+	local flatNormal = Vector3.new(wallNormal.X, 0, wallNormal.Z)
+	local flatRight = Vector3.new(characterRight.X, 0, characterRight.Z)
+	if flatNormal.Magnitude == 0 or flatRight.Magnitude == 0 then
+		return "Right"
+	end
+	return if flatNormal.Unit:Dot(flatRight.Unit) > 0 then "Left" else "Right"
+end
+
 return TraversalMath

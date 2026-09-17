@@ -36,7 +36,8 @@ local SlideJumpState = require(script.States.SlideJumpState)
 local DoubleJumpState = require(script.States.DoubleJumpState)
 local HardLandingState = require(script.States.HardLandingState)
 local WallRunState = require(script.States.WallRunState)
-local WallClimbState = require(script.States.WallClimbState)
+local WallLatchState = require(script.States.WallLatchState)
+local WallLeapState = require(script.States.WallLeapState)
 
 type MovementState = MovementStates.MovementState
 type ClientMovementContext = ClientMovementContextModule.ClientMovementContext
@@ -62,7 +63,8 @@ local States = {
 	[MovementStates.DoubleJump] = DoubleJumpState,
 	[MovementStates.HardLanding] = HardLandingState,
 	[MovementStates.WallRun] = WallRunState,
-	[MovementStates.WallClimb] = WallClimbState,
+	[MovementStates.WallLatch] = WallLatchState,
+	[MovementStates.WallLeap] = WallLeapState,
 }
 
 -- Only Run/Sprint are earned, exploit-relevant transitions that need a server
@@ -160,9 +162,8 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 			WallDetectRaycastThrottleSeconds = value.wallDetectRaycastThrottleSeconds,
 			WallRunSpeed = value.wallRunSpeed,
 			WallRunMaxDurationSeconds = value.wallRunMaxDurationSeconds,
-			WallClimbSpeed = value.wallClimbSpeed,
-			WallClimbSnapDistance = value.wallClimbSnapDistance,
-			WallClimbJumpForce = value.wallClimbJumpForce,
+			WallLatchSnapDistance = value.wallLatchSnapDistance,
+			WallLeapForce = value.wallLeapForce,
 		})
 		characterMover:SetJumpPower(value.jumpPower)
 	end))
@@ -223,7 +224,7 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 	-- ResolveLandingTarget` to decide whether a landing forces `HardLanding`.
 	local peakHeight: number? = nil
 
-	-- WallRun/WallClimb's own wall probe (TRAVERSAL-ROADMAP.md §8 Phase 4) --
+	-- WallRun/WallLatch's own wall probe (TRAVERSAL-ROADMAP.md §8 Phase 4) --
 	-- their CanEnter predicates (Shared/Movement/StateRules.luau) need "is
 	-- there a wall here right now" as part of the shared MovementContext, so
 	-- (unlike Slide's ground-normal cache, which is state-module-local since
@@ -318,15 +319,17 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 			doubleJumpUsed = true
 			Network.ClaimTraversalMove.Fire("DoubleJump")
 		elseif next == MovementStates.WallRun then
-			-- WallRun/WallClimb (TRAVERSAL-ROADMAP.md §6/§8 Phase 4): claimed
-			-- the same way DoubleJump is -- fired once on entry, never a
-			-- continuous stream (no TraversalInput-style event exists in this
-			-- codebase; see MovementValidationService's own per-Heartbeat
+			-- WallRun/WallLatch/WallLeap (TRAVERSAL-ROADMAP.md §6/§8 Phase 4):
+			-- claimed the same way DoubleJump is -- fired once on entry, never
+			-- a continuous stream (no TraversalInput-style event exists in
+			-- this codebase; see MovementValidationService's own per-Heartbeat
 			-- geometry recheck for how the server keeps validating the move
 			-- afterward without one).
 			Network.ClaimTraversalMove.Fire("WallRun")
-		elseif next == MovementStates.WallClimb then
-			Network.ClaimTraversalMove.Fire("WallClimb")
+		elseif next == MovementStates.WallLatch then
+			Network.ClaimTraversalMove.Fire("WallLatch")
+		elseif next == MovementStates.WallLeap then
+			Network.ClaimTraversalMove.Fire("WallLeap")
 		elseif GROUNDED_STATES[next] then
 			doubleJumpUsed = false
 		end
@@ -385,17 +388,19 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 	-- makes this a no-op unless DoubleJump is actually reachable from the
 	-- current state.
 	lifeTrove:Connect(input.JumpRequested, function()
-		-- WallClimb's own jump press is a dedicated exit (ClimbJump, mechanic
-		-- 5a) that applies a real launch impulse on the way out -- routed
-		-- here instead of through RequestTransition's normal CanEnter path,
-		-- since a bare state-symbol target has nowhere to carry that impulse.
-		-- Every other state falls through to the ordinary DoubleJump attempt,
-		-- unconditionally, same as before this branch existed.
-		if fsm.current == MovementStates.WallClimb then
-			WallClimbState.ClimbJump(buildContext())
+		-- A second, fresh jump-key press while latched fires WallLeap;
+		-- otherwise this press first tries to latch (unchanged gesture check,
+		-- now re-triggered here instead of every Update tick), falling
+		-- through to the ordinary DoubleJump attempt if that fails.
+		if fsm.current == MovementStates.WallLatch then
+			fsm:RequestTransition(MovementStates.WallLeap, buildContext())
 			return
 		end
-		fsm:RequestTransition(MovementStates.DoubleJump, buildContext())
+		local context = buildContext()
+		if fsm:RequestTransition(MovementStates.WallLatch, context) then
+			return
+		end
+		fsm:RequestTransition(MovementStates.DoubleJump, context)
 	end)
 
 	-- Crouch/Slide claim (docs/MOVEMENT.md §9): unlike Run/Sprint's claims
@@ -432,7 +437,7 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 
 		-- Wall probe (TRAVERSAL-ROADMAP.md §8 Phase 4) -- BEFORE `Update`
 		-- below, same ordering reasoning as `peakHeight`'s own comment: this
-		-- frame's WallRun/WallClimb CanEnter check (inside AirborneState.Update
+		-- frame's WallRun/WallLatch CanEnter check (inside AirborneState.Update
 		-- or the states' own Update) has to see a freshly-refreshed query, not
 		-- last frame's. Cleared immediately on grounding rather than left to
 		-- decay via the throttle, so a landed player's very next CanEnter

@@ -64,9 +64,8 @@ local function toTuningStatePayload(constants: EffectiveMovementConstants)
 		wallDetectRaycastThrottleSeconds = constants.WallDetectRaycastThrottleSeconds,
 		wallRunSpeed = constants.WallRunSpeed,
 		wallRunMaxDurationSeconds = constants.WallRunMaxDurationSeconds,
-		wallClimbSpeed = constants.WallClimbSpeed,
-		wallClimbSnapDistance = constants.WallClimbSnapDistance,
-		wallClimbJumpForce = constants.WallClimbJumpForce,
+		wallLatchSnapDistance = constants.WallLatchSnapDistance,
+		wallLeapForce = constants.WallLeapForce,
 	}
 end
 

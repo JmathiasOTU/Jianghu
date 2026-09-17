@@ -100,17 +100,31 @@
       }
     },
     {
-      "Name": "WallRun",
+      "Name": "WallRunLeft",
       "ClassName": "Animation",
       "Properties": {
         "AnimationId": "rbxassetid://99335883514665"
       }
     },
     {
-      "Name": "WallClimb",
+      "Name": "WallRunRight",
       "ClassName": "Animation",
       "Properties": {
         "AnimationId": ""
+      }
+    },
+    {
+      "Name": "WallLatch",
+      "ClassName": "Animation",
+      "Properties": {
+        "AnimationId": "rbxassetid://78068464202635"
+      }
+    },
+    {
+      "Name": "WallLeap",
+      "ClassName": "Animation",
+      "Properties": {
+        "AnimationId": "rbxassetid://110005570264714"
       }
     }
   ]

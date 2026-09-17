@@ -31,21 +31,13 @@ function WallRunState.Enter(_context: ClientMovementContext)
 	enteredAt = os.clock()
 end
 
--- Climbing is tried FIRST, ahead of every exit check below (TRAVERSAL-ROADMAP.md
--- §4's own "WallClimb reachable from Airborne AND WallRun" note) -- pressing
--- into the wall mid-run should upgrade into a climb, not get read as "wall
--- lost" just because that tick's tangent direction happened to zero out.
--- `RequestTransition` is a harmless no-op when `StateRules.CanEnter[WallClimb]`
--- isn't satisfied (same "topology alone gates it" reasoning DoubleJump's own
--- unconditional trigger already relies on), so this never needs its own
--- separate gesture check duplicated here.
+-- WallLatch is no longer tried automatically here -- its entry moved to a
+-- jump-key press (Movement/init.luau), which tries WallLatch first whenever
+-- the FSM isn't already latched, topology-gated to succeed only from
+-- Airborne/WallRun.
 function WallRunState.Update(_dt: number, context: ClientMovementContext)
 	if context.grounded then
 		context.fsm:RequestTransition(AirborneState.ResolveLandingTarget(context), context)
-		return
-	end
-
-	if context.fsm:RequestTransition(MovementStates.WallClimb, context) then
 		return
 	end
 

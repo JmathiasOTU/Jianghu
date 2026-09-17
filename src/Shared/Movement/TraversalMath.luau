@@ -85,41 +85,4 @@ function TraversalMath.SlideSlopeAmplification(
 	return amplificationCap * ratio
 end
 
--- Wall-run tangent velocity (mechanic 4, generalized, TRAVERSAL-ROADMAP.md
--- §8 Phase 4): projects `moveDirection` onto the wall's own vertical tangent
--- plane -- removes the "into the wall" component (the part parallel to the
--- wall's flattened normal) so the player is carried ALONG the surface rather
--- than pinned against or pushed off it -- then re-applies `speed` as the
--- output vector's magnitude. Returns the zero vector when there's nothing
--- left to run along (moving straight into/out of the wall with no lateral
--- component, or a normal with no horizontal component at all, e.g. a floor)
--- -- callers (WallRunState) treat a zero result as "nothing to do here,"
--- same convention `SlopeDownhillDirection` already establishes for its own
--- degenerate case.
-function TraversalMath.WallRunTangentVelocity(wallNormal: Vector3, moveDirection: Vector3, speed: number): Vector3
-	local flatNormal = Vector3.new(wallNormal.X, 0, wallNormal.Z)
-	if flatNormal.Magnitude == 0 or moveDirection.Magnitude == 0 then
-		return Vector3.zero
-	end
-	flatNormal = flatNormal.Unit
-
-	local tangent = moveDirection - flatNormal * moveDirection:Dot(flatNormal)
-	if tangent.Magnitude == 0 then
-		return Vector3.zero
-	end
-	return tangent.Unit * speed
-end
-
--- Which side of the character the wall is on, for picking WallRunLeft vs.
--- WallRunRight. Sign convention unverified against real geometry -- flip if
--- the animations come out mirrored in Studio.
-function TraversalMath.WallRunSide(wallNormal: Vector3, characterRight: Vector3): string
-	local flatNormal = Vector3.new(wallNormal.X, 0, wallNormal.Z)
-	local flatRight = Vector3.new(characterRight.X, 0, characterRight.Z)
-	if flatNormal.Magnitude == 0 or flatRight.Magnitude == 0 then
-		return "Right"
-	end
-	return if flatNormal.Unit:Dot(flatRight.Unit) > 0 then "Left" else "Right"
-end
-
 return TraversalMath

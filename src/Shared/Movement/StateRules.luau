@@ -11,10 +11,6 @@ local function hasMoveInput(context: MovementContext): boolean
 	return context.moveIntent.direction.Magnitude > 0
 end
 
--- WallLatch's own "pressing into the wall" gesture threshold -- see
--- CanEnter[WallLatch]'s own comment below for why this exists.
-local WALL_LATCH_INPUT_DOT_THRESHOLD = 0.5
-
 -- Topology: which states can graph-wise reach which. Purely "is this edge legal",
 -- not "is it legal right now" -- that's CanEnter below. Shared client/server so both
 -- FSM mirrors are built from the identical graph.
@@ -68,8 +64,6 @@ local Transitions: { [MovementState]: { MovementState } } = {
 		MovementStates.CrouchWalk,
 		MovementStates.DoubleJump,
 		MovementStates.HardLanding,
-		MovementStates.WallRun,
-		MovementStates.WallLatch,
 	},
 	[MovementStates.CrouchIdle] = {
 		MovementStates.Idle,
@@ -129,43 +123,6 @@ local Transitions: { [MovementState]: { MovementState } } = {
 		MovementStates.CrouchWalk,
 		MovementStates.Airborne,
 	},
-
-	-- WallRun/WallLatch (TRAVERSAL-ROADMAP.md §8 Phase 4): reachable only from
-	-- Airborne, same "claimed, not passively mirrored" model DoubleJump
-	-- already established. WallLatch is ALSO reachable from WallRun (a jump
-	-- press mid-run latches instead of double-jumping, per the input handler
-	-- in Movement/init.luau). Both carry the same grounded-target set
-	-- DoubleJump does: a wall move that resolves a landing mid-flight can't
-	-- bounce through Airborne first (`Airborne.CanEnter` already requires
-	-- `not grounded`), so WallRunState/WallLatchState.Update resolve straight
-	-- to the real grounded target instead. `DoubleJump` is included on
-	-- WallRun's own list (not WallLatch's) so a jump press mid-run can cancel
-	-- into a double jump if one hasn't been spent yet and WallLatch's own
-	-- CanEnter fails.
-	[MovementStates.WallRun] = {
-		MovementStates.Airborne,
-		MovementStates.WallLatch,
-		MovementStates.DoubleJump,
-		MovementStates.Idle,
-		MovementStates.Walk,
-		MovementStates.Run,
-		MovementStates.Sprint,
-		MovementStates.CrouchIdle,
-		MovementStates.CrouchWalk,
-		MovementStates.HardLanding,
-	},
-	[MovementStates.WallLatch] = {
-		MovementStates.WallLeap,
-		MovementStates.Airborne,
-		MovementStates.Idle,
-		MovementStates.Walk,
-		MovementStates.Run,
-		MovementStates.Sprint,
-		MovementStates.CrouchIdle,
-		MovementStates.CrouchWalk,
-		MovementStates.HardLanding,
-	},
-	[MovementStates.WallLeap] = { MovementStates.Airborne },
 }
 
 -- CanEnter: is this transition legal RIGHT NOW, given live context. Shared
@@ -262,47 +219,6 @@ local CanEnter: { [MovementState]: (context: MovementContext) -> boolean } = {
 	-- CanEnter's; this only ever needs to confirm the landing is real.
 	[MovementStates.HardLanding] = function(context: MovementContext): boolean
 		return context.grounded
-	end,
-
-	-- WallRun (TRAVERSAL-ROADMAP.md §4/§8 Phase 4): airborne, resource-gated
-	-- (`context.qinggong`, still an abstracted "always available" placeholder
-	-- per §0), and a wall has to actually be there right now
-	-- (`context.wallQuery`, populated by each side's own throttled
-	-- SpatialQueries.QueryWall probe before this runs -- never computed here).
-	[MovementStates.WallRun] = function(context: MovementContext): boolean
-		return not context.grounded
-			and context.qinggong > 0
-			and context.wallQuery ~= nil
-			and hasMoveInput(context)
-	end,
-
-	-- WallLatch (TRAVERSAL-ROADMAP.md §4/§5/§8 Phase 4, redesigned into
-	-- WallLatch/WallLeap): same airborne/resource/wall-present gate as
-	-- WallRun, PLUS a deliberate "pressing INTO the wall" gesture check
-	-- (`moveIntent.direction` vs. the wall's own inward-facing direction,
-	-- i.e. `-normal`) -- this is what actually distinguishes "jump at a wall
-	-- to latch onto it" from "run alongside a wall while airborne," since
-	-- both would otherwise see the identical `wallQuery`. Only ever attempted
-	-- on a jump-key press (Movement/init.luau), never every tick.
-	[MovementStates.WallLatch] = function(context: MovementContext): boolean
-		if context.grounded or context.qinggong <= 0 then
-			return false
-		end
-		local query = context.wallQuery
-		if not query or context.moveIntent.direction.Magnitude == 0 then
-			return false
-		end
-		local into = Vector3.new(-query.normal.X, 0, -query.normal.Z)
-		if into.Magnitude == 0 then
-			return false
-		end
-		return context.moveIntent.direction.Unit:Dot(into.Unit) > WALL_LATCH_INPUT_DOT_THRESHOLD
-	end,
-
-	-- WallLeap: topology alone gates it (only reachable from WallLatch),
-	-- mirroring SlideJump's own predicate exactly.
-	[MovementStates.WallLeap] = function(context: MovementContext): boolean
-		return not context.grounded
 	end,
 }
 

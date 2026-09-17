@@ -3,7 +3,6 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local MovementTuning = require(ReplicatedStorage.Shared.Movement.MovementTuning)
 local MovementStates = require(ReplicatedStorage.Shared.FSM.MovementStates)
-local SpatialQueries = require(ReplicatedStorage.Shared.Movement.SpatialQueries)
 
 -- `forward`/`backward`/`strafeLeft`/`strafeRight` are the raw WASD axis holds, kept
 -- alongside the resolved `direction` because Sprint's continuation rule cares about
@@ -68,18 +67,8 @@ export type MoveIntent = {
 -- ResolveLandingTarget` (and its server mirror) reads this against
 -- `constants.HardLandingHeightThreshold` to decide whether a landing forces
 -- the `HardLanding` lock instead of resolving normally.
--- `wallQuery` (TRAVERSAL-ROADMAP.md §8 Phase 4) is WallRun/WallLatch's own
--- wall-detection read (Shared/Movement/SpatialQueries.QueryWall), unlike
--- Slide's ground-normal cache (which never needed to be part of the SHARED
--- context, since Slide's own CanEnter never checks it) -- CanEnter[WallRun]/
--- CanEnter[WallLatch] both need "is there a wall here right now" as part of
--- their own legality check (StateRules.luau), so it has to live in this
--- shared type. Populated by each side from its own throttled probe (a plain
--- dt-accumulator client-side, an os.clock()-delta accumulator server-side --
--- same split SlideGroundRaycastThrottleSeconds already uses) BEFORE calling
--- into StateRules, never computed inside StateRules itself, so CanEnter stays
--- a pure function of `context` alone.
--- `qinggong` (§0/§3) is the resource gate WallRun/WallLatch/Vault all read --
+-- `qinggong` (§0/§3) is the resource gate Vault (and any future Qinggong
+-- move) reads --
 -- still an open design decision (is this the same Qi pool combat will spend,
 -- or a separate movement-only pool?) per the roadmap's own risk register, so
 -- both sides default it to "always available" (`math.huge`) until that
@@ -94,7 +83,6 @@ export type MovementContext = {
 	runDuration: number?,
 	preAirborneLocomotion: MovementStates.MovementState?,
 	fallHeight: number?,
-	wallQuery: SpatialQueries.WallQueryResult?,
 	qinggong: number,
 	constants: MovementTuning.EffectiveMovementConstants,
 }

@@ -27,19 +27,9 @@ function AirborneState.Enter(_context: ClientMovementContext) end
 -- being left, RequestTransition has already committed to the next state
 -- (StateMachine.luau fires `changed` after updating `current`), so Exit can
 -- only ever be teardown, never the thing choosing where to land.
---
--- WallRun's entry stays automatic/contextual, tried every tick with no
--- button (harmless no-op when its own CanEnter isn't satisfied, same
--- "topology alone gates it" reasoning DoubleJump's unconditional
--- JumpRequested trigger already relies on) -- WallLatch's entry moved to a
--- jump-key press (Movement/init.luau) and is no longer attempted here.
 function AirborneState.Update(_dt: number, context: ClientMovementContext)
 	if context.grounded then
 		context.fsm:RequestTransition(AirborneState.ResolveLandingTarget(context), context)
-		return
-	end
-
-	if context.fsm:RequestTransition(MovementStates.WallRun, context) then
 		return
 	end
 end

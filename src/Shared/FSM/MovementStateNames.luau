@@ -36,9 +36,6 @@ export type DebugStateName =
 	| "SlideJump"
 	| "DoubleJump"
 	| "HardLanding"
-	| "WallRun"
-	| "WallLatch"
-	| "WallLeap"
 
 local DebugNames: { [MovementState]: DebugStateName } = {
 	[MovementStates.Idle] = "Idle",
@@ -52,9 +49,6 @@ local DebugNames: { [MovementState]: DebugStateName } = {
 	[MovementStates.SlideJump] = "SlideJump",
 	[MovementStates.DoubleJump] = "DoubleJump",
 	[MovementStates.HardLanding] = "HardLanding",
-	[MovementStates.WallRun] = "WallRun",
-	[MovementStates.WallLatch] = "WallLatch",
-	[MovementStates.WallLeap] = "WallLeap",
 }
 
 return {

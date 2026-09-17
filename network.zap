@@ -48,15 +48,15 @@ event RequestMovementTransition = {
 }
 
 -- Qinggong traversal claims (TRAVERSAL-ROADMAP.md §6) -- DIFFERENT in kind
--- from RequestMovementTransition above: these are the five new expansion
--- moves, each validated server-side via its own resimulation
+-- from RequestMovementTransition above: these are the new expansion moves,
+-- each validated server-side via its own resimulation
 -- (MovementValidationService) rather than the passive-mirror/dwell-timestamp
 -- model Run/Sprint use, since they involve real physics impulses a modified
--- client could otherwise fake outright. "DoubleJump" (Phase 1) and
--- "WallRun"/"WallLatch" (Phase 4) exist so far -- Dash was deliberately
--- skipped (docs/MOVEMENT.md), and Vault is added to this enum only once its
--- own phase lands, never all speculatively up front.
-type ClaimableTraversalMove = enum { "DoubleJump", "WallRun", "WallLatch", "WallLeap" }
+-- client could otherwise fake outright. "DoubleJump" (Phase 1) exists so far
+-- -- Dash was deliberately skipped (docs/MOVEMENT.md), wall running/climbing
+-- was removed for a from-scratch redo, and Vault is added to this enum only
+-- once its own phase lands, never all speculatively up front.
+type ClaimableTraversalMove = enum { "DoubleJump" }
 
 event ClaimTraversalMove = {
 	from: Client,
@@ -84,9 +84,6 @@ type DebugMovementState = enum {
 	"SlideJump",
 	"DoubleJump",
 	"HardLanding",
-	"WallRun",
-	"WallLatch",
-	"WallLeap",
 }
 
 -- One recent speed-sanity correction (Shared/Util/ViolationTracker.luau's
@@ -157,12 +154,6 @@ type TunableConstantName = enum {
 	"SlideMaxWalkableSlopeDegrees",
 	"SlideSlopeAmplificationCap",
 	"SlideGroundRaycastThrottleSeconds",
-	"WallDetectMaxUpDot",
-	"WallDetectRaycastThrottleSeconds",
-	"WallRunSpeed",
-	"WallRunMaxDurationSeconds",
-	"WallLatchSnapDistance",
-	"WallLeapForce",
 }
 
 event RequestSetTuning = {
@@ -211,12 +202,6 @@ event TuningState = {
 		slideMaxWalkableSlopeDegrees: f32,
 		slideSlopeAmplificationCap: f32,
 		slideGroundRaycastThrottleSeconds: f32,
-		wallDetectMaxUpDot: f32,
-		wallDetectRaycastThrottleSeconds: f32,
-		wallRunSpeed: f32,
-		wallRunMaxDurationSeconds: f32,
-		wallLatchSnapDistance: f32,
-		wallLeapForce: f32,
 	},
 }
 

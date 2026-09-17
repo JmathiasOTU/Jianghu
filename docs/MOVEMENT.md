@@ -35,7 +35,7 @@ generous air control.
 | DoubleJump (`TRAVERSAL-ROADMAP.md` Phase 1) | Done — 2026-09-14, **not yet playtested/tuned** | `Shared/FSM/MovementStates.luau`, `Shared/Movement/{StateRules,TraversalMath,MovementTuning}.luau`, `Shared/Types/MovementTypes.luau`, `Shared/Constants/MovementConstants.luau`, `Client/Controllers/Movement/{CharacterMover,InputController,init}.luau`, `Client/Controllers/Movement/States/{AirborneState,DoubleJumpState}.luau`, `Server/Services/{MovementValidationService,MovementTuningService}.luau`, `network.zap` — see §11 |
 | Slide/SlideJump physics upgrade (`TRAVERSAL-ROADMAP.md` Phase 3) | Done — 2026-09-15, **not yet playtested/tuned** | `Shared/Movement/{SpatialQueries (new),TraversalMath,MovementTuning}.luau`, `Shared/Constants/MovementConstants.luau`, `Client/Controllers/Movement/{CharacterMover,ClientMovementContext,init}.luau`, `Client/Controllers/Movement/States/{SlideState,SlideJumpState}.luau`, `Server/Services/{MovementValidationService,MovementTuningService}.luau`, `network.zap` — see §12 |
 | Dash (`TRAVERSAL-ROADMAP.md` Phase 2) | **Deliberately skipped** — this phase reuses nothing from it and nothing downstream blocks on it | — |
-| WallRun/WallClimb (`TRAVERSAL-ROADMAP.md` Phase 4) | Done — 2026-09-15, **not yet playtested/tuned, no clips authored** | `Shared/FSM/{MovementStates,MovementStateNames}.luau`, `Shared/Movement/{StateRules,SpatialQueries,TraversalMath,MovementTuning}.luau`, `Shared/Types/MovementTypes.luau`, `Shared/Constants/MovementConstants.luau`, `Client/Controllers/Movement/{CharacterMover,init}.luau`, `Client/Controllers/Movement/States/{AirborneState,WallRunState (new),WallClimbState (new)}.luau`, `Client/Controllers/Movement/Presentation/LocomotionAnimator.luau`, `Server/Services/{MovementValidationService,MovementTuningService}.luau`, `network.zap`, `Assets/Animations/Movement.model.json` — see §13 |
+| WallRun/WallClimb (`TRAVERSAL-ROADMAP.md` Phase 4) | **Reverted — 2026-09-17**, redo planned from scratch; authored animation clips kept in `Assets/Animations/Movement.model.json` | — see §13 |
 
 ---
 
@@ -1732,7 +1732,28 @@ feels too twitchy.
 
 ---
 
-## 13. WallRun / WallClimb (`TRAVERSAL-ROADMAP.md` Phase 4)
+## 13. WallRun / WallLatch (`TRAVERSAL-ROADMAP.md` Phase 4) — reverted 2026-09-17
+
+Built, then removed wholesale for a from-scratch redo (the entry raycast
+shape never got wall-running to trigger reliably, and rather than layer
+another fix on it the whole mechanic — WallRun, WallLatch, WallLeap: states,
+`StateRules` topology/`CanEnter`, `SpatialQueries.QueryWall`/`QueryWallRun`/
+`QueryLedgeAbove`, `TraversalMath.WallRunTangentVelocity`/`WallRunSide`, the
+`wallQuery`/`wallRunQuery` context fields, the `CharacterMover` position-hold/
+orientation-override constraints WallLatch alone used, the
+`ClaimableTraversalMove`/`DebugMovementState`/tunable-constant network
+surface, and every server-side resimulation branch — was pulled out). The
+authored animation clips were deliberately kept (`Assets/Animations/
+Movement.model.json`'s `WallRunLeft`/`WallRunRight`/`WallLatch`/`WallLeap`
+slots and `LocomotionAnimator`'s `loadTrack` calls for them are gone, but the
+Animation instances themselves are still there to re-wire). Whoever rebuilds
+this: the old game's `WallRunController._sampleWallHit` (a side raycast along
+the root part's own `CFrame.RightVector`, not a forward cast) is the
+reference worth starting from — see the git history around 2026-09-17 for the
+one attempted fix and this revert.
+
+<!-- Original design write-up below, kept for reference only — describes
+code that no longer exists. -->
 
 Two new airborne-family traversal states, `MovementStates.WallRun`/`WallClimb`
 (`Shared/FSM/MovementStates.luau`), reachable only from `Airborne`
@@ -1778,6 +1799,24 @@ ray must hit, but the high ray must miss — "wall at your feet, open air
 above," WallClimb's own top-out detection). The reference's third wall check
 ("a floor raycast must miss") is deliberately not ported — redundant, since
 `not context.grounded` is already required by the time either function runs.
+
+**WallRun detection was split into its own side-cast probe (2026-09-17
+fix).** `QueryWall`'s forward low+high pair (described just above) is built
+for "is there a wall dead ahead to latch onto," which is the wrong question
+for wall-running: approaching a wall at a shallow angle with movement mostly
+PARALLEL to its surface — the normal way a wall run is entered — routinely
+never puts a forward raycast on the wall at all, so `CanEnter[WallRun]` was
+starving except when walking almost straight into the wall. Ported from the
+old game's working `WallRunController._sampleWallHit`: `SpatialQueries.
+QueryWallRun` casts a single ray each along the root part's own
+`CFrame.RightVector` and its mirror, first hit wins, same flatness check as
+`QueryWall`. This is a genuinely separate probe/context field
+(`wallRunQuery`, `SpatialQueries.QueryWallRun`, `WallRunSideRayLength`), not a
+change to `QueryWall` itself — `WallLatch`/`WallLeap` still read the original
+forward-cast `wallQuery`, since a wall you jump AT to latch onto really is
+ahead of you, not beside you. Both probes run off the same throttled tick,
+client (`Movement/init.luau`) and server (`MovementValidationService.
+updateWallRunQuery`) alike.
 
 **WallRun drives a real `LinearVelocity`, horizontal-only** (same
 `HORIZONTAL_ONLY_FORCE` mask idiom Slide already established) — the wall's
@@ -1896,9 +1935,10 @@ dedicated wall-jump launch — not named as its own mechanic anywhere in
 ## Deferred (designed earlier, not part of this build)
 
 - **Vault** (`TRAVERSAL-ROADMAP.md` Phase 5) — ledge-detection raycast (mechanic
-  6) plus a momentum-inheritance launch impulse (mechanic 6a). WallRun/WallClimb
-  (§13) are done; Vault is the one state from the original "WallRun / ClimbVault /
-  LedgeGrab / Slide" spatial-claim group still not built. **Naming collision, see
+  6) plus a momentum-inheritance launch impulse (mechanic 6a). WallRun/WallLatch
+  (§13) were built and then reverted for a redo; Vault is the one state from the
+  original "WallRun / ClimbVault / LedgeGrab / Slide" spatial-claim group still
+  not built at all. **Naming collision, see
   §9's own note:** the `Slide` built in §9 (`MovementStates.Slide`) is a
   different, simpler Phase 1 move — plain `WalkSpeed`-driven, no stamina gate, no
   custom mover — that happens to share its name with the ORIGINAL deferred group's
@@ -1907,11 +1947,11 @@ dedicated wall-jump launch — not named as its own mechanic anywhere in
   Symbol name (e.g. `SlideUnder`) rather than reusing `Slide`.
 - **Dash** (`TRAVERSAL-ROADMAP.md` Phase 2) — deliberately skipped (see the status
   table above). Nothing in Phase 4 reused or blocked on it.
-- **Qinggong / stamina resource** — still genuinely undecided (§13 inherits this
-  open question from §0/§3 of the roadmap rather than resolving it): WallRun/
-  WallClimb's own gating already reads `context.qinggong`, wired as an abstracted
-  field defaulting to `math.huge` ("always available") on both sides, real code
-  today, just not backed by a real resource yet. Server-owned like a cooldown once
+- **Qinggong / stamina resource** — still genuinely undecided (§0/§3 of the
+  roadmap). `context.qinggong` still exists as an abstracted field defaulting to
+  `math.huge` ("always available") on both sides for whatever move reads it next
+  (Vault) — WallRun/WallLatch's own reads of it were removed along with the rest
+  of §13. Server-owned like a cooldown once
   it exists: client predicts locally for UI, server drains on use and regens,
   reconciles the client's copy. Worth deciding when you get here: your
   architecture doc already names `Qi` as a custom profile value alongside HP and

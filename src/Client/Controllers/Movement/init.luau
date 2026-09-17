@@ -10,8 +10,6 @@ local MovementStateGroups = require(ReplicatedStorage.Shared.FSM.MovementStateGr
 local MovementStateNames = require(ReplicatedStorage.Shared.FSM.MovementStateNames)
 local StateRules = require(ReplicatedStorage.Shared.Movement.StateRules)
 local CollisionGroups = require(ReplicatedStorage.Shared.Movement.CollisionGroups)
-local SpatialQueriesModule = require(ReplicatedStorage.Shared.Movement.SpatialQueries)
-type WallQueryResult = SpatialQueriesModule.WallQueryResult
 
 local CharacterMover = require(script.CharacterMover)
 local InputController = require(script.InputController)
@@ -35,9 +33,6 @@ local SlideState = require(script.States.SlideState)
 local SlideJumpState = require(script.States.SlideJumpState)
 local DoubleJumpState = require(script.States.DoubleJumpState)
 local HardLandingState = require(script.States.HardLandingState)
-local WallRunState = require(script.States.WallRunState)
-local WallLatchState = require(script.States.WallLatchState)
-local WallLeapState = require(script.States.WallLeapState)
 
 type MovementState = MovementStates.MovementState
 type ClientMovementContext = ClientMovementContextModule.ClientMovementContext
@@ -62,9 +57,6 @@ local States = {
 	[MovementStates.SlideJump] = SlideJumpState,
 	[MovementStates.DoubleJump] = DoubleJumpState,
 	[MovementStates.HardLanding] = HardLandingState,
-	[MovementStates.WallRun] = WallRunState,
-	[MovementStates.WallLatch] = WallLatchState,
-	[MovementStates.WallLeap] = WallLeapState,
 }
 
 -- Only Run/Sprint are earned, exploit-relevant transitions that need a server
@@ -158,12 +150,6 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 			SlideMaxWalkableSlopeDegrees = value.slideMaxWalkableSlopeDegrees,
 			SlideSlopeAmplificationCap = value.slideSlopeAmplificationCap,
 			SlideGroundRaycastThrottleSeconds = value.slideGroundRaycastThrottleSeconds,
-			WallDetectMaxUpDot = value.wallDetectMaxUpDot,
-			WallDetectRaycastThrottleSeconds = value.wallDetectRaycastThrottleSeconds,
-			WallRunSpeed = value.wallRunSpeed,
-			WallRunMaxDurationSeconds = value.wallRunMaxDurationSeconds,
-			WallLatchSnapDistance = value.wallLatchSnapDistance,
-			WallLeapForce = value.wallLeapForce,
 		})
 		characterMover:SetJumpPower(value.jumpPower)
 	end))
@@ -224,19 +210,6 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 	-- ResolveLandingTarget` to decide whether a landing forces `HardLanding`.
 	local peakHeight: number? = nil
 
-	-- WallRun/WallLatch's own wall probe (TRAVERSAL-ROADMAP.md §8 Phase 4) --
-	-- their CanEnter predicates (Shared/Movement/StateRules.luau) need "is
-	-- there a wall here right now" as part of the shared MovementContext, so
-	-- (unlike Slide's ground-normal cache, which is state-module-local since
-	-- Slide's own CanEnter never checks it) this has to be refreshed once per
-	-- Heartbeat, ahead of `Update`, and threaded through `buildContext` below.
-	-- Throttled via a `dt`-accumulator (ARCHITECTURE.md §6, same idiom
-	-- SlideState's own ground raycast already uses) and only probed at all
-	-- while airborne -- a grounded player never needs this, same "no blanket
-	-- per-tick cost" reasoning that raycast throttle already exists for.
-	local wallQuery: WallQueryResult? = nil
-	local wallQueryAccumulator = 0
-
 	local function buildContext(): ClientMovementContext
 		local runDuration = if fsm.current == MovementStates.Run
 			then RunState.GetDuration()
@@ -250,7 +223,6 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 			runDuration = runDuration,
 			preAirborneLocomotion = preAirborneLocomotion,
 			fallHeight = if peakHeight then peakHeight - rootPart.Position.Y else nil,
-			wallQuery = wallQuery,
 			-- Still an open design decision (TRAVERSAL-ROADMAP.md §0/§3) --
 			-- "always available" until a real Qinggong/stamina resource
 			-- exists, same placeholder both sides use.
@@ -318,18 +290,6 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 		if next == MovementStates.DoubleJump then
 			doubleJumpUsed = true
 			Network.ClaimTraversalMove.Fire("DoubleJump")
-		elseif next == MovementStates.WallRun then
-			-- WallRun/WallLatch/WallLeap (TRAVERSAL-ROADMAP.md §6/§8 Phase 4):
-			-- claimed the same way DoubleJump is -- fired once on entry, never
-			-- a continuous stream (no TraversalInput-style event exists in
-			-- this codebase; see MovementValidationService's own per-Heartbeat
-			-- geometry recheck for how the server keeps validating the move
-			-- afterward without one).
-			Network.ClaimTraversalMove.Fire("WallRun")
-		elseif next == MovementStates.WallLatch then
-			Network.ClaimTraversalMove.Fire("WallLatch")
-		elseif next == MovementStates.WallLeap then
-			Network.ClaimTraversalMove.Fire("WallLeap")
 		elseif GROUNDED_STATES[next] then
 			doubleJumpUsed = false
 		end
@@ -388,19 +348,7 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 	-- makes this a no-op unless DoubleJump is actually reachable from the
 	-- current state.
 	lifeTrove:Connect(input.JumpRequested, function()
-		-- A second, fresh jump-key press while latched fires WallLeap;
-		-- otherwise this press first tries to latch (unchanged gesture check,
-		-- now re-triggered here instead of every Update tick), falling
-		-- through to the ordinary DoubleJump attempt if that fails.
-		if fsm.current == MovementStates.WallLatch then
-			fsm:RequestTransition(MovementStates.WallLeap, buildContext())
-			return
-		end
-		local context = buildContext()
-		if fsm:RequestTransition(MovementStates.WallLatch, context) then
-			return
-		end
-		fsm:RequestTransition(MovementStates.DoubleJump, context)
+		fsm:RequestTransition(MovementStates.DoubleJump, buildContext())
 	end)
 
 	-- Crouch/Slide claim (docs/MOVEMENT.md §9): unlike Run/Sprint's claims
@@ -433,24 +381,6 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 		-- the landing decision has already consumed the real peak.
 		if peakHeight then
 			peakHeight = math.max(peakHeight, rootPart.Position.Y)
-		end
-
-		-- Wall probe (TRAVERSAL-ROADMAP.md §8 Phase 4) -- BEFORE `Update`
-		-- below, same ordering reasoning as `peakHeight`'s own comment: this
-		-- frame's WallRun/WallLatch CanEnter check (inside AirborneState.Update
-		-- or the states' own Update) has to see a freshly-refreshed query, not
-		-- last frame's. Cleared immediately on grounding rather than left to
-		-- decay via the throttle, so a landed player's very next CanEnter
-		-- check never sees a stale wall.
-		if characterMover:IsGrounded() then
-			wallQuery = nil
-			wallQueryAccumulator = 0
-		else
-			wallQueryAccumulator += dt
-			if wallQueryAccumulator >= TuningSnapshot.Get().WallDetectRaycastThrottleSeconds then
-				wallQueryAccumulator = 0
-				wallQuery = characterMover:QueryWall()
-			end
 		end
 
 		States[fsm.current].Update(dt, buildContext())

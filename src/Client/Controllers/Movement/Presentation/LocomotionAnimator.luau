@@ -12,7 +12,6 @@ local MovementConstants = require(ReplicatedStorage.Shared.Constants.MovementCon
 local InputController = require(script.Parent.Parent.InputController)
 local CharacterMover = require(script.Parent.Parent.CharacterMover)
 local TuningSnapshot = require(script.Parent.Parent.TuningSnapshot)
-local TraversalMath = require(ReplicatedStorage.Shared.Movement.TraversalMath)
 
 type MovementState = MovementStates.MovementState
 type MovementContext = MovementTypes.MovementContext
@@ -147,7 +146,7 @@ function LocomotionAnimator.new(
 	self._characterMover = characterMover
 	self._currentKey = nil :: string?
 	-- One-shot-on-exit hold, shared by every synchronous-frame/instant-cue
-	-- state (Land, SlideJump, WallLeap): when set, `_update` plays `.key`
+	-- state (Land, SlideJump): when set, `_update` plays `.key`
 	-- unconditionally until `os.clock()` passes `.until`, overriding normal
 	-- per-state resolution -- by the time these are detected the FSM has
 	-- already moved past the state that should show them.
@@ -202,14 +201,6 @@ function LocomotionAnimator.new(
 	-- impulse itself is a short, fixed-duration decay (DoubleJumpDecayDurationSeconds),
 	-- same treatment as Jump rather than the indefinite Fall loop.
 	self._tracks.DoubleJump = loadTrack(animator, ANIMATIONS_ROOT, "DoubleJump", self._trove, false)
-	-- WallRunLeft/WallRunRight (TRAVERSAL-ROADMAP.md §8 Phase 4): real,
-	-- multi-frame states, played for as long as `fsm.current` says so --
-	-- looped, same treatment as Run/Sprint/Slide. WallLatch is the same
-	-- treatment; WallLeap is a one-shot, held via `_transientHold` below.
-	self._tracks.WallRunLeft = loadTrack(animator, ANIMATIONS_ROOT, "WallRunLeft", self._trove, true)
-	self._tracks.WallRunRight = loadTrack(animator, ANIMATIONS_ROOT, "WallRunRight", self._trove, true)
-	self._tracks.WallLatch = loadTrack(animator, ANIMATIONS_ROOT, "WallLatch", self._trove, true)
-	self._tracks.WallLeap = loadTrack(animator, ANIMATIONS_ROOT, "WallLeap", self._trove, false)
 
 	-- Landing detection (docs/MOVEMENT.md §10; corrected TRAVERSAL-ROADMAP.md
 	-- Phase 1; simplified again once HardLanding became a real FSM state): an
@@ -232,33 +223,25 @@ function LocomotionAnimator.new(
 	-- plays "LandHard" for as long as `fsm.current` says so. Only a landing
 	-- into any OTHER grounded state still needs this brief "Land" overlay.
 	self._trove:Connect(fsm.changed, function(next: MovementState, previous: MovementState)
-		-- SlideJump/WallLeap both last exactly one synchronous frame before
-		-- handing off to Airborne -- `_update` runs on RenderStepped, so
-		-- `fsm.current` is never actually observed as either on a real
-		-- rendered frame, and per-state resolution below would never pick the
-		-- clip. Held for a fixed window starting the instant it's exited,
-		-- overriding normal resolution. Prefers the real clip length
-		-- (`AnimationTrack.Length`) so retiming the authored animation
-		-- doesn't require a matching code change;
-		-- `MovementConstants.OneShotAnimationHoldFallbackSeconds` is only a
-		-- fallback for the (should-never-happen) case that Length reads 0.
-		if previous == MovementStates.SlideJump or previous == MovementStates.WallLeap then
-			local key = if previous == MovementStates.SlideJump then "SlideJump" else "WallLeap"
-			local track = self._tracks[key]
+		-- SlideJump lasts exactly one synchronous frame before handing off to
+		-- Airborne -- `_update` runs on RenderStepped, so `fsm.current` is
+		-- never actually observed as SlideJump on a real rendered frame, and
+		-- per-state resolution below would never pick the clip. Held for a
+		-- fixed window starting the instant it's exited, overriding normal
+		-- resolution. Prefers the real clip length (`AnimationTrack.Length`)
+		-- so retiming the authored animation doesn't require a matching code
+		-- change; `MovementConstants.OneShotAnimationHoldFallbackSeconds` is
+		-- only a fallback for the (should-never-happen) case that Length
+		-- reads 0.
+		if previous == MovementStates.SlideJump then
+			local track = self._tracks.SlideJump
 			local duration = (track and track.Length > 0) and track.Length
 				or MovementConstants.OneShotAnimationHoldFallbackSeconds
-			self:_setTransientHold(key, duration)
+			self:_setTransientHold("SlideJump", duration)
 		end
 
-		-- WallRun/WallLatch included (TRAVERSAL-ROADMAP.md §8 Phase 4): both
-		-- can resolve a landing directly, mid-move, the same way DoubleJump's
-		-- own mid-impulse landing branch already can -- without this, a
-		-- landing straight out of either would skip the one-shot "Land" clip
-		-- entirely and jump straight to the landed state's own per-state key.
 		local fromAirborneFamily = previous == MovementStates.Airborne
 			or previous == MovementStates.DoubleJump
-			or previous == MovementStates.WallRun
-			or previous == MovementStates.WallLatch
 		if not fromAirborneFamily or not self._characterMover:IsGrounded() or next == MovementStates.HardLanding then
 			return
 		end
@@ -342,14 +325,6 @@ function LocomotionAnimator:_update()
 		key = "SlideJump"
 	elseif state == MovementStates.HardLanding then
 		key = "LandHard"
-	elseif state == MovementStates.WallRun then
-		local lastWallQuery = self._characterMover:GetLastWallQuery()
-		if lastWallQuery then
-			local side = TraversalMath.WallRunSide(lastWallQuery.normal, self._characterMover:GetRightDirection())
-			key = "WallRun" .. side
-		end
-	elseif state == MovementStates.WallLatch then
-		key = "WallLatch"
 	end
 	-- Walk with no move direction this frame: key stays nil, fading out
 	-- whatever was last playing.

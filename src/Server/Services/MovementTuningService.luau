@@ -60,6 +60,18 @@ local function toTuningStatePayload(constants: EffectiveMovementConstants)
 		slideMaxWalkableSlopeDegrees = constants.SlideMaxWalkableSlopeDegrees,
 		slideSlopeAmplificationCap = constants.SlideSlopeAmplificationCap,
 		slideGroundRaycastThrottleSeconds = constants.SlideGroundRaycastThrottleSeconds,
+		wallRunMinEntrySpeed = constants.WallRunMinEntrySpeed,
+		wallRunEntryDotThreshold = constants.WallRunEntryDotThreshold,
+		wallRunSpeed = constants.WallRunSpeed,
+		wallRunSinkSpeed = constants.WallRunSinkSpeed,
+		wallRunClingDistance = constants.WallRunClingDistance,
+		wallRunClingCorrectionRate = constants.WallRunClingCorrectionRate,
+		wallRunClingMaxCorrectionSpeed = constants.WallRunClingMaxCorrectionSpeed,
+		wallRunMaxNormalDeviationDegrees = constants.WallRunMaxNormalDeviationDegrees,
+		wallRunMaxDurationSeconds = constants.WallRunMaxDurationSeconds,
+		wallLeapBurstForce = constants.WallLeapBurstForce,
+		wallLeapPushForce = constants.WallLeapPushForce,
+		wallLeapUpwardForce = constants.WallLeapUpwardForce,
 	}
 end
 

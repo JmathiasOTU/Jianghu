@@ -33,6 +33,18 @@ export type TunableConstantName =
 	| "SlideMaxWalkableSlopeDegrees"
 	| "SlideSlopeAmplificationCap"
 	| "SlideGroundRaycastThrottleSeconds"
+	| "WallRunMinEntrySpeed"
+	| "WallRunEntryDotThreshold"
+	| "WallRunSpeed"
+	| "WallRunSinkSpeed"
+	| "WallRunClingDistance"
+	| "WallRunClingCorrectionRate"
+	| "WallRunClingMaxCorrectionSpeed"
+	| "WallRunMaxNormalDeviationDegrees"
+	| "WallRunMaxDurationSeconds"
+	| "WallLeapBurstForce"
+	| "WallLeapPushForce"
+	| "WallLeapUpwardForce"
 
 -- A named-field record (not a `{ [TunableConstantName]: number }` indexer
 -- type) specifically so consumers get plain dot-access
@@ -65,6 +77,18 @@ export type EffectiveMovementConstants = {
 	SlideMaxWalkableSlopeDegrees: number,
 	SlideSlopeAmplificationCap: number,
 	SlideGroundRaycastThrottleSeconds: number,
+	WallRunMinEntrySpeed: number,
+	WallRunEntryDotThreshold: number,
+	WallRunSpeed: number,
+	WallRunSinkSpeed: number,
+	WallRunClingDistance: number,
+	WallRunClingCorrectionRate: number,
+	WallRunClingMaxCorrectionSpeed: number,
+	WallRunMaxNormalDeviationDegrees: number,
+	WallRunMaxDurationSeconds: number,
+	WallLeapBurstForce: number,
+	WallLeapPushForce: number,
+	WallLeapUpwardForce: number,
 }
 
 -- Iteration order for the overlay's Tuning tab and for anything else that
@@ -92,6 +116,18 @@ local TUNABLE_NAMES: { TunableConstantName } = {
 	"SlideMaxWalkableSlopeDegrees",
 	"SlideSlopeAmplificationCap",
 	"SlideGroundRaycastThrottleSeconds",
+	"WallRunMinEntrySpeed",
+	"WallRunEntryDotThreshold",
+	"WallRunSpeed",
+	"WallRunSinkSpeed",
+	"WallRunClingDistance",
+	"WallRunClingCorrectionRate",
+	"WallRunClingMaxCorrectionSpeed",
+	"WallRunMaxNormalDeviationDegrees",
+	"WallRunMaxDurationSeconds",
+	"WallLeapBurstForce",
+	"WallLeapPushForce",
+	"WallLeapUpwardForce",
 }
 
 -- Sanity bounds for RequestSetTuning (Server/Services/MovementTuningService.luau)
@@ -128,6 +164,18 @@ local VALID_RANGES: { [TunableConstantName]: { min: number, max: number } } = {
 	SlideMaxWalkableSlopeDegrees = { min = 0.1, max = 89 },
 	SlideSlopeAmplificationCap = { min = 0, max = 500 },
 	SlideGroundRaycastThrottleSeconds = { min = 0.02, max = 2 },
+	WallRunMinEntrySpeed = { min = 0, max = 500 },
+	WallRunEntryDotThreshold = { min = -1, max = 1 },
+	WallRunSpeed = { min = 0, max = 500 },
+	WallRunSinkSpeed = { min = 0, max = 200 },
+	WallRunClingDistance = { min = 0, max = 20 },
+	WallRunClingCorrectionRate = { min = 0, max = 100 },
+	WallRunClingMaxCorrectionSpeed = { min = 0, max = 200 },
+	WallRunMaxNormalDeviationDegrees = { min = 0, max = 89 },
+	WallRunMaxDurationSeconds = { min = 0.1, max = 30 },
+	WallLeapBurstForce = { min = 0, max = 200 },
+	WallLeapPushForce = { min = 0, max = 200 },
+	WallLeapUpwardForce = { min = 0, max = 200 },
 }
 
 local MovementTuning = {}
@@ -160,6 +208,18 @@ function MovementTuning.Defaults(): EffectiveMovementConstants
 		SlideMaxWalkableSlopeDegrees = MovementConstants.SlideMaxWalkableSlopeDegrees,
 		SlideSlopeAmplificationCap = MovementConstants.SlideSlopeAmplificationCap,
 		SlideGroundRaycastThrottleSeconds = MovementConstants.SlideGroundRaycastThrottleSeconds,
+		WallRunMinEntrySpeed = MovementConstants.WallRunMinEntrySpeed,
+		WallRunEntryDotThreshold = MovementConstants.WallRunEntryDotThreshold,
+		WallRunSpeed = MovementConstants.WallRunSpeed,
+		WallRunSinkSpeed = MovementConstants.WallRunSinkSpeed,
+		WallRunClingDistance = MovementConstants.WallRunClingDistance,
+		WallRunClingCorrectionRate = MovementConstants.WallRunClingCorrectionRate,
+		WallRunClingMaxCorrectionSpeed = MovementConstants.WallRunClingMaxCorrectionSpeed,
+		WallRunMaxNormalDeviationDegrees = MovementConstants.WallRunMaxNormalDeviationDegrees,
+		WallRunMaxDurationSeconds = MovementConstants.WallRunMaxDurationSeconds,
+		WallLeapBurstForce = MovementConstants.WallLeapBurstForce,
+		WallLeapPushForce = MovementConstants.WallLeapPushForce,
+		WallLeapUpwardForce = MovementConstants.WallLeapUpwardForce,
 	}
 end
 

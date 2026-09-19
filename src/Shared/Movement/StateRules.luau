@@ -3,6 +3,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local MovementStates = require(ReplicatedStorage.Shared.FSM.MovementStates)
 local MovementTypes = require(ReplicatedStorage.Shared.Types.MovementTypes)
+local TraversalMath = require(ReplicatedStorage.Shared.Movement.TraversalMath)
 
 type MovementState = MovementStates.MovementState
 type MovementContext = MovementTypes.MovementContext
@@ -64,6 +65,7 @@ local Transitions: { [MovementState]: { MovementState } } = {
 		MovementStates.CrouchWalk,
 		MovementStates.DoubleJump,
 		MovementStates.HardLanding,
+		MovementStates.WallRun,
 	},
 	[MovementStates.CrouchIdle] = {
 		MovementStates.Idle,
@@ -121,6 +123,36 @@ local Transitions: { [MovementState]: { MovementState } } = {
 		MovementStates.Sprint,
 		MovementStates.CrouchIdle,
 		MovementStates.CrouchWalk,
+		MovementStates.Airborne,
+	},
+
+	-- WallRun (Wall Run & Leap Mechanic Guideline §5): the grounded targets
+	-- alongside Airborne cover the mid-run-landing case, same reason
+	-- DoubleJump's own table carries grounded targets alongside its primary
+	-- exit. CrouchIdle/CrouchWalk are included even though the guideline's own
+	-- §5 snippet omits them -- LandingResolution.Resolve can land a crouched
+	-- player into either one, and leaving them out would strand the FSM in
+	-- WallRun the instant that resolution ran (the exact "Sprint dead end"
+	-- shape docs/MOVEMENT.md §2 already had to fix once).
+	[MovementStates.WallRun] = {
+		MovementStates.Airborne,
+		MovementStates.Idle,
+		MovementStates.Walk,
+		MovementStates.Run,
+		MovementStates.Sprint,
+		MovementStates.CrouchIdle,
+		MovementStates.CrouchWalk,
+		MovementStates.WallLeap,
+	},
+
+	-- WallLeap (guideline §4): single edge back to Airborne, taken
+	-- synchronously in the same frame WallRun -> WallLeap is -- same
+	-- one-tick-lifetime shape SlideJump's own table already established. No
+	-- CanEnter[WallLeap] predicate exists (topology alone gates it, per
+	-- StateMachine.RequestTransition's own "rules[next], if present" contract)
+	-- since legality here is just "you have to actually be wall-running,"
+	-- already the entire reachability question this edge answers.
+	[MovementStates.WallLeap] = {
 		MovementStates.Airborne,
 	},
 }
@@ -219,6 +251,31 @@ local CanEnter: { [MovementState]: (context: MovementContext) -> boolean } = {
 	-- CanEnter's; this only ever needs to confirm the landing is real.
 	[MovementStates.HardLanding] = function(context: MovementContext): boolean
 		return context.grounded
+	end,
+
+	-- Four gates, all required together (Wall Run & Leap Mechanic Guideline
+	-- §2): airborne, a real wall this frame, real momentum (no standstill wall
+	-- run), and moving ALONG the wall's tangent rather than into/away from it.
+	-- `wallRunQuery`/`horizontalVelocity` are both populated by the caller
+	-- BEFORE this runs (see their own MovementTypes.luau doc comments) --
+	-- never derived in here, same "CanEnter stays a pure read of context"
+	-- principle every other predicate above already follows.
+	[MovementStates.WallRun] = function(context: MovementContext): boolean
+		if context.grounded then
+			return false
+		end
+		local wallQuery = context.wallRunQuery
+		if not wallQuery then
+			return false
+		end
+		if context.horizontalVelocity.Magnitude < context.constants.WallRunMinEntrySpeed then
+			return false
+		end
+		if context.moveIntent.direction.Magnitude == 0 then
+			return false
+		end
+		local tangent = TraversalMath.WallRunTangent(wallQuery.normal, context.horizontalVelocity)
+		return context.moveIntent.direction.Unit:Dot(tangent) >= context.constants.WallRunEntryDotThreshold
 	end,
 }
 

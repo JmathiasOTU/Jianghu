@@ -168,7 +168,13 @@ function DebugOverlayController.Init()
 	local tabContent = panel:WaitForChild("TabContent")
 	local movementTab = tabContent:WaitForChild("MovementTab") :: Frame
 	local worldTab = tabContent:WaitForChild("WorldTab") :: Frame
-	local tuningTab = tabContent:WaitForChild("TuningTab") :: Frame
+	-- ScrollingFrame now (2026-09-18, tuning tab overflow fix) -- 34+ live
+	-- tunables no longer fit in one unbounded-height Frame, so this scrolls
+	-- with a fixed max height instead of letting the whole overlay Panel grow
+	-- without bound. `Frame` and `ScrollingFrame` are unrelated GuiObject
+	-- subclasses, not sub/supertypes, so the cast (and `tabPages`' value type
+	-- below) had to change too, not just this line.
+	local tuningTab = tabContent:WaitForChild("TuningTab") :: ScrollingFrame
 
 	local clientSection = movementTab:WaitForChild("ClientSection")
 	local clientStateValue = clientSection:WaitForChild("RowState"):WaitForChild("Value") :: TextLabel
@@ -453,7 +459,10 @@ function DebugOverlayController.Init()
 
 	local tabButtons: { [string]: TextButton } =
 		{ Movement = movementTabButton, World = worldTabButton, Tuning = tuningTabButton }
-	local tabPages: { [string]: Frame } = { Movement = movementTab, World = worldTab, Tuning = tuningTab }
+	-- GuiObject, not Frame -- `tuningTab` is a ScrollingFrame now, and this
+	-- table only ever touches `.Visible`, which both classes share via their
+	-- common GuiObject ancestor.
+	local tabPages: { [string]: GuiObject } = { Movement = movementTab, World = worldTab, Tuning = tuningTab }
 
 	local function setTab(name: string)
 		for tabName, page in tabPages do

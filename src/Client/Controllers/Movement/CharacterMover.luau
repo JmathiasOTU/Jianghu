@@ -24,11 +24,19 @@ export type CharacterMover = {
 	GetVerticalVelocity: (self: CharacterMover) -> number,
 	GetHorizontalVelocity: (self: CharacterMover) -> Vector3,
 	SetHorizontalVelocity: (self: CharacterMover, velocity: Vector3) -> (),
+	SetVerticalVelocity: (self: CharacterMover, velocity: number) -> (),
 	GetFacingDirection: (self: CharacterMover) -> Vector3,
+	GetPosition: (self: CharacterMover) -> Vector3,
+	NudgeIntoWall: (self: CharacterMover, offset: Vector3) -> (),
 	SetJumpBlocked: (self: CharacterMover, blocked: boolean) -> (),
 	SetVelocityOverride: (self: CharacterMover, velocity: Vector3, maxForce: Vector3?) -> (),
 	ClearVelocityOverride: (self: CharacterMover) -> (),
 	QueryGround: (self: CharacterMover, castDistance: number?) -> SpatialQueries.GroundQueryResult?,
+	QueryWallRun: (
+		self: CharacterMover,
+		castRadius: number?,
+		castDistance: number?
+	) -> SpatialQueries.WallRunQueryResult?,
 	Destroy: (self: CharacterMover) -> (),
 }
 
@@ -163,6 +171,46 @@ function CharacterMover:SetHorizontalVelocity(velocity: Vector3)
 	rootPart.AssemblyLinearVelocity = Vector3.new(velocity.X, current.Y, velocity.Z)
 end
 
+-- WallRun's cling-snap needs the character's real current position to
+-- compute how far off the wall it is (Wall Run & Leap Mechanic Guideline
+-- §3) -- same narrow-accessor treatment as GetHorizontalVelocity/
+-- GetVerticalVelocity above, so states still never touch the RootPart
+-- directly.
+function CharacterMover:GetPosition(): Vector3
+	local rootPart = self._humanoid.RootPart
+	if not rootPart then
+		return Vector3.zero
+	end
+	return rootPart.Position
+end
+
+-- WallRun's one-time Enter-time cling snap (guideline §3) -- a direct,
+-- one-shot position write via PivotTo (moves the whole Model, not a bare
+-- rootPart.CFrame write, so Motor6D-welded limbs never desync), same
+-- category of move as the existing dev-teleport handler, just a couple of
+-- studs instead of a level-spanning jump.
+function CharacterMover:NudgeIntoWall(offset: Vector3)
+	local character = self._humanoid.Parent
+	if not character or not character:IsA("Model") then
+		return
+	end
+	character:PivotTo(character:GetPivot() + offset)
+end
+
+-- Vertical-axis complement to SetHorizontalVelocity above (WallLeap's launch,
+-- guideline §4) -- same direct one-shot write, deliberately NOT constraint-
+-- backed: WallLeapState's Enter transitions synchronously into Airborne in
+-- the same call (no real frame for Exit to ever clear a constraint), the
+-- identical reasoning SlideJumpState's own boost already established.
+function CharacterMover:SetVerticalVelocity(velocity: number)
+	local rootPart = self._humanoid.RootPart
+	if not rootPart then
+		return
+	end
+	local current = rootPart.AssemblyLinearVelocity
+	rootPart.AssemblyLinearVelocity = Vector3.new(current.X, velocity, current.Z)
+end
+
 function CharacterMover:SetJumpPower(jumpPower: number)
 	self._humanoid.JumpPower = jumpPower
 end
@@ -247,6 +295,19 @@ function CharacterMover:QueryGround(castDistance: number?): SpatialQueries.Groun
 		return nil
 	end
 	return SpatialQueries.QueryGround(rootPart, self._humanoid.Parent :: Instance, castDistance)
+end
+
+-- WallRun's own side-cast probe (Wall Run & Leap Mechanic Guideline §1) --
+-- same delegation shape as QueryGround above, just to SpatialQueries.QueryWallRun.
+function CharacterMover:QueryWallRun(
+	castRadius: number?,
+	castDistance: number?
+): SpatialQueries.WallRunQueryResult?
+	local rootPart = self._humanoid.RootPart
+	if not rootPart then
+		return nil
+	end
+	return SpatialQueries.QueryWallRun(rootPart, self._humanoid.Parent :: Instance, castRadius, castDistance)
 end
 
 function CharacterMover:Destroy()

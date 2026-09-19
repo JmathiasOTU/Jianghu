@@ -85,4 +85,63 @@ function TraversalMath.SlideSlopeAmplification(
 	return amplificationCap * ratio
 end
 
+-- WallRun tangent direction (Wall Run & Leap Mechanic Guideline §2): rotate
+-- the wall normal 90 degrees around world up, then pick whichever of the two
+-- resulting directions agrees with current momentum -- a wall run always
+-- CONTINUES the direction you were already moving, never reverses you onto
+-- the wall backwards. Zero `horizontalVelocity` keeps the raw (unsigned)
+-- rotation -- real entry is separately gated on a minimum speed
+-- (WallRunMinEntrySpeed), so this is never asked to pick a sign with no real
+-- momentum behind it in practice.
+function TraversalMath.WallRunTangent(normal: Vector3, horizontalVelocity: Vector3): Vector3
+	local tangent = Vector3.new(-normal.Z, 0, normal.X)
+	if tangent.Magnitude == 0 then
+		return Vector3.zero
+	end
+	tangent = tangent.Unit
+
+	if horizontalVelocity.Magnitude > 0 and tangent:Dot(horizontalVelocity.Unit) < 0 then
+		tangent = -tangent
+	end
+
+	return tangent
+end
+
+-- Angle between two directions, in degrees (guideline §3's corner/curve
+-- snap-off check: live wall normal vs. the locked entry normal). Zero
+-- vectors clamp Dot to the nearest valid range rather than producing NaN.
+function TraversalMath.AngleBetween(a: Vector3, b: Vector3): number
+	if a.Magnitude == 0 or b.Magnitude == 0 then
+		return 0
+	end
+	return math.deg(math.acos(math.clamp(a.Unit:Dot(b.Unit), -1, 1)))
+end
+
+-- WallLeap launch vector (guideline §4, redesigned 2026-09-18 from a
+-- retention-scaled forward component to a flat additive burst -- the
+-- original "forward = tangent * max(entrySpeed, minSpeed) * forwardRetention"
+-- shaped a fixed curve out of the run's own entry speed; this instead keeps
+-- whatever speed you actually have right now and adds a flat burst on top,
+-- so it reads as a momentum kick rather than a scripted trajectory). Three
+-- components: current velocity direction/magnitude plus a flat burst along
+-- it, a fixed push-off away from the wall so the leap actually clears it
+-- (still needed -- WallRun's own velocity is purely tangential, with no
+-- away-from-wall component, so nothing else moves you clear of the surface),
+-- and a fixed upward arc (deliberately flat, not a decaying impulse like
+-- DoubleJump's -- one clean launch, not a sustained float). Raw numeric
+-- params, not the whole EffectiveMovementConstants table, matching this
+-- module's own existing convention (SlideSlopeAmplification etc.).
+function TraversalMath.WallLeapVelocity(
+	velocityDirection: Vector3,
+	currentSpeed: number,
+	wallNormal: Vector3,
+	burstForce: number,
+	pushForce: number,
+	upwardForce: number
+): Vector3
+	local forward = velocityDirection * (currentSpeed + burstForce)
+	local pushOff = wallNormal * pushForce
+	return Vector3.new(forward.X + pushOff.X, upwardForce, forward.Z + pushOff.Z)
+end
+
 return TraversalMath

@@ -5119,13 +5119,12 @@
               ]
             },
             {
-              "ClassName": "Frame",
+              "ClassName": "ScrollingFrame",
               "Name": "TuningTab",
               "Properties": {
                 "LayoutOrder": 2,
                 "Visible": false,
                 "BackgroundTransparency": 1,
-                "AutomaticSize": "Y",
                 "Size": {
                   "UDim2": [
                     [
@@ -5134,10 +5133,29 @@
                     ],
                     [
                       0,
+                      320
+                    ]
+                  ]
+                },
+                "ScrollBarThickness": 4,
+                "ScrollBarImageColor3": [
+                  0.35,
+                  0.68,
+                  0.75
+                ],
+                "CanvasSize": {
+                  "UDim2": [
+                    [
+                      0,
+                      0
+                    ],
+                    [
+                      0,
                       0
                     ]
                   ]
-                }
+                },
+                "AutomaticCanvasSize": "Y"
               },
               "Children": [
                 {
@@ -5149,6 +5167,17 @@
                       "UDim": [
                         0,
                         4
+                      ]
+                    }
+                  }
+                },
+                {
+                  "ClassName": "UIPadding",
+                  "Properties": {
+                    "PaddingRight": {
+                      "UDim": [
+                        0,
+                        8
                       ]
                     }
                   }
@@ -5184,10 +5213,40 @@
                   }
                 },
                 {
+                  "ClassName": "TextLabel",
+                  "Name": "Section_GENERAL",
+                  "Properties": {
+                    "LayoutOrder": 1,
+                    "BackgroundTransparency": 1,
+                    "Size": {
+                      "UDim2": [
+                        [
+                          1,
+                          0
+                        ],
+                        [
+                          0,
+                          14
+                        ]
+                      ]
+                    },
+                    "Font": "GothamMedium",
+                    "TextSize": 10,
+                    "TextColor3": [
+                      0.35,
+                      0.68,
+                      0.75
+                    ],
+                    "TextTransparency": 0.45,
+                    "TextXAlignment": "Left",
+                    "Text": "G E N E R A L"
+                  }
+                },
+                {
                   "ClassName": "Frame",
                   "Name": "Row_RunDoubleTapWindowSeconds",
                   "Properties": {
-                    "LayoutOrder": 1,
+                    "LayoutOrder": 2,
                     "BackgroundTransparency": 1,
                     "Size": {
                       "UDim2": [
@@ -5452,7 +5511,7 @@
                   "ClassName": "Frame",
                   "Name": "Row_SprintThresholdSeconds",
                   "Properties": {
-                    "LayoutOrder": 2,
+                    "LayoutOrder": 3,
                     "BackgroundTransparency": 1,
                     "Size": {
                       "UDim2": [
@@ -5717,7 +5776,7 @@
                   "ClassName": "Frame",
                   "Name": "Row_WalkSpeed",
                   "Properties": {
-                    "LayoutOrder": 3,
+                    "LayoutOrder": 4,
                     "BackgroundTransparency": 1,
                     "Size": {
                       "UDim2": [
@@ -5982,7 +6041,7 @@
                   "ClassName": "Frame",
                   "Name": "Row_RunSpeed",
                   "Properties": {
-                    "LayoutOrder": 4,
+                    "LayoutOrder": 5,
                     "BackgroundTransparency": 1,
                     "Size": {
                       "UDim2": [
@@ -6247,7 +6306,7 @@
                   "ClassName": "Frame",
                   "Name": "Row_SprintSpeed",
                   "Properties": {
-                    "LayoutOrder": 5,
+                    "LayoutOrder": 6,
                     "BackgroundTransparency": 1,
                     "Size": {
                       "UDim2": [
@@ -6512,7 +6571,7 @@
                   "ClassName": "Frame",
                   "Name": "Row_JumpPower",
                   "Properties": {
-                    "LayoutOrder": 6,
+                    "LayoutOrder": 7,
                     "BackgroundTransparency": 1,
                     "Size": {
                       "UDim2": [
@@ -6777,7 +6836,7 @@
                   "ClassName": "Frame",
                   "Name": "Row_SprintForwardDeadzone",
                   "Properties": {
-                    "LayoutOrder": 7,
+                    "LayoutOrder": 8,
                     "BackgroundTransparency": 1,
                     "Size": {
                       "UDim2": [
@@ -7042,7 +7101,7 @@
                   "ClassName": "Frame",
                   "Name": "Row_SpeedToleranceMultiplier",
                   "Properties": {
-                    "LayoutOrder": 8,
+                    "LayoutOrder": 9,
                     "BackgroundTransparency": 1,
                     "Size": {
                       "UDim2": [
@@ -7304,10 +7363,40 @@
                   ]
                 },
                 {
+                  "ClassName": "TextLabel",
+                  "Name": "Section_CROUCH&SLIDE",
+                  "Properties": {
+                    "LayoutOrder": 10,
+                    "BackgroundTransparency": 1,
+                    "Size": {
+                      "UDim2": [
+                        [
+                          1,
+                          0
+                        ],
+                        [
+                          0,
+                          14
+                        ]
+                      ]
+                    },
+                    "Font": "GothamMedium",
+                    "TextSize": 10,
+                    "TextColor3": [
+                      0.35,
+                      0.68,
+                      0.75
+                    ],
+                    "TextTransparency": 0.45,
+                    "TextXAlignment": "Left",
+                    "Text": "C R O U C H   &   S L I D E"
+                  }
+                },
+                {
                   "ClassName": "Frame",
                   "Name": "Row_CrouchSpeed",
                   "Properties": {
-                    "LayoutOrder": 9,
+                    "LayoutOrder": 11,
                     "BackgroundTransparency": 1,
                     "Size": {
                       "UDim2": [
@@ -7572,7 +7661,7 @@
                   "ClassName": "Frame",
                   "Name": "Row_SlideDecayRate",
                   "Properties": {
-                    "LayoutOrder": 10,
+                    "LayoutOrder": 12,
                     "BackgroundTransparency": 1,
                     "Size": {
                       "UDim2": [
@@ -7835,9 +7924,274 @@
                 },
                 {
                   "ClassName": "Frame",
+                  "Name": "Row_SlideEntrySpeedMultiplier",
+                  "Properties": {
+                    "LayoutOrder": 13,
+                    "BackgroundTransparency": 1,
+                    "Size": {
+                      "UDim2": [
+                        [
+                          1,
+                          0
+                        ],
+                        [
+                          0,
+                          20
+                        ]
+                      ]
+                    }
+                  },
+                  "Children": [
+                    {
+                      "ClassName": "UIListLayout",
+                      "Properties": {
+                        "FillDirection": "Horizontal",
+                        "SortOrder": "LayoutOrder",
+                        "VerticalAlignment": "Center",
+                        "Padding": {
+                          "UDim": [
+                            0,
+                            4
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "ClassName": "TextLabel",
+                      "Name": "Key",
+                      "Properties": {
+                        "LayoutOrder": 0,
+                        "BackgroundTransparency": 1,
+                        "Size": {
+                          "UDim2": [
+                            [
+                              0,
+                              96
+                            ],
+                            [
+                              1,
+                              0
+                            ]
+                          ]
+                        },
+                        "Font": "Gotham",
+                        "TextSize": 11,
+                        "TextColor3": [
+                          0.541,
+                          0.561,
+                          0.596
+                        ],
+                        "TextXAlignment": "Left",
+                        "TextTruncate": "AtEnd",
+                        "Text": "Slide Entry Mult"
+                      }
+                    },
+                    {
+                      "ClassName": "TextLabel",
+                      "Name": "Value",
+                      "Properties": {
+                        "LayoutOrder": 1,
+                        "BackgroundTransparency": 1,
+                        "Size": {
+                          "UDim2": [
+                            [
+                              0,
+                              48
+                            ],
+                            [
+                              1,
+                              0
+                            ]
+                          ]
+                        },
+                        "Font": "Code",
+                        "TextSize": 11,
+                        "TextColor3": [
+                          0.894,
+                          0.902,
+                          0.918
+                        ],
+                        "TextXAlignment": "Left",
+                        "Text": "\u2014"
+                      }
+                    },
+                    {
+                      "ClassName": "TextBox",
+                      "Name": "Input",
+                      "Properties": {
+                        "LayoutOrder": 2,
+                        "Size": {
+                          "UDim2": [
+                            [
+                              0,
+                              60
+                            ],
+                            [
+                              0,
+                              18
+                            ]
+                          ]
+                        },
+                        "BackgroundColor3": [
+                          0.051,
+                          0.055,
+                          0.071
+                        ],
+                        "BorderSizePixel": 0,
+                        "Font": "Code",
+                        "TextSize": 11,
+                        "TextColor3": [
+                          0.894,
+                          0.902,
+                          0.918
+                        ],
+                        "PlaceholderText": "value",
+                        "PlaceholderColor3": [
+                          0.4,
+                          0.42,
+                          0.45
+                        ],
+                        "ClearTextOnFocus": false,
+                        "Text": ""
+                      },
+                      "Children": [
+                        {
+                          "ClassName": "UICorner",
+                          "Properties": {
+                            "CornerRadius": {
+                              "UDim": [
+                                0,
+                                3
+                              ]
+                            }
+                          }
+                        },
+                        {
+                          "ClassName": "UIPadding",
+                          "Properties": {
+                            "PaddingLeft": {
+                              "UDim": [
+                                0,
+                                4
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "ClassName": "TextButton",
+                      "Name": "SetButton",
+                      "Properties": {
+                        "LayoutOrder": 3,
+                        "Size": {
+                          "UDim2": [
+                            [
+                              0,
+                              34
+                            ],
+                            [
+                              0,
+                              18
+                            ]
+                          ]
+                        },
+                        "BackgroundColor3": [
+                          0.35,
+                          0.68,
+                          0.75
+                        ],
+                        "BorderSizePixel": 0,
+                        "AutoButtonColor": true,
+                        "Font": "GothamMedium",
+                        "TextSize": 10,
+                        "TextColor3": [
+                          0.051,
+                          0.055,
+                          0.071
+                        ],
+                        "Text": "Set"
+                      },
+                      "Children": [
+                        {
+                          "ClassName": "UICorner",
+                          "Properties": {
+                            "CornerRadius": {
+                              "UDim": [
+                                0,
+                                3
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "ClassName": "TextButton",
+                      "Name": "ClearButton",
+                      "Properties": {
+                        "LayoutOrder": 4,
+                        "Size": {
+                          "UDim2": [
+                            [
+                              0,
+                              40
+                            ],
+                            [
+                              0,
+                              18
+                            ]
+                          ]
+                        },
+                        "BackgroundColor3": [
+                          0.051,
+                          0.055,
+                          0.071
+                        ],
+                        "BorderSizePixel": 0,
+                        "AutoButtonColor": true,
+                        "Font": "GothamMedium",
+                        "TextSize": 10,
+                        "TextColor3": [
+                          0.541,
+                          0.561,
+                          0.596
+                        ],
+                        "Text": "Clear"
+                      },
+                      "Children": [
+                        {
+                          "ClassName": "UICorner",
+                          "Properties": {
+                            "CornerRadius": {
+                              "UDim": [
+                                0,
+                                3
+                              ]
+                            }
+                          }
+                        },
+                        {
+                          "ClassName": "UIStroke",
+                          "Properties": {
+                            "Color": [
+                              0.145,
+                              0.157,
+                              0.18
+                            ],
+                            "Thickness": 1,
+                            "Transparency": 0.2
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "ClassName": "Frame",
                   "Name": "Row_SlideJumpBoostAmount",
                   "Properties": {
-                    "LayoutOrder": 11,
+                    "LayoutOrder": 14,
                     "BackgroundTransparency": 1,
                     "Size": {
                       "UDim2": [
@@ -8100,1069 +8454,9 @@
                 },
                 {
                   "ClassName": "Frame",
-                  "Name": "Row_HardLandingHeightThreshold",
-                  "Properties": {
-                    "LayoutOrder": 12,
-                    "BackgroundTransparency": 1,
-                    "Size": {
-                      "UDim2": [
-                        [
-                          1,
-                          0
-                        ],
-                        [
-                          0,
-                          20
-                        ]
-                      ]
-                    }
-                  },
-                  "Children": [
-                    {
-                      "ClassName": "UIListLayout",
-                      "Properties": {
-                        "FillDirection": "Horizontal",
-                        "SortOrder": "LayoutOrder",
-                        "VerticalAlignment": "Center",
-                        "Padding": {
-                          "UDim": [
-                            0,
-                            4
-                          ]
-                        }
-                      }
-                    },
-                    {
-                      "ClassName": "TextLabel",
-                      "Name": "Key",
-                      "Properties": {
-                        "LayoutOrder": 0,
-                        "BackgroundTransparency": 1,
-                        "Size": {
-                          "UDim2": [
-                            [
-                              0,
-                              96
-                            ],
-                            [
-                              1,
-                              0
-                            ]
-                          ]
-                        },
-                        "Font": "Gotham",
-                        "TextSize": 11,
-                        "TextColor3": [
-                          0.541,
-                          0.561,
-                          0.596
-                        ],
-                        "TextXAlignment": "Left",
-                        "TextTruncate": "AtEnd",
-                        "Text": "Hard Landing Height"
-                      }
-                    },
-                    {
-                      "ClassName": "TextLabel",
-                      "Name": "Value",
-                      "Properties": {
-                        "LayoutOrder": 1,
-                        "BackgroundTransparency": 1,
-                        "Size": {
-                          "UDim2": [
-                            [
-                              0,
-                              48
-                            ],
-                            [
-                              1,
-                              0
-                            ]
-                          ]
-                        },
-                        "Font": "Code",
-                        "TextSize": 11,
-                        "TextColor3": [
-                          0.894,
-                          0.902,
-                          0.918
-                        ],
-                        "TextXAlignment": "Left",
-                        "Text": "—"
-                      }
-                    },
-                    {
-                      "ClassName": "TextBox",
-                      "Name": "Input",
-                      "Properties": {
-                        "LayoutOrder": 2,
-                        "Size": {
-                          "UDim2": [
-                            [
-                              0,
-                              60
-                            ],
-                            [
-                              0,
-                              18
-                            ]
-                          ]
-                        },
-                        "BackgroundColor3": [
-                          0.051,
-                          0.055,
-                          0.071
-                        ],
-                        "BorderSizePixel": 0,
-                        "Font": "Code",
-                        "TextSize": 11,
-                        "TextColor3": [
-                          0.894,
-                          0.902,
-                          0.918
-                        ],
-                        "PlaceholderText": "value",
-                        "PlaceholderColor3": [
-                          0.4,
-                          0.42,
-                          0.45
-                        ],
-                        "ClearTextOnFocus": false,
-                        "Text": ""
-                      },
-                      "Children": [
-                        {
-                          "ClassName": "UICorner",
-                          "Properties": {
-                            "CornerRadius": {
-                              "UDim": [
-                                0,
-                                3
-                              ]
-                            }
-                          }
-                        },
-                        {
-                          "ClassName": "UIPadding",
-                          "Properties": {
-                            "PaddingLeft": {
-                              "UDim": [
-                                0,
-                                4
-                              ]
-                            }
-                          }
-                        }
-                      ]
-                    },
-                    {
-                      "ClassName": "TextButton",
-                      "Name": "SetButton",
-                      "Properties": {
-                        "LayoutOrder": 3,
-                        "Size": {
-                          "UDim2": [
-                            [
-                              0,
-                              34
-                            ],
-                            [
-                              0,
-                              18
-                            ]
-                          ]
-                        },
-                        "BackgroundColor3": [
-                          0.35,
-                          0.68,
-                          0.75
-                        ],
-                        "BorderSizePixel": 0,
-                        "AutoButtonColor": true,
-                        "Font": "GothamMedium",
-                        "TextSize": 10,
-                        "TextColor3": [
-                          0.051,
-                          0.055,
-                          0.071
-                        ],
-                        "Text": "Set"
-                      },
-                      "Children": [
-                        {
-                          "ClassName": "UICorner",
-                          "Properties": {
-                            "CornerRadius": {
-                              "UDim": [
-                                0,
-                                3
-                              ]
-                            }
-                          }
-                        }
-                      ]
-                    },
-                    {
-                      "ClassName": "TextButton",
-                      "Name": "ClearButton",
-                      "Properties": {
-                        "LayoutOrder": 4,
-                        "Size": {
-                          "UDim2": [
-                            [
-                              0,
-                              40
-                            ],
-                            [
-                              0,
-                              18
-                            ]
-                          ]
-                        },
-                        "BackgroundColor3": [
-                          0.051,
-                          0.055,
-                          0.071
-                        ],
-                        "BorderSizePixel": 0,
-                        "AutoButtonColor": true,
-                        "Font": "GothamMedium",
-                        "TextSize": 10,
-                        "TextColor3": [
-                          0.541,
-                          0.561,
-                          0.596
-                        ],
-                        "Text": "Clear"
-                      },
-                      "Children": [
-                        {
-                          "ClassName": "UICorner",
-                          "Properties": {
-                            "CornerRadius": {
-                              "UDim": [
-                                0,
-                                3
-                              ]
-                            }
-                          }
-                        },
-                        {
-                          "ClassName": "UIStroke",
-                          "Properties": {
-                            "Color": [
-                              0.145,
-                              0.157,
-                              0.18
-                            ],
-                            "Thickness": 1,
-                            "Transparency": 0.2
-                          }
-                        }
-                      ]
-                    }
-                  ]
-                },
-                {
-                  "ClassName": "Frame",
-                  "Name": "Row_LandingAnimationHoldSeconds",
-                  "Properties": {
-                    "LayoutOrder": 13,
-                    "BackgroundTransparency": 1,
-                    "Size": {
-                      "UDim2": [
-                        [
-                          1,
-                          0
-                        ],
-                        [
-                          0,
-                          20
-                        ]
-                      ]
-                    }
-                  },
-                  "Children": [
-                    {
-                      "ClassName": "UIListLayout",
-                      "Properties": {
-                        "FillDirection": "Horizontal",
-                        "SortOrder": "LayoutOrder",
-                        "VerticalAlignment": "Center",
-                        "Padding": {
-                          "UDim": [
-                            0,
-                            4
-                          ]
-                        }
-                      }
-                    },
-                    {
-                      "ClassName": "TextLabel",
-                      "Name": "Key",
-                      "Properties": {
-                        "LayoutOrder": 0,
-                        "BackgroundTransparency": 1,
-                        "Size": {
-                          "UDim2": [
-                            [
-                              0,
-                              96
-                            ],
-                            [
-                              1,
-                              0
-                            ]
-                          ]
-                        },
-                        "Font": "Gotham",
-                        "TextSize": 11,
-                        "TextColor3": [
-                          0.541,
-                          0.561,
-                          0.596
-                        ],
-                        "TextXAlignment": "Left",
-                        "TextTruncate": "AtEnd",
-                        "Text": "Landing Anim Hold"
-                      }
-                    },
-                    {
-                      "ClassName": "TextLabel",
-                      "Name": "Value",
-                      "Properties": {
-                        "LayoutOrder": 1,
-                        "BackgroundTransparency": 1,
-                        "Size": {
-                          "UDim2": [
-                            [
-                              0,
-                              48
-                            ],
-                            [
-                              1,
-                              0
-                            ]
-                          ]
-                        },
-                        "Font": "Code",
-                        "TextSize": 11,
-                        "TextColor3": [
-                          0.894,
-                          0.902,
-                          0.918
-                        ],
-                        "TextXAlignment": "Left",
-                        "Text": "—"
-                      }
-                    },
-                    {
-                      "ClassName": "TextBox",
-                      "Name": "Input",
-                      "Properties": {
-                        "LayoutOrder": 2,
-                        "Size": {
-                          "UDim2": [
-                            [
-                              0,
-                              60
-                            ],
-                            [
-                              0,
-                              18
-                            ]
-                          ]
-                        },
-                        "BackgroundColor3": [
-                          0.051,
-                          0.055,
-                          0.071
-                        ],
-                        "BorderSizePixel": 0,
-                        "Font": "Code",
-                        "TextSize": 11,
-                        "TextColor3": [
-                          0.894,
-                          0.902,
-                          0.918
-                        ],
-                        "PlaceholderText": "value",
-                        "PlaceholderColor3": [
-                          0.4,
-                          0.42,
-                          0.45
-                        ],
-                        "ClearTextOnFocus": false,
-                        "Text": ""
-                      },
-                      "Children": [
-                        {
-                          "ClassName": "UICorner",
-                          "Properties": {
-                            "CornerRadius": {
-                              "UDim": [
-                                0,
-                                3
-                              ]
-                            }
-                          }
-                        },
-                        {
-                          "ClassName": "UIPadding",
-                          "Properties": {
-                            "PaddingLeft": {
-                              "UDim": [
-                                0,
-                                4
-                              ]
-                            }
-                          }
-                        }
-                      ]
-                    },
-                    {
-                      "ClassName": "TextButton",
-                      "Name": "SetButton",
-                      "Properties": {
-                        "LayoutOrder": 3,
-                        "Size": {
-                          "UDim2": [
-                            [
-                              0,
-                              34
-                            ],
-                            [
-                              0,
-                              18
-                            ]
-                          ]
-                        },
-                        "BackgroundColor3": [
-                          0.35,
-                          0.68,
-                          0.75
-                        ],
-                        "BorderSizePixel": 0,
-                        "AutoButtonColor": true,
-                        "Font": "GothamMedium",
-                        "TextSize": 10,
-                        "TextColor3": [
-                          0.051,
-                          0.055,
-                          0.071
-                        ],
-                        "Text": "Set"
-                      },
-                      "Children": [
-                        {
-                          "ClassName": "UICorner",
-                          "Properties": {
-                            "CornerRadius": {
-                              "UDim": [
-                                0,
-                                3
-                              ]
-                            }
-                          }
-                        }
-                      ]
-                    },
-                    {
-                      "ClassName": "TextButton",
-                      "Name": "ClearButton",
-                      "Properties": {
-                        "LayoutOrder": 4,
-                        "Size": {
-                          "UDim2": [
-                            [
-                              0,
-                              40
-                            ],
-                            [
-                              0,
-                              18
-                            ]
-                          ]
-                        },
-                        "BackgroundColor3": [
-                          0.051,
-                          0.055,
-                          0.071
-                        ],
-                        "BorderSizePixel": 0,
-                        "AutoButtonColor": true,
-                        "Font": "GothamMedium",
-                        "TextSize": 10,
-                        "TextColor3": [
-                          0.541,
-                          0.561,
-                          0.596
-                        ],
-                        "Text": "Clear"
-                      },
-                      "Children": [
-                        {
-                          "ClassName": "UICorner",
-                          "Properties": {
-                            "CornerRadius": {
-                              "UDim": [
-                                0,
-                                3
-                              ]
-                            }
-                          }
-                        },
-                        {
-                          "ClassName": "UIStroke",
-                          "Properties": {
-                            "Color": [
-                              0.145,
-                              0.157,
-                              0.18
-                            ],
-                            "Thickness": 1,
-                            "Transparency": 0.2
-                          }
-                        }
-                      ]
-                    }
-                  ]
-                },
-                {
-                  "ClassName": "Frame",
-                  "Name": "Row_DoubleJumpForce",
-                  "Properties": {
-                    "LayoutOrder": 14,
-                    "BackgroundTransparency": 1,
-                    "Size": {
-                      "UDim2": [
-                        [
-                          1,
-                          0
-                        ],
-                        [
-                          0,
-                          20
-                        ]
-                      ]
-                    }
-                  },
-                  "Children": [
-                    {
-                      "ClassName": "UIListLayout",
-                      "Properties": {
-                        "FillDirection": "Horizontal",
-                        "SortOrder": "LayoutOrder",
-                        "VerticalAlignment": "Center",
-                        "Padding": {
-                          "UDim": [
-                            0,
-                            4
-                          ]
-                        }
-                      }
-                    },
-                    {
-                      "ClassName": "TextLabel",
-                      "Name": "Key",
-                      "Properties": {
-                        "LayoutOrder": 0,
-                        "BackgroundTransparency": 1,
-                        "Size": {
-                          "UDim2": [
-                            [
-                              0,
-                              96
-                            ],
-                            [
-                              1,
-                              0
-                            ]
-                          ]
-                        },
-                        "Font": "Gotham",
-                        "TextSize": 11,
-                        "TextColor3": [
-                          0.541,
-                          0.561,
-                          0.596
-                        ],
-                        "TextXAlignment": "Left",
-                        "TextTruncate": "AtEnd",
-                        "Text": "Double Jump Force"
-                      }
-                    },
-                    {
-                      "ClassName": "TextLabel",
-                      "Name": "Value",
-                      "Properties": {
-                        "LayoutOrder": 1,
-                        "BackgroundTransparency": 1,
-                        "Size": {
-                          "UDim2": [
-                            [
-                              0,
-                              48
-                            ],
-                            [
-                              1,
-                              0
-                            ]
-                          ]
-                        },
-                        "Font": "Code",
-                        "TextSize": 11,
-                        "TextColor3": [
-                          0.894,
-                          0.902,
-                          0.918
-                        ],
-                        "TextXAlignment": "Left",
-                        "Text": "—"
-                      }
-                    },
-                    {
-                      "ClassName": "TextBox",
-                      "Name": "Input",
-                      "Properties": {
-                        "LayoutOrder": 2,
-                        "Size": {
-                          "UDim2": [
-                            [
-                              0,
-                              60
-                            ],
-                            [
-                              0,
-                              18
-                            ]
-                          ]
-                        },
-                        "BackgroundColor3": [
-                          0.051,
-                          0.055,
-                          0.071
-                        ],
-                        "BorderSizePixel": 0,
-                        "Font": "Code",
-                        "TextSize": 11,
-                        "TextColor3": [
-                          0.894,
-                          0.902,
-                          0.918
-                        ],
-                        "PlaceholderText": "value",
-                        "PlaceholderColor3": [
-                          0.4,
-                          0.42,
-                          0.45
-                        ],
-                        "ClearTextOnFocus": false,
-                        "Text": ""
-                      },
-                      "Children": [
-                        {
-                          "ClassName": "UICorner",
-                          "Properties": {
-                            "CornerRadius": {
-                              "UDim": [
-                                0,
-                                3
-                              ]
-                            }
-                          }
-                        },
-                        {
-                          "ClassName": "UIPadding",
-                          "Properties": {
-                            "PaddingLeft": {
-                              "UDim": [
-                                0,
-                                4
-                              ]
-                            }
-                          }
-                        }
-                      ]
-                    },
-                    {
-                      "ClassName": "TextButton",
-                      "Name": "SetButton",
-                      "Properties": {
-                        "LayoutOrder": 3,
-                        "Size": {
-                          "UDim2": [
-                            [
-                              0,
-                              34
-                            ],
-                            [
-                              0,
-                              18
-                            ]
-                          ]
-                        },
-                        "BackgroundColor3": [
-                          0.35,
-                          0.68,
-                          0.75
-                        ],
-                        "BorderSizePixel": 0,
-                        "AutoButtonColor": true,
-                        "Font": "GothamMedium",
-                        "TextSize": 10,
-                        "TextColor3": [
-                          0.051,
-                          0.055,
-                          0.071
-                        ],
-                        "Text": "Set"
-                      },
-                      "Children": [
-                        {
-                          "ClassName": "UICorner",
-                          "Properties": {
-                            "CornerRadius": {
-                              "UDim": [
-                                0,
-                                3
-                              ]
-                            }
-                          }
-                        }
-                      ]
-                    },
-                    {
-                      "ClassName": "TextButton",
-                      "Name": "ClearButton",
-                      "Properties": {
-                        "LayoutOrder": 4,
-                        "Size": {
-                          "UDim2": [
-                            [
-                              0,
-                              40
-                            ],
-                            [
-                              0,
-                              18
-                            ]
-                          ]
-                        },
-                        "BackgroundColor3": [
-                          0.051,
-                          0.055,
-                          0.071
-                        ],
-                        "BorderSizePixel": 0,
-                        "AutoButtonColor": true,
-                        "Font": "GothamMedium",
-                        "TextSize": 10,
-                        "TextColor3": [
-                          0.541,
-                          0.561,
-                          0.596
-                        ],
-                        "Text": "Clear"
-                      },
-                      "Children": [
-                        {
-                          "ClassName": "UICorner",
-                          "Properties": {
-                            "CornerRadius": {
-                              "UDim": [
-                                0,
-                                3
-                              ]
-                            }
-                          }
-                        },
-                        {
-                          "ClassName": "UIStroke",
-                          "Properties": {
-                            "Color": [
-                              0.145,
-                              0.157,
-                              0.18
-                            ],
-                            "Thickness": 1,
-                            "Transparency": 0.2
-                          }
-                        }
-                      ]
-                    }
-                  ]
-                },
-                {
-                  "ClassName": "Frame",
-                  "Name": "Row_DoubleJumpDecayDurationSeconds",
-                  "Properties": {
-                    "LayoutOrder": 15,
-                    "BackgroundTransparency": 1,
-                    "Size": {
-                      "UDim2": [
-                        [
-                          1,
-                          0
-                        ],
-                        [
-                          0,
-                          20
-                        ]
-                      ]
-                    }
-                  },
-                  "Children": [
-                    {
-                      "ClassName": "UIListLayout",
-                      "Properties": {
-                        "FillDirection": "Horizontal",
-                        "SortOrder": "LayoutOrder",
-                        "VerticalAlignment": "Center",
-                        "Padding": {
-                          "UDim": [
-                            0,
-                            4
-                          ]
-                        }
-                      }
-                    },
-                    {
-                      "ClassName": "TextLabel",
-                      "Name": "Key",
-                      "Properties": {
-                        "LayoutOrder": 0,
-                        "BackgroundTransparency": 1,
-                        "Size": {
-                          "UDim2": [
-                            [
-                              0,
-                              96
-                            ],
-                            [
-                              1,
-                              0
-                            ]
-                          ]
-                        },
-                        "Font": "Gotham",
-                        "TextSize": 11,
-                        "TextColor3": [
-                          0.541,
-                          0.561,
-                          0.596
-                        ],
-                        "TextXAlignment": "Left",
-                        "TextTruncate": "AtEnd",
-                        "Text": "Double Jump Decay"
-                      }
-                    },
-                    {
-                      "ClassName": "TextLabel",
-                      "Name": "Value",
-                      "Properties": {
-                        "LayoutOrder": 1,
-                        "BackgroundTransparency": 1,
-                        "Size": {
-                          "UDim2": [
-                            [
-                              0,
-                              48
-                            ],
-                            [
-                              1,
-                              0
-                            ]
-                          ]
-                        },
-                        "Font": "Code",
-                        "TextSize": 11,
-                        "TextColor3": [
-                          0.894,
-                          0.902,
-                          0.918
-                        ],
-                        "TextXAlignment": "Left",
-                        "Text": "—"
-                      }
-                    },
-                    {
-                      "ClassName": "TextBox",
-                      "Name": "Input",
-                      "Properties": {
-                        "LayoutOrder": 2,
-                        "Size": {
-                          "UDim2": [
-                            [
-                              0,
-                              60
-                            ],
-                            [
-                              0,
-                              18
-                            ]
-                          ]
-                        },
-                        "BackgroundColor3": [
-                          0.051,
-                          0.055,
-                          0.071
-                        ],
-                        "BorderSizePixel": 0,
-                        "Font": "Code",
-                        "TextSize": 11,
-                        "TextColor3": [
-                          0.894,
-                          0.902,
-                          0.918
-                        ],
-                        "PlaceholderText": "value",
-                        "PlaceholderColor3": [
-                          0.4,
-                          0.42,
-                          0.45
-                        ],
-                        "ClearTextOnFocus": false,
-                        "Text": ""
-                      },
-                      "Children": [
-                        {
-                          "ClassName": "UICorner",
-                          "Properties": {
-                            "CornerRadius": {
-                              "UDim": [
-                                0,
-                                3
-                              ]
-                            }
-                          }
-                        },
-                        {
-                          "ClassName": "UIPadding",
-                          "Properties": {
-                            "PaddingLeft": {
-                              "UDim": [
-                                0,
-                                4
-                              ]
-                            }
-                          }
-                        }
-                      ]
-                    },
-                    {
-                      "ClassName": "TextButton",
-                      "Name": "SetButton",
-                      "Properties": {
-                        "LayoutOrder": 3,
-                        "Size": {
-                          "UDim2": [
-                            [
-                              0,
-                              34
-                            ],
-                            [
-                              0,
-                              18
-                            ]
-                          ]
-                        },
-                        "BackgroundColor3": [
-                          0.35,
-                          0.68,
-                          0.75
-                        ],
-                        "BorderSizePixel": 0,
-                        "AutoButtonColor": true,
-                        "Font": "GothamMedium",
-                        "TextSize": 10,
-                        "TextColor3": [
-                          0.051,
-                          0.055,
-                          0.071
-                        ],
-                        "Text": "Set"
-                      },
-                      "Children": [
-                        {
-                          "ClassName": "UICorner",
-                          "Properties": {
-                            "CornerRadius": {
-                              "UDim": [
-                                0,
-                                3
-                              ]
-                            }
-                          }
-                        }
-                      ]
-                    },
-                    {
-                      "ClassName": "TextButton",
-                      "Name": "ClearButton",
-                      "Properties": {
-                        "LayoutOrder": 4,
-                        "Size": {
-                          "UDim2": [
-                            [
-                              0,
-                              40
-                            ],
-                            [
-                              0,
-                              18
-                            ]
-                          ]
-                        },
-                        "BackgroundColor3": [
-                          0.051,
-                          0.055,
-                          0.071
-                        ],
-                        "BorderSizePixel": 0,
-                        "AutoButtonColor": true,
-                        "Font": "GothamMedium",
-                        "TextSize": 10,
-                        "TextColor3": [
-                          0.541,
-                          0.561,
-                          0.596
-                        ],
-                        "Text": "Clear"
-                      },
-                      "Children": [
-                        {
-                          "ClassName": "UICorner",
-                          "Properties": {
-                            "CornerRadius": {
-                              "UDim": [
-                                0,
-                                3
-                              ]
-                            }
-                          }
-                        },
-                        {
-                          "ClassName": "UIStroke",
-                          "Properties": {
-                            "Color": [
-                              0.145,
-                              0.157,
-                              0.18
-                            ],
-                            "Thickness": 1,
-                            "Transparency": 0.2
-                          }
-                        }
-                      ]
-                    }
-                  ]
-                },
-                {
-                  "ClassName": "Frame",
                   "Name": "Row_SlideSlopeAngleThresholdDegrees",
                   "Properties": {
-                    "LayoutOrder": 16,
+                    "LayoutOrder": 15,
                     "BackgroundTransparency": 1,
                     "Size": {
                       "UDim2": [
@@ -9248,7 +8542,7 @@
                           0.918
                         ],
                         "TextXAlignment": "Left",
-                        "Text": "—"
+                        "Text": "\u2014"
                       }
                     },
                     {
@@ -9427,7 +8721,7 @@
                   "ClassName": "Frame",
                   "Name": "Row_SlideMaxWalkableSlopeDegrees",
                   "Properties": {
-                    "LayoutOrder": 17,
+                    "LayoutOrder": 16,
                     "BackgroundTransparency": 1,
                     "Size": {
                       "UDim2": [
@@ -9513,7 +8807,7 @@
                           0.918
                         ],
                         "TextXAlignment": "Left",
-                        "Text": "—"
+                        "Text": "\u2014"
                       }
                     },
                     {
@@ -9692,7 +8986,7 @@
                   "ClassName": "Frame",
                   "Name": "Row_SlideSlopeAmplificationCap",
                   "Properties": {
-                    "LayoutOrder": 18,
+                    "LayoutOrder": 17,
                     "BackgroundTransparency": 1,
                     "Size": {
                       "UDim2": [
@@ -9778,7 +9072,7 @@
                           0.918
                         ],
                         "TextXAlignment": "Left",
-                        "Text": "—"
+                        "Text": "\u2014"
                       }
                     },
                     {
@@ -9957,7 +9251,7 @@
                   "ClassName": "Frame",
                   "Name": "Row_SlideGroundRaycastThrottleSeconds",
                   "Properties": {
-                    "LayoutOrder": 19,
+                    "LayoutOrder": 18,
                     "BackgroundTransparency": 1,
                     "Size": {
                       "UDim2": [
@@ -10043,7 +9337,302 @@
                           0.918
                         ],
                         "TextXAlignment": "Left",
-                        "Text": "—"
+                        "Text": "\u2014"
+                      }
+                    },
+                    {
+                      "ClassName": "TextBox",
+                      "Name": "Input",
+                      "Properties": {
+                        "LayoutOrder": 2,
+                        "Size": {
+                          "UDim2": [
+                            [
+                              0,
+                              60
+                            ],
+                            [
+                              0,
+                              18
+                            ]
+                          ]
+                        },
+                        "BackgroundColor3": [
+                          0.051,
+                          0.055,
+                          0.071
+                        ],
+                        "BorderSizePixel": 0,
+                        "Font": "Code",
+                        "TextSize": 11,
+                        "TextColor3": [
+                          0.894,
+                          0.902,
+                          0.918
+                        ],
+                        "PlaceholderText": "value",
+                        "PlaceholderColor3": [
+                          0.4,
+                          0.42,
+                          0.45
+                        ],
+                        "ClearTextOnFocus": false,
+                        "Text": ""
+                      },
+                      "Children": [
+                        {
+                          "ClassName": "UICorner",
+                          "Properties": {
+                            "CornerRadius": {
+                              "UDim": [
+                                0,
+                                3
+                              ]
+                            }
+                          }
+                        },
+                        {
+                          "ClassName": "UIPadding",
+                          "Properties": {
+                            "PaddingLeft": {
+                              "UDim": [
+                                0,
+                                4
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "ClassName": "TextButton",
+                      "Name": "SetButton",
+                      "Properties": {
+                        "LayoutOrder": 3,
+                        "Size": {
+                          "UDim2": [
+                            [
+                              0,
+                              34
+                            ],
+                            [
+                              0,
+                              18
+                            ]
+                          ]
+                        },
+                        "BackgroundColor3": [
+                          0.35,
+                          0.68,
+                          0.75
+                        ],
+                        "BorderSizePixel": 0,
+                        "AutoButtonColor": true,
+                        "Font": "GothamMedium",
+                        "TextSize": 10,
+                        "TextColor3": [
+                          0.051,
+                          0.055,
+                          0.071
+                        ],
+                        "Text": "Set"
+                      },
+                      "Children": [
+                        {
+                          "ClassName": "UICorner",
+                          "Properties": {
+                            "CornerRadius": {
+                              "UDim": [
+                                0,
+                                3
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "ClassName": "TextButton",
+                      "Name": "ClearButton",
+                      "Properties": {
+                        "LayoutOrder": 4,
+                        "Size": {
+                          "UDim2": [
+                            [
+                              0,
+                              40
+                            ],
+                            [
+                              0,
+                              18
+                            ]
+                          ]
+                        },
+                        "BackgroundColor3": [
+                          0.051,
+                          0.055,
+                          0.071
+                        ],
+                        "BorderSizePixel": 0,
+                        "AutoButtonColor": true,
+                        "Font": "GothamMedium",
+                        "TextSize": 10,
+                        "TextColor3": [
+                          0.541,
+                          0.561,
+                          0.596
+                        ],
+                        "Text": "Clear"
+                      },
+                      "Children": [
+                        {
+                          "ClassName": "UICorner",
+                          "Properties": {
+                            "CornerRadius": {
+                              "UDim": [
+                                0,
+                                3
+                              ]
+                            }
+                          }
+                        },
+                        {
+                          "ClassName": "UIStroke",
+                          "Properties": {
+                            "Color": [
+                              0.145,
+                              0.157,
+                              0.18
+                            ],
+                            "Thickness": 1,
+                            "Transparency": 0.2
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "ClassName": "TextLabel",
+                  "Name": "Section_LANDING&ANIMATION",
+                  "Properties": {
+                    "LayoutOrder": 19,
+                    "BackgroundTransparency": 1,
+                    "Size": {
+                      "UDim2": [
+                        [
+                          1,
+                          0
+                        ],
+                        [
+                          0,
+                          14
+                        ]
+                      ]
+                    },
+                    "Font": "GothamMedium",
+                    "TextSize": 10,
+                    "TextColor3": [
+                      0.35,
+                      0.68,
+                      0.75
+                    ],
+                    "TextTransparency": 0.45,
+                    "TextXAlignment": "Left",
+                    "Text": "L A N D I N G   &   A N I M A T I O N"
+                  }
+                },
+                {
+                  "ClassName": "Frame",
+                  "Name": "Row_AnimationFadeTimeSeconds",
+                  "Properties": {
+                    "LayoutOrder": 20,
+                    "BackgroundTransparency": 1,
+                    "Size": {
+                      "UDim2": [
+                        [
+                          1,
+                          0
+                        ],
+                        [
+                          0,
+                          20
+                        ]
+                      ]
+                    }
+                  },
+                  "Children": [
+                    {
+                      "ClassName": "UIListLayout",
+                      "Properties": {
+                        "FillDirection": "Horizontal",
+                        "SortOrder": "LayoutOrder",
+                        "VerticalAlignment": "Center",
+                        "Padding": {
+                          "UDim": [
+                            0,
+                            4
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "ClassName": "TextLabel",
+                      "Name": "Key",
+                      "Properties": {
+                        "LayoutOrder": 0,
+                        "BackgroundTransparency": 1,
+                        "Size": {
+                          "UDim2": [
+                            [
+                              0,
+                              96
+                            ],
+                            [
+                              1,
+                              0
+                            ]
+                          ]
+                        },
+                        "Font": "Gotham",
+                        "TextSize": 11,
+                        "TextColor3": [
+                          0.541,
+                          0.561,
+                          0.596
+                        ],
+                        "TextXAlignment": "Left",
+                        "TextTruncate": "AtEnd",
+                        "Text": "Anim Fade Time"
+                      }
+                    },
+                    {
+                      "ClassName": "TextLabel",
+                      "Name": "Value",
+                      "Properties": {
+                        "LayoutOrder": 1,
+                        "BackgroundTransparency": 1,
+                        "Size": {
+                          "UDim2": [
+                            [
+                              0,
+                              48
+                            ],
+                            [
+                              1,
+                              0
+                            ]
+                          ]
+                        },
+                        "Font": "Code",
+                        "TextSize": 11,
+                        "TextColor3": [
+                          0.894,
+                          0.902,
+                          0.918
+                        ],
+                        "TextXAlignment": "Left",
+                        "Text": "\u2014"
                       }
                     },
                     {
@@ -10220,9 +9809,9 @@
                 },
                 {
                   "ClassName": "Frame",
-                  "Name": "Row_SlideEntrySpeedMultiplier",
+                  "Name": "Row_LandingAnimationHoldSeconds",
                   "Properties": {
-                    "LayoutOrder": 20,
+                    "LayoutOrder": 21,
                     "BackgroundTransparency": 1,
                     "Size": {
                       "UDim2": [
@@ -10279,7 +9868,7 @@
                         ],
                         "TextXAlignment": "Left",
                         "TextTruncate": "AtEnd",
-                        "Text": "Slide Entry Mult"
+                        "Text": "Landing Anim Hold"
                       }
                     },
                     {
@@ -10308,7 +9897,272 @@
                           0.918
                         ],
                         "TextXAlignment": "Left",
-                        "Text": "—"
+                        "Text": "\u2014"
+                      }
+                    },
+                    {
+                      "ClassName": "TextBox",
+                      "Name": "Input",
+                      "Properties": {
+                        "LayoutOrder": 2,
+                        "Size": {
+                          "UDim2": [
+                            [
+                              0,
+                              60
+                            ],
+                            [
+                              0,
+                              18
+                            ]
+                          ]
+                        },
+                        "BackgroundColor3": [
+                          0.051,
+                          0.055,
+                          0.071
+                        ],
+                        "BorderSizePixel": 0,
+                        "Font": "Code",
+                        "TextSize": 11,
+                        "TextColor3": [
+                          0.894,
+                          0.902,
+                          0.918
+                        ],
+                        "PlaceholderText": "value",
+                        "PlaceholderColor3": [
+                          0.4,
+                          0.42,
+                          0.45
+                        ],
+                        "ClearTextOnFocus": false,
+                        "Text": ""
+                      },
+                      "Children": [
+                        {
+                          "ClassName": "UICorner",
+                          "Properties": {
+                            "CornerRadius": {
+                              "UDim": [
+                                0,
+                                3
+                              ]
+                            }
+                          }
+                        },
+                        {
+                          "ClassName": "UIPadding",
+                          "Properties": {
+                            "PaddingLeft": {
+                              "UDim": [
+                                0,
+                                4
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "ClassName": "TextButton",
+                      "Name": "SetButton",
+                      "Properties": {
+                        "LayoutOrder": 3,
+                        "Size": {
+                          "UDim2": [
+                            [
+                              0,
+                              34
+                            ],
+                            [
+                              0,
+                              18
+                            ]
+                          ]
+                        },
+                        "BackgroundColor3": [
+                          0.35,
+                          0.68,
+                          0.75
+                        ],
+                        "BorderSizePixel": 0,
+                        "AutoButtonColor": true,
+                        "Font": "GothamMedium",
+                        "TextSize": 10,
+                        "TextColor3": [
+                          0.051,
+                          0.055,
+                          0.071
+                        ],
+                        "Text": "Set"
+                      },
+                      "Children": [
+                        {
+                          "ClassName": "UICorner",
+                          "Properties": {
+                            "CornerRadius": {
+                              "UDim": [
+                                0,
+                                3
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "ClassName": "TextButton",
+                      "Name": "ClearButton",
+                      "Properties": {
+                        "LayoutOrder": 4,
+                        "Size": {
+                          "UDim2": [
+                            [
+                              0,
+                              40
+                            ],
+                            [
+                              0,
+                              18
+                            ]
+                          ]
+                        },
+                        "BackgroundColor3": [
+                          0.051,
+                          0.055,
+                          0.071
+                        ],
+                        "BorderSizePixel": 0,
+                        "AutoButtonColor": true,
+                        "Font": "GothamMedium",
+                        "TextSize": 10,
+                        "TextColor3": [
+                          0.541,
+                          0.561,
+                          0.596
+                        ],
+                        "Text": "Clear"
+                      },
+                      "Children": [
+                        {
+                          "ClassName": "UICorner",
+                          "Properties": {
+                            "CornerRadius": {
+                              "UDim": [
+                                0,
+                                3
+                              ]
+                            }
+                          }
+                        },
+                        {
+                          "ClassName": "UIStroke",
+                          "Properties": {
+                            "Color": [
+                              0.145,
+                              0.157,
+                              0.18
+                            ],
+                            "Thickness": 1,
+                            "Transparency": 0.2
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "ClassName": "Frame",
+                  "Name": "Row_HardLandingHeightThreshold",
+                  "Properties": {
+                    "LayoutOrder": 22,
+                    "BackgroundTransparency": 1,
+                    "Size": {
+                      "UDim2": [
+                        [
+                          1,
+                          0
+                        ],
+                        [
+                          0,
+                          20
+                        ]
+                      ]
+                    }
+                  },
+                  "Children": [
+                    {
+                      "ClassName": "UIListLayout",
+                      "Properties": {
+                        "FillDirection": "Horizontal",
+                        "SortOrder": "LayoutOrder",
+                        "VerticalAlignment": "Center",
+                        "Padding": {
+                          "UDim": [
+                            0,
+                            4
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "ClassName": "TextLabel",
+                      "Name": "Key",
+                      "Properties": {
+                        "LayoutOrder": 0,
+                        "BackgroundTransparency": 1,
+                        "Size": {
+                          "UDim2": [
+                            [
+                              0,
+                              96
+                            ],
+                            [
+                              1,
+                              0
+                            ]
+                          ]
+                        },
+                        "Font": "Gotham",
+                        "TextSize": 11,
+                        "TextColor3": [
+                          0.541,
+                          0.561,
+                          0.596
+                        ],
+                        "TextXAlignment": "Left",
+                        "TextTruncate": "AtEnd",
+                        "Text": "Hard Landing Height"
+                      }
+                    },
+                    {
+                      "ClassName": "TextLabel",
+                      "Name": "Value",
+                      "Properties": {
+                        "LayoutOrder": 1,
+                        "BackgroundTransparency": 1,
+                        "Size": {
+                          "UDim2": [
+                            [
+                              0,
+                              48
+                            ],
+                            [
+                              1,
+                              0
+                            ]
+                          ]
+                        },
+                        "Font": "Code",
+                        "TextSize": 11,
+                        "TextColor3": [
+                          0.894,
+                          0.902,
+                          0.918
+                        ],
+                        "TextXAlignment": "Left",
+                        "Text": "\u2014"
                       }
                     },
                     {
@@ -10487,7 +10341,7 @@
                   "ClassName": "Frame",
                   "Name": "Row_HardLandingDurationSeconds",
                   "Properties": {
-                    "LayoutOrder": 21,
+                    "LayoutOrder": 23,
                     "BackgroundTransparency": 1,
                     "Size": {
                       "UDim2": [
@@ -10573,7 +10427,7 @@
                           0.918
                         ],
                         "TextXAlignment": "Left",
-                        "Text": "—"
+                        "Text": "\u2014"
                       }
                     },
                     {
@@ -10749,538 +10603,8 @@
                   ]
                 },
                 {
-                  "ClassName": "Frame",
-                  "Name": "Row_AnimationFadeTimeSeconds",
-                  "Properties": {
-                    "LayoutOrder": 22,
-                    "BackgroundTransparency": 1,
-                    "Size": {
-                      "UDim2": [
-                        [
-                          1,
-                          0
-                        ],
-                        [
-                          0,
-                          20
-                        ]
-                      ]
-                    }
-                  },
-                  "Children": [
-                    {
-                      "ClassName": "UIListLayout",
-                      "Properties": {
-                        "FillDirection": "Horizontal",
-                        "SortOrder": "LayoutOrder",
-                        "VerticalAlignment": "Center",
-                        "Padding": {
-                          "UDim": [
-                            0,
-                            4
-                          ]
-                        }
-                      }
-                    },
-                    {
-                      "ClassName": "TextLabel",
-                      "Name": "Key",
-                      "Properties": {
-                        "LayoutOrder": 0,
-                        "BackgroundTransparency": 1,
-                        "Size": {
-                          "UDim2": [
-                            [
-                              0,
-                              96
-                            ],
-                            [
-                              1,
-                              0
-                            ]
-                          ]
-                        },
-                        "Font": "Gotham",
-                        "TextSize": 11,
-                        "TextColor3": [
-                          0.541,
-                          0.561,
-                          0.596
-                        ],
-                        "TextXAlignment": "Left",
-                        "TextTruncate": "AtEnd",
-                        "Text": "Anim Fade Time"
-                      }
-                    },
-                    {
-                      "ClassName": "TextLabel",
-                      "Name": "Value",
-                      "Properties": {
-                        "LayoutOrder": 1,
-                        "BackgroundTransparency": 1,
-                        "Size": {
-                          "UDim2": [
-                            [
-                              0,
-                              48
-                            ],
-                            [
-                              1,
-                              0
-                            ]
-                          ]
-                        },
-                        "Font": "Code",
-                        "TextSize": 11,
-                        "TextColor3": [
-                          0.894,
-                          0.902,
-                          0.918
-                        ],
-                        "TextXAlignment": "Left",
-                        "Text": "—"
-                      }
-                    },
-                    {
-                      "ClassName": "TextBox",
-                      "Name": "Input",
-                      "Properties": {
-                        "LayoutOrder": 2,
-                        "Size": {
-                          "UDim2": [
-                            [
-                              0,
-                              60
-                            ],
-                            [
-                              0,
-                              18
-                            ]
-                          ]
-                        },
-                        "BackgroundColor3": [
-                          0.051,
-                          0.055,
-                          0.071
-                        ],
-                        "BorderSizePixel": 0,
-                        "Font": "Code",
-                        "TextSize": 11,
-                        "TextColor3": [
-                          0.894,
-                          0.902,
-                          0.918
-                        ],
-                        "PlaceholderText": "value",
-                        "PlaceholderColor3": [
-                          0.4,
-                          0.42,
-                          0.45
-                        ],
-                        "ClearTextOnFocus": false,
-                        "Text": ""
-                      },
-                      "Children": [
-                        {
-                          "ClassName": "UICorner",
-                          "Properties": {
-                            "CornerRadius": {
-                              "UDim": [
-                                0,
-                                3
-                              ]
-                            }
-                          }
-                        },
-                        {
-                          "ClassName": "UIPadding",
-                          "Properties": {
-                            "PaddingLeft": {
-                              "UDim": [
-                                0,
-                                4
-                              ]
-                            }
-                          }
-                        }
-                      ]
-                    },
-                    {
-                      "ClassName": "TextButton",
-                      "Name": "SetButton",
-                      "Properties": {
-                        "LayoutOrder": 3,
-                        "Size": {
-                          "UDim2": [
-                            [
-                              0,
-                              34
-                            ],
-                            [
-                              0,
-                              18
-                            ]
-                          ]
-                        },
-                        "BackgroundColor3": [
-                          0.35,
-                          0.68,
-                          0.75
-                        ],
-                        "BorderSizePixel": 0,
-                        "AutoButtonColor": true,
-                        "Font": "GothamMedium",
-                        "TextSize": 10,
-                        "TextColor3": [
-                          0.051,
-                          0.055,
-                          0.071
-                        ],
-                        "Text": "Set"
-                      },
-                      "Children": [
-                        {
-                          "ClassName": "UICorner",
-                          "Properties": {
-                            "CornerRadius": {
-                              "UDim": [
-                                0,
-                                3
-                              ]
-                            }
-                          }
-                        }
-                      ]
-                    },
-                    {
-                      "ClassName": "TextButton",
-                      "Name": "ClearButton",
-                      "Properties": {
-                        "LayoutOrder": 4,
-                        "Size": {
-                          "UDim2": [
-                            [
-                              0,
-                              40
-                            ],
-                            [
-                              0,
-                              18
-                            ]
-                          ]
-                        },
-                        "BackgroundColor3": [
-                          0.051,
-                          0.055,
-                          0.071
-                        ],
-                        "BorderSizePixel": 0,
-                        "AutoButtonColor": true,
-                        "Font": "GothamMedium",
-                        "TextSize": 10,
-                        "TextColor3": [
-                          0.541,
-                          0.561,
-                          0.596
-                        ],
-                        "Text": "Clear"
-                      },
-                      "Children": [
-                        {
-                          "ClassName": "UICorner",
-                          "Properties": {
-                            "CornerRadius": {
-                              "UDim": [
-                                0,
-                                3
-                              ]
-                            }
-                          }
-                        },
-                        {
-                          "ClassName": "UIStroke",
-                          "Properties": {
-                            "Color": [
-                              0.145,
-                              0.157,
-                              0.18
-                            ],
-                            "Thickness": 1,
-                            "Transparency": 0.2
-                          }
-                        }
-                      ]
-                    }
-                  ]
-                },
-                {
-                  "ClassName": "Frame",
-                  "Name": "Row_WallDetectMaxUpDot",
-                  "Properties": {
-                    "LayoutOrder": 23,
-                    "BackgroundTransparency": 1,
-                    "Size": {
-                      "UDim2": [
-                        [
-                          1,
-                          0
-                        ],
-                        [
-                          0,
-                          20
-                        ]
-                      ]
-                    }
-                  },
-                  "Children": [
-                    {
-                      "ClassName": "UIListLayout",
-                      "Properties": {
-                        "FillDirection": "Horizontal",
-                        "SortOrder": "LayoutOrder",
-                        "VerticalAlignment": "Center",
-                        "Padding": {
-                          "UDim": [
-                            0,
-                            4
-                          ]
-                        }
-                      }
-                    },
-                    {
-                      "ClassName": "TextLabel",
-                      "Name": "Key",
-                      "Properties": {
-                        "LayoutOrder": 0,
-                        "BackgroundTransparency": 1,
-                        "Size": {
-                          "UDim2": [
-                            [
-                              0,
-                              96
-                            ],
-                            [
-                              1,
-                              0
-                            ]
-                          ]
-                        },
-                        "Font": "Gotham",
-                        "TextSize": 11,
-                        "TextColor3": [
-                          0.541,
-                          0.561,
-                          0.596
-                        ],
-                        "TextXAlignment": "Left",
-                        "TextTruncate": "AtEnd",
-                        "Text": "Wall Detect Angle"
-                      }
-                    },
-                    {
-                      "ClassName": "TextLabel",
-                      "Name": "Value",
-                      "Properties": {
-                        "LayoutOrder": 1,
-                        "BackgroundTransparency": 1,
-                        "Size": {
-                          "UDim2": [
-                            [
-                              0,
-                              48
-                            ],
-                            [
-                              1,
-                              0
-                            ]
-                          ]
-                        },
-                        "Font": "Code",
-                        "TextSize": 11,
-                        "TextColor3": [
-                          0.894,
-                          0.902,
-                          0.918
-                        ],
-                        "TextXAlignment": "Left",
-                        "Text": "—"
-                      }
-                    },
-                    {
-                      "ClassName": "TextBox",
-                      "Name": "Input",
-                      "Properties": {
-                        "LayoutOrder": 2,
-                        "Size": {
-                          "UDim2": [
-                            [
-                              0,
-                              60
-                            ],
-                            [
-                              0,
-                              18
-                            ]
-                          ]
-                        },
-                        "BackgroundColor3": [
-                          0.051,
-                          0.055,
-                          0.071
-                        ],
-                        "BorderSizePixel": 0,
-                        "Font": "Code",
-                        "TextSize": 11,
-                        "TextColor3": [
-                          0.894,
-                          0.902,
-                          0.918
-                        ],
-                        "PlaceholderText": "value",
-                        "PlaceholderColor3": [
-                          0.4,
-                          0.42,
-                          0.45
-                        ],
-                        "ClearTextOnFocus": false,
-                        "Text": ""
-                      },
-                      "Children": [
-                        {
-                          "ClassName": "UICorner",
-                          "Properties": {
-                            "CornerRadius": {
-                              "UDim": [
-                                0,
-                                3
-                              ]
-                            }
-                          }
-                        },
-                        {
-                          "ClassName": "UIPadding",
-                          "Properties": {
-                            "PaddingLeft": {
-                              "UDim": [
-                                0,
-                                4
-                              ]
-                            }
-                          }
-                        }
-                      ]
-                    },
-                    {
-                      "ClassName": "TextButton",
-                      "Name": "SetButton",
-                      "Properties": {
-                        "LayoutOrder": 3,
-                        "Size": {
-                          "UDim2": [
-                            [
-                              0,
-                              34
-                            ],
-                            [
-                              0,
-                              18
-                            ]
-                          ]
-                        },
-                        "BackgroundColor3": [
-                          0.35,
-                          0.68,
-                          0.75
-                        ],
-                        "BorderSizePixel": 0,
-                        "AutoButtonColor": true,
-                        "Font": "GothamMedium",
-                        "TextSize": 10,
-                        "TextColor3": [
-                          0.051,
-                          0.055,
-                          0.071
-                        ],
-                        "Text": "Set"
-                      },
-                      "Children": [
-                        {
-                          "ClassName": "UICorner",
-                          "Properties": {
-                            "CornerRadius": {
-                              "UDim": [
-                                0,
-                                3
-                              ]
-                            }
-                          }
-                        }
-                      ]
-                    },
-                    {
-                      "ClassName": "TextButton",
-                      "Name": "ClearButton",
-                      "Properties": {
-                        "LayoutOrder": 4,
-                        "Size": {
-                          "UDim2": [
-                            [
-                              0,
-                              40
-                            ],
-                            [
-                              0,
-                              18
-                            ]
-                          ]
-                        },
-                        "BackgroundColor3": [
-                          0.051,
-                          0.055,
-                          0.071
-                        ],
-                        "BorderSizePixel": 0,
-                        "AutoButtonColor": true,
-                        "Font": "GothamMedium",
-                        "TextSize": 10,
-                        "TextColor3": [
-                          0.541,
-                          0.561,
-                          0.596
-                        ],
-                        "Text": "Clear"
-                      },
-                      "Children": [
-                        {
-                          "ClassName": "UICorner",
-                          "Properties": {
-                            "CornerRadius": {
-                              "UDim": [
-                                0,
-                                3
-                              ]
-                            }
-                          }
-                        },
-                        {
-                          "ClassName": "UIStroke",
-                          "Properties": {
-                            "Color": [
-                              0.145,
-                              0.157,
-                              0.18
-                            ],
-                            "Thickness": 1,
-                            "Transparency": 0.2
-                          }
-                        }
-                      ]
-                    }
-                  ]
-                },
-                {
-                  "ClassName": "Frame",
-                  "Name": "Row_WallDetectRaycastThrottleSeconds",
+                  "ClassName": "TextLabel",
+                  "Name": "Section_DOUBLEJUMP",
                   "Properties": {
                     "LayoutOrder": 24,
                     "BackgroundTransparency": 1,
@@ -11292,6 +10616,36 @@
                         ],
                         [
                           0,
+                          14
+                        ]
+                      ]
+                    },
+                    "Font": "GothamMedium",
+                    "TextSize": 10,
+                    "TextColor3": [
+                      0.35,
+                      0.68,
+                      0.75
+                    ],
+                    "TextTransparency": 0.45,
+                    "TextXAlignment": "Left",
+                    "Text": "D O U B L E   J U M P"
+                  }
+                },
+                {
+                  "ClassName": "Frame",
+                  "Name": "Row_DoubleJumpForce",
+                  "Properties": {
+                    "LayoutOrder": 25,
+                    "BackgroundTransparency": 1,
+                    "Size": {
+                      "UDim2": [
+                        [
+                          1,
+                          0
+                        ],
+                        [
+                          0,
                           20
                         ]
                       ]
@@ -11339,7 +10693,7 @@
                         ],
                         "TextXAlignment": "Left",
                         "TextTruncate": "AtEnd",
-                        "Text": "Wall Raycast Throttle"
+                        "Text": "Double Jump Force"
                       }
                     },
                     {
@@ -11368,7 +10722,832 @@
                           0.918
                         ],
                         "TextXAlignment": "Left",
-                        "Text": "—"
+                        "Text": "\u2014"
+                      }
+                    },
+                    {
+                      "ClassName": "TextBox",
+                      "Name": "Input",
+                      "Properties": {
+                        "LayoutOrder": 2,
+                        "Size": {
+                          "UDim2": [
+                            [
+                              0,
+                              60
+                            ],
+                            [
+                              0,
+                              18
+                            ]
+                          ]
+                        },
+                        "BackgroundColor3": [
+                          0.051,
+                          0.055,
+                          0.071
+                        ],
+                        "BorderSizePixel": 0,
+                        "Font": "Code",
+                        "TextSize": 11,
+                        "TextColor3": [
+                          0.894,
+                          0.902,
+                          0.918
+                        ],
+                        "PlaceholderText": "value",
+                        "PlaceholderColor3": [
+                          0.4,
+                          0.42,
+                          0.45
+                        ],
+                        "ClearTextOnFocus": false,
+                        "Text": ""
+                      },
+                      "Children": [
+                        {
+                          "ClassName": "UICorner",
+                          "Properties": {
+                            "CornerRadius": {
+                              "UDim": [
+                                0,
+                                3
+                              ]
+                            }
+                          }
+                        },
+                        {
+                          "ClassName": "UIPadding",
+                          "Properties": {
+                            "PaddingLeft": {
+                              "UDim": [
+                                0,
+                                4
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "ClassName": "TextButton",
+                      "Name": "SetButton",
+                      "Properties": {
+                        "LayoutOrder": 3,
+                        "Size": {
+                          "UDim2": [
+                            [
+                              0,
+                              34
+                            ],
+                            [
+                              0,
+                              18
+                            ]
+                          ]
+                        },
+                        "BackgroundColor3": [
+                          0.35,
+                          0.68,
+                          0.75
+                        ],
+                        "BorderSizePixel": 0,
+                        "AutoButtonColor": true,
+                        "Font": "GothamMedium",
+                        "TextSize": 10,
+                        "TextColor3": [
+                          0.051,
+                          0.055,
+                          0.071
+                        ],
+                        "Text": "Set"
+                      },
+                      "Children": [
+                        {
+                          "ClassName": "UICorner",
+                          "Properties": {
+                            "CornerRadius": {
+                              "UDim": [
+                                0,
+                                3
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "ClassName": "TextButton",
+                      "Name": "ClearButton",
+                      "Properties": {
+                        "LayoutOrder": 4,
+                        "Size": {
+                          "UDim2": [
+                            [
+                              0,
+                              40
+                            ],
+                            [
+                              0,
+                              18
+                            ]
+                          ]
+                        },
+                        "BackgroundColor3": [
+                          0.051,
+                          0.055,
+                          0.071
+                        ],
+                        "BorderSizePixel": 0,
+                        "AutoButtonColor": true,
+                        "Font": "GothamMedium",
+                        "TextSize": 10,
+                        "TextColor3": [
+                          0.541,
+                          0.561,
+                          0.596
+                        ],
+                        "Text": "Clear"
+                      },
+                      "Children": [
+                        {
+                          "ClassName": "UICorner",
+                          "Properties": {
+                            "CornerRadius": {
+                              "UDim": [
+                                0,
+                                3
+                              ]
+                            }
+                          }
+                        },
+                        {
+                          "ClassName": "UIStroke",
+                          "Properties": {
+                            "Color": [
+                              0.145,
+                              0.157,
+                              0.18
+                            ],
+                            "Thickness": 1,
+                            "Transparency": 0.2
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "ClassName": "Frame",
+                  "Name": "Row_DoubleJumpDecayDurationSeconds",
+                  "Properties": {
+                    "LayoutOrder": 26,
+                    "BackgroundTransparency": 1,
+                    "Size": {
+                      "UDim2": [
+                        [
+                          1,
+                          0
+                        ],
+                        [
+                          0,
+                          20
+                        ]
+                      ]
+                    }
+                  },
+                  "Children": [
+                    {
+                      "ClassName": "UIListLayout",
+                      "Properties": {
+                        "FillDirection": "Horizontal",
+                        "SortOrder": "LayoutOrder",
+                        "VerticalAlignment": "Center",
+                        "Padding": {
+                          "UDim": [
+                            0,
+                            4
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "ClassName": "TextLabel",
+                      "Name": "Key",
+                      "Properties": {
+                        "LayoutOrder": 0,
+                        "BackgroundTransparency": 1,
+                        "Size": {
+                          "UDim2": [
+                            [
+                              0,
+                              96
+                            ],
+                            [
+                              1,
+                              0
+                            ]
+                          ]
+                        },
+                        "Font": "Gotham",
+                        "TextSize": 11,
+                        "TextColor3": [
+                          0.541,
+                          0.561,
+                          0.596
+                        ],
+                        "TextXAlignment": "Left",
+                        "TextTruncate": "AtEnd",
+                        "Text": "Double Jump Decay"
+                      }
+                    },
+                    {
+                      "ClassName": "TextLabel",
+                      "Name": "Value",
+                      "Properties": {
+                        "LayoutOrder": 1,
+                        "BackgroundTransparency": 1,
+                        "Size": {
+                          "UDim2": [
+                            [
+                              0,
+                              48
+                            ],
+                            [
+                              1,
+                              0
+                            ]
+                          ]
+                        },
+                        "Font": "Code",
+                        "TextSize": 11,
+                        "TextColor3": [
+                          0.894,
+                          0.902,
+                          0.918
+                        ],
+                        "TextXAlignment": "Left",
+                        "Text": "\u2014"
+                      }
+                    },
+                    {
+                      "ClassName": "TextBox",
+                      "Name": "Input",
+                      "Properties": {
+                        "LayoutOrder": 2,
+                        "Size": {
+                          "UDim2": [
+                            [
+                              0,
+                              60
+                            ],
+                            [
+                              0,
+                              18
+                            ]
+                          ]
+                        },
+                        "BackgroundColor3": [
+                          0.051,
+                          0.055,
+                          0.071
+                        ],
+                        "BorderSizePixel": 0,
+                        "Font": "Code",
+                        "TextSize": 11,
+                        "TextColor3": [
+                          0.894,
+                          0.902,
+                          0.918
+                        ],
+                        "PlaceholderText": "value",
+                        "PlaceholderColor3": [
+                          0.4,
+                          0.42,
+                          0.45
+                        ],
+                        "ClearTextOnFocus": false,
+                        "Text": ""
+                      },
+                      "Children": [
+                        {
+                          "ClassName": "UICorner",
+                          "Properties": {
+                            "CornerRadius": {
+                              "UDim": [
+                                0,
+                                3
+                              ]
+                            }
+                          }
+                        },
+                        {
+                          "ClassName": "UIPadding",
+                          "Properties": {
+                            "PaddingLeft": {
+                              "UDim": [
+                                0,
+                                4
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "ClassName": "TextButton",
+                      "Name": "SetButton",
+                      "Properties": {
+                        "LayoutOrder": 3,
+                        "Size": {
+                          "UDim2": [
+                            [
+                              0,
+                              34
+                            ],
+                            [
+                              0,
+                              18
+                            ]
+                          ]
+                        },
+                        "BackgroundColor3": [
+                          0.35,
+                          0.68,
+                          0.75
+                        ],
+                        "BorderSizePixel": 0,
+                        "AutoButtonColor": true,
+                        "Font": "GothamMedium",
+                        "TextSize": 10,
+                        "TextColor3": [
+                          0.051,
+                          0.055,
+                          0.071
+                        ],
+                        "Text": "Set"
+                      },
+                      "Children": [
+                        {
+                          "ClassName": "UICorner",
+                          "Properties": {
+                            "CornerRadius": {
+                              "UDim": [
+                                0,
+                                3
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "ClassName": "TextButton",
+                      "Name": "ClearButton",
+                      "Properties": {
+                        "LayoutOrder": 4,
+                        "Size": {
+                          "UDim2": [
+                            [
+                              0,
+                              40
+                            ],
+                            [
+                              0,
+                              18
+                            ]
+                          ]
+                        },
+                        "BackgroundColor3": [
+                          0.051,
+                          0.055,
+                          0.071
+                        ],
+                        "BorderSizePixel": 0,
+                        "AutoButtonColor": true,
+                        "Font": "GothamMedium",
+                        "TextSize": 10,
+                        "TextColor3": [
+                          0.541,
+                          0.561,
+                          0.596
+                        ],
+                        "Text": "Clear"
+                      },
+                      "Children": [
+                        {
+                          "ClassName": "UICorner",
+                          "Properties": {
+                            "CornerRadius": {
+                              "UDim": [
+                                0,
+                                3
+                              ]
+                            }
+                          }
+                        },
+                        {
+                          "ClassName": "UIStroke",
+                          "Properties": {
+                            "Color": [
+                              0.145,
+                              0.157,
+                              0.18
+                            ],
+                            "Thickness": 1,
+                            "Transparency": 0.2
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "ClassName": "TextLabel",
+                  "Name": "Section_WALLRUN",
+                  "Properties": {
+                    "LayoutOrder": 27,
+                    "BackgroundTransparency": 1,
+                    "Size": {
+                      "UDim2": [
+                        [
+                          1,
+                          0
+                        ],
+                        [
+                          0,
+                          14
+                        ]
+                      ]
+                    },
+                    "Font": "GothamMedium",
+                    "TextSize": 10,
+                    "TextColor3": [
+                      0.35,
+                      0.68,
+                      0.75
+                    ],
+                    "TextTransparency": 0.45,
+                    "TextXAlignment": "Left",
+                    "Text": "W A L L   R U N"
+                  }
+                },
+                {
+                  "ClassName": "Frame",
+                  "Name": "Row_WallRunMinEntrySpeed",
+                  "Properties": {
+                    "LayoutOrder": 28,
+                    "BackgroundTransparency": 1,
+                    "Size": {
+                      "UDim2": [
+                        [
+                          1,
+                          0
+                        ],
+                        [
+                          0,
+                          20
+                        ]
+                      ]
+                    }
+                  },
+                  "Children": [
+                    {
+                      "ClassName": "UIListLayout",
+                      "Properties": {
+                        "FillDirection": "Horizontal",
+                        "SortOrder": "LayoutOrder",
+                        "VerticalAlignment": "Center",
+                        "Padding": {
+                          "UDim": [
+                            0,
+                            4
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "ClassName": "TextLabel",
+                      "Name": "Key",
+                      "Properties": {
+                        "LayoutOrder": 0,
+                        "BackgroundTransparency": 1,
+                        "Size": {
+                          "UDim2": [
+                            [
+                              0,
+                              96
+                            ],
+                            [
+                              1,
+                              0
+                            ]
+                          ]
+                        },
+                        "Font": "Gotham",
+                        "TextSize": 11,
+                        "TextColor3": [
+                          0.541,
+                          0.561,
+                          0.596
+                        ],
+                        "TextXAlignment": "Left",
+                        "TextTruncate": "AtEnd",
+                        "Text": "Wall Run Min Speed"
+                      }
+                    },
+                    {
+                      "ClassName": "TextLabel",
+                      "Name": "Value",
+                      "Properties": {
+                        "LayoutOrder": 1,
+                        "BackgroundTransparency": 1,
+                        "Size": {
+                          "UDim2": [
+                            [
+                              0,
+                              48
+                            ],
+                            [
+                              1,
+                              0
+                            ]
+                          ]
+                        },
+                        "Font": "Code",
+                        "TextSize": 11,
+                        "TextColor3": [
+                          0.894,
+                          0.902,
+                          0.918
+                        ],
+                        "TextXAlignment": "Left",
+                        "Text": "\u2014"
+                      }
+                    },
+                    {
+                      "ClassName": "TextBox",
+                      "Name": "Input",
+                      "Properties": {
+                        "LayoutOrder": 2,
+                        "Size": {
+                          "UDim2": [
+                            [
+                              0,
+                              60
+                            ],
+                            [
+                              0,
+                              18
+                            ]
+                          ]
+                        },
+                        "BackgroundColor3": [
+                          0.051,
+                          0.055,
+                          0.071
+                        ],
+                        "BorderSizePixel": 0,
+                        "Font": "Code",
+                        "TextSize": 11,
+                        "TextColor3": [
+                          0.894,
+                          0.902,
+                          0.918
+                        ],
+                        "PlaceholderText": "value",
+                        "PlaceholderColor3": [
+                          0.4,
+                          0.42,
+                          0.45
+                        ],
+                        "ClearTextOnFocus": false,
+                        "Text": ""
+                      },
+                      "Children": [
+                        {
+                          "ClassName": "UICorner",
+                          "Properties": {
+                            "CornerRadius": {
+                              "UDim": [
+                                0,
+                                3
+                              ]
+                            }
+                          }
+                        },
+                        {
+                          "ClassName": "UIPadding",
+                          "Properties": {
+                            "PaddingLeft": {
+                              "UDim": [
+                                0,
+                                4
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "ClassName": "TextButton",
+                      "Name": "SetButton",
+                      "Properties": {
+                        "LayoutOrder": 3,
+                        "Size": {
+                          "UDim2": [
+                            [
+                              0,
+                              34
+                            ],
+                            [
+                              0,
+                              18
+                            ]
+                          ]
+                        },
+                        "BackgroundColor3": [
+                          0.35,
+                          0.68,
+                          0.75
+                        ],
+                        "BorderSizePixel": 0,
+                        "AutoButtonColor": true,
+                        "Font": "GothamMedium",
+                        "TextSize": 10,
+                        "TextColor3": [
+                          0.051,
+                          0.055,
+                          0.071
+                        ],
+                        "Text": "Set"
+                      },
+                      "Children": [
+                        {
+                          "ClassName": "UICorner",
+                          "Properties": {
+                            "CornerRadius": {
+                              "UDim": [
+                                0,
+                                3
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "ClassName": "TextButton",
+                      "Name": "ClearButton",
+                      "Properties": {
+                        "LayoutOrder": 4,
+                        "Size": {
+                          "UDim2": [
+                            [
+                              0,
+                              40
+                            ],
+                            [
+                              0,
+                              18
+                            ]
+                          ]
+                        },
+                        "BackgroundColor3": [
+                          0.051,
+                          0.055,
+                          0.071
+                        ],
+                        "BorderSizePixel": 0,
+                        "AutoButtonColor": true,
+                        "Font": "GothamMedium",
+                        "TextSize": 10,
+                        "TextColor3": [
+                          0.541,
+                          0.561,
+                          0.596
+                        ],
+                        "Text": "Clear"
+                      },
+                      "Children": [
+                        {
+                          "ClassName": "UICorner",
+                          "Properties": {
+                            "CornerRadius": {
+                              "UDim": [
+                                0,
+                                3
+                              ]
+                            }
+                          }
+                        },
+                        {
+                          "ClassName": "UIStroke",
+                          "Properties": {
+                            "Color": [
+                              0.145,
+                              0.157,
+                              0.18
+                            ],
+                            "Thickness": 1,
+                            "Transparency": 0.2
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "ClassName": "Frame",
+                  "Name": "Row_WallRunEntryDotThreshold",
+                  "Properties": {
+                    "LayoutOrder": 29,
+                    "BackgroundTransparency": 1,
+                    "Size": {
+                      "UDim2": [
+                        [
+                          1,
+                          0
+                        ],
+                        [
+                          0,
+                          20
+                        ]
+                      ]
+                    }
+                  },
+                  "Children": [
+                    {
+                      "ClassName": "UIListLayout",
+                      "Properties": {
+                        "FillDirection": "Horizontal",
+                        "SortOrder": "LayoutOrder",
+                        "VerticalAlignment": "Center",
+                        "Padding": {
+                          "UDim": [
+                            0,
+                            4
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "ClassName": "TextLabel",
+                      "Name": "Key",
+                      "Properties": {
+                        "LayoutOrder": 0,
+                        "BackgroundTransparency": 1,
+                        "Size": {
+                          "UDim2": [
+                            [
+                              0,
+                              96
+                            ],
+                            [
+                              1,
+                              0
+                            ]
+                          ]
+                        },
+                        "Font": "Gotham",
+                        "TextSize": 11,
+                        "TextColor3": [
+                          0.541,
+                          0.561,
+                          0.596
+                        ],
+                        "TextXAlignment": "Left",
+                        "TextTruncate": "AtEnd",
+                        "Text": "Wall Run Entry Dot"
+                      }
+                    },
+                    {
+                      "ClassName": "TextLabel",
+                      "Name": "Value",
+                      "Properties": {
+                        "LayoutOrder": 1,
+                        "BackgroundTransparency": 1,
+                        "Size": {
+                          "UDim2": [
+                            [
+                              0,
+                              48
+                            ],
+                            [
+                              1,
+                              0
+                            ]
+                          ]
+                        },
+                        "Font": "Code",
+                        "TextSize": 11,
+                        "TextColor3": [
+                          0.894,
+                          0.902,
+                          0.918
+                        ],
+                        "TextXAlignment": "Left",
+                        "Text": "\u2014"
                       }
                     },
                     {
@@ -11547,7 +11726,7 @@
                   "ClassName": "Frame",
                   "Name": "Row_WallRunSpeed",
                   "Properties": {
-                    "LayoutOrder": 25,
+                    "LayoutOrder": 30,
                     "BackgroundTransparency": 1,
                     "Size": {
                       "UDim2": [
@@ -11633,7 +11812,1332 @@
                           0.918
                         ],
                         "TextXAlignment": "Left",
-                        "Text": "—"
+                        "Text": "\u2014"
+                      }
+                    },
+                    {
+                      "ClassName": "TextBox",
+                      "Name": "Input",
+                      "Properties": {
+                        "LayoutOrder": 2,
+                        "Size": {
+                          "UDim2": [
+                            [
+                              0,
+                              60
+                            ],
+                            [
+                              0,
+                              18
+                            ]
+                          ]
+                        },
+                        "BackgroundColor3": [
+                          0.051,
+                          0.055,
+                          0.071
+                        ],
+                        "BorderSizePixel": 0,
+                        "Font": "Code",
+                        "TextSize": 11,
+                        "TextColor3": [
+                          0.894,
+                          0.902,
+                          0.918
+                        ],
+                        "PlaceholderText": "value",
+                        "PlaceholderColor3": [
+                          0.4,
+                          0.42,
+                          0.45
+                        ],
+                        "ClearTextOnFocus": false,
+                        "Text": ""
+                      },
+                      "Children": [
+                        {
+                          "ClassName": "UICorner",
+                          "Properties": {
+                            "CornerRadius": {
+                              "UDim": [
+                                0,
+                                3
+                              ]
+                            }
+                          }
+                        },
+                        {
+                          "ClassName": "UIPadding",
+                          "Properties": {
+                            "PaddingLeft": {
+                              "UDim": [
+                                0,
+                                4
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "ClassName": "TextButton",
+                      "Name": "SetButton",
+                      "Properties": {
+                        "LayoutOrder": 3,
+                        "Size": {
+                          "UDim2": [
+                            [
+                              0,
+                              34
+                            ],
+                            [
+                              0,
+                              18
+                            ]
+                          ]
+                        },
+                        "BackgroundColor3": [
+                          0.35,
+                          0.68,
+                          0.75
+                        ],
+                        "BorderSizePixel": 0,
+                        "AutoButtonColor": true,
+                        "Font": "GothamMedium",
+                        "TextSize": 10,
+                        "TextColor3": [
+                          0.051,
+                          0.055,
+                          0.071
+                        ],
+                        "Text": "Set"
+                      },
+                      "Children": [
+                        {
+                          "ClassName": "UICorner",
+                          "Properties": {
+                            "CornerRadius": {
+                              "UDim": [
+                                0,
+                                3
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "ClassName": "TextButton",
+                      "Name": "ClearButton",
+                      "Properties": {
+                        "LayoutOrder": 4,
+                        "Size": {
+                          "UDim2": [
+                            [
+                              0,
+                              40
+                            ],
+                            [
+                              0,
+                              18
+                            ]
+                          ]
+                        },
+                        "BackgroundColor3": [
+                          0.051,
+                          0.055,
+                          0.071
+                        ],
+                        "BorderSizePixel": 0,
+                        "AutoButtonColor": true,
+                        "Font": "GothamMedium",
+                        "TextSize": 10,
+                        "TextColor3": [
+                          0.541,
+                          0.561,
+                          0.596
+                        ],
+                        "Text": "Clear"
+                      },
+                      "Children": [
+                        {
+                          "ClassName": "UICorner",
+                          "Properties": {
+                            "CornerRadius": {
+                              "UDim": [
+                                0,
+                                3
+                              ]
+                            }
+                          }
+                        },
+                        {
+                          "ClassName": "UIStroke",
+                          "Properties": {
+                            "Color": [
+                              0.145,
+                              0.157,
+                              0.18
+                            ],
+                            "Thickness": 1,
+                            "Transparency": 0.2
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "ClassName": "Frame",
+                  "Name": "Row_WallRunSinkSpeed",
+                  "Properties": {
+                    "LayoutOrder": 31,
+                    "BackgroundTransparency": 1,
+                    "Size": {
+                      "UDim2": [
+                        [
+                          1,
+                          0
+                        ],
+                        [
+                          0,
+                          20
+                        ]
+                      ]
+                    }
+                  },
+                  "Children": [
+                    {
+                      "ClassName": "UIListLayout",
+                      "Properties": {
+                        "FillDirection": "Horizontal",
+                        "SortOrder": "LayoutOrder",
+                        "VerticalAlignment": "Center",
+                        "Padding": {
+                          "UDim": [
+                            0,
+                            4
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "ClassName": "TextLabel",
+                      "Name": "Key",
+                      "Properties": {
+                        "LayoutOrder": 0,
+                        "BackgroundTransparency": 1,
+                        "Size": {
+                          "UDim2": [
+                            [
+                              0,
+                              96
+                            ],
+                            [
+                              1,
+                              0
+                            ]
+                          ]
+                        },
+                        "Font": "Gotham",
+                        "TextSize": 11,
+                        "TextColor3": [
+                          0.541,
+                          0.561,
+                          0.596
+                        ],
+                        "TextXAlignment": "Left",
+                        "TextTruncate": "AtEnd",
+                        "Text": "Wall Run Sink Speed"
+                      }
+                    },
+                    {
+                      "ClassName": "TextLabel",
+                      "Name": "Value",
+                      "Properties": {
+                        "LayoutOrder": 1,
+                        "BackgroundTransparency": 1,
+                        "Size": {
+                          "UDim2": [
+                            [
+                              0,
+                              48
+                            ],
+                            [
+                              1,
+                              0
+                            ]
+                          ]
+                        },
+                        "Font": "Code",
+                        "TextSize": 11,
+                        "TextColor3": [
+                          0.894,
+                          0.902,
+                          0.918
+                        ],
+                        "TextXAlignment": "Left",
+                        "Text": "\u2014"
+                      }
+                    },
+                    {
+                      "ClassName": "TextBox",
+                      "Name": "Input",
+                      "Properties": {
+                        "LayoutOrder": 2,
+                        "Size": {
+                          "UDim2": [
+                            [
+                              0,
+                              60
+                            ],
+                            [
+                              0,
+                              18
+                            ]
+                          ]
+                        },
+                        "BackgroundColor3": [
+                          0.051,
+                          0.055,
+                          0.071
+                        ],
+                        "BorderSizePixel": 0,
+                        "Font": "Code",
+                        "TextSize": 11,
+                        "TextColor3": [
+                          0.894,
+                          0.902,
+                          0.918
+                        ],
+                        "PlaceholderText": "value",
+                        "PlaceholderColor3": [
+                          0.4,
+                          0.42,
+                          0.45
+                        ],
+                        "ClearTextOnFocus": false,
+                        "Text": ""
+                      },
+                      "Children": [
+                        {
+                          "ClassName": "UICorner",
+                          "Properties": {
+                            "CornerRadius": {
+                              "UDim": [
+                                0,
+                                3
+                              ]
+                            }
+                          }
+                        },
+                        {
+                          "ClassName": "UIPadding",
+                          "Properties": {
+                            "PaddingLeft": {
+                              "UDim": [
+                                0,
+                                4
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "ClassName": "TextButton",
+                      "Name": "SetButton",
+                      "Properties": {
+                        "LayoutOrder": 3,
+                        "Size": {
+                          "UDim2": [
+                            [
+                              0,
+                              34
+                            ],
+                            [
+                              0,
+                              18
+                            ]
+                          ]
+                        },
+                        "BackgroundColor3": [
+                          0.35,
+                          0.68,
+                          0.75
+                        ],
+                        "BorderSizePixel": 0,
+                        "AutoButtonColor": true,
+                        "Font": "GothamMedium",
+                        "TextSize": 10,
+                        "TextColor3": [
+                          0.051,
+                          0.055,
+                          0.071
+                        ],
+                        "Text": "Set"
+                      },
+                      "Children": [
+                        {
+                          "ClassName": "UICorner",
+                          "Properties": {
+                            "CornerRadius": {
+                              "UDim": [
+                                0,
+                                3
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "ClassName": "TextButton",
+                      "Name": "ClearButton",
+                      "Properties": {
+                        "LayoutOrder": 4,
+                        "Size": {
+                          "UDim2": [
+                            [
+                              0,
+                              40
+                            ],
+                            [
+                              0,
+                              18
+                            ]
+                          ]
+                        },
+                        "BackgroundColor3": [
+                          0.051,
+                          0.055,
+                          0.071
+                        ],
+                        "BorderSizePixel": 0,
+                        "AutoButtonColor": true,
+                        "Font": "GothamMedium",
+                        "TextSize": 10,
+                        "TextColor3": [
+                          0.541,
+                          0.561,
+                          0.596
+                        ],
+                        "Text": "Clear"
+                      },
+                      "Children": [
+                        {
+                          "ClassName": "UICorner",
+                          "Properties": {
+                            "CornerRadius": {
+                              "UDim": [
+                                0,
+                                3
+                              ]
+                            }
+                          }
+                        },
+                        {
+                          "ClassName": "UIStroke",
+                          "Properties": {
+                            "Color": [
+                              0.145,
+                              0.157,
+                              0.18
+                            ],
+                            "Thickness": 1,
+                            "Transparency": 0.2
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "ClassName": "Frame",
+                  "Name": "Row_WallRunClingDistance",
+                  "Properties": {
+                    "LayoutOrder": 32,
+                    "BackgroundTransparency": 1,
+                    "Size": {
+                      "UDim2": [
+                        [
+                          1,
+                          0
+                        ],
+                        [
+                          0,
+                          20
+                        ]
+                      ]
+                    }
+                  },
+                  "Children": [
+                    {
+                      "ClassName": "UIListLayout",
+                      "Properties": {
+                        "FillDirection": "Horizontal",
+                        "SortOrder": "LayoutOrder",
+                        "VerticalAlignment": "Center",
+                        "Padding": {
+                          "UDim": [
+                            0,
+                            4
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "ClassName": "TextLabel",
+                      "Name": "Key",
+                      "Properties": {
+                        "LayoutOrder": 0,
+                        "BackgroundTransparency": 1,
+                        "Size": {
+                          "UDim2": [
+                            [
+                              0,
+                              96
+                            ],
+                            [
+                              1,
+                              0
+                            ]
+                          ]
+                        },
+                        "Font": "Gotham",
+                        "TextSize": 11,
+                        "TextColor3": [
+                          0.541,
+                          0.561,
+                          0.596
+                        ],
+                        "TextXAlignment": "Left",
+                        "TextTruncate": "AtEnd",
+                        "Text": "Wall Run Cling Dist"
+                      }
+                    },
+                    {
+                      "ClassName": "TextLabel",
+                      "Name": "Value",
+                      "Properties": {
+                        "LayoutOrder": 1,
+                        "BackgroundTransparency": 1,
+                        "Size": {
+                          "UDim2": [
+                            [
+                              0,
+                              48
+                            ],
+                            [
+                              1,
+                              0
+                            ]
+                          ]
+                        },
+                        "Font": "Code",
+                        "TextSize": 11,
+                        "TextColor3": [
+                          0.894,
+                          0.902,
+                          0.918
+                        ],
+                        "TextXAlignment": "Left",
+                        "Text": "\u2014"
+                      }
+                    },
+                    {
+                      "ClassName": "TextBox",
+                      "Name": "Input",
+                      "Properties": {
+                        "LayoutOrder": 2,
+                        "Size": {
+                          "UDim2": [
+                            [
+                              0,
+                              60
+                            ],
+                            [
+                              0,
+                              18
+                            ]
+                          ]
+                        },
+                        "BackgroundColor3": [
+                          0.051,
+                          0.055,
+                          0.071
+                        ],
+                        "BorderSizePixel": 0,
+                        "Font": "Code",
+                        "TextSize": 11,
+                        "TextColor3": [
+                          0.894,
+                          0.902,
+                          0.918
+                        ],
+                        "PlaceholderText": "value",
+                        "PlaceholderColor3": [
+                          0.4,
+                          0.42,
+                          0.45
+                        ],
+                        "ClearTextOnFocus": false,
+                        "Text": ""
+                      },
+                      "Children": [
+                        {
+                          "ClassName": "UICorner",
+                          "Properties": {
+                            "CornerRadius": {
+                              "UDim": [
+                                0,
+                                3
+                              ]
+                            }
+                          }
+                        },
+                        {
+                          "ClassName": "UIPadding",
+                          "Properties": {
+                            "PaddingLeft": {
+                              "UDim": [
+                                0,
+                                4
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "ClassName": "TextButton",
+                      "Name": "SetButton",
+                      "Properties": {
+                        "LayoutOrder": 3,
+                        "Size": {
+                          "UDim2": [
+                            [
+                              0,
+                              34
+                            ],
+                            [
+                              0,
+                              18
+                            ]
+                          ]
+                        },
+                        "BackgroundColor3": [
+                          0.35,
+                          0.68,
+                          0.75
+                        ],
+                        "BorderSizePixel": 0,
+                        "AutoButtonColor": true,
+                        "Font": "GothamMedium",
+                        "TextSize": 10,
+                        "TextColor3": [
+                          0.051,
+                          0.055,
+                          0.071
+                        ],
+                        "Text": "Set"
+                      },
+                      "Children": [
+                        {
+                          "ClassName": "UICorner",
+                          "Properties": {
+                            "CornerRadius": {
+                              "UDim": [
+                                0,
+                                3
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "ClassName": "TextButton",
+                      "Name": "ClearButton",
+                      "Properties": {
+                        "LayoutOrder": 4,
+                        "Size": {
+                          "UDim2": [
+                            [
+                              0,
+                              40
+                            ],
+                            [
+                              0,
+                              18
+                            ]
+                          ]
+                        },
+                        "BackgroundColor3": [
+                          0.051,
+                          0.055,
+                          0.071
+                        ],
+                        "BorderSizePixel": 0,
+                        "AutoButtonColor": true,
+                        "Font": "GothamMedium",
+                        "TextSize": 10,
+                        "TextColor3": [
+                          0.541,
+                          0.561,
+                          0.596
+                        ],
+                        "Text": "Clear"
+                      },
+                      "Children": [
+                        {
+                          "ClassName": "UICorner",
+                          "Properties": {
+                            "CornerRadius": {
+                              "UDim": [
+                                0,
+                                3
+                              ]
+                            }
+                          }
+                        },
+                        {
+                          "ClassName": "UIStroke",
+                          "Properties": {
+                            "Color": [
+                              0.145,
+                              0.157,
+                              0.18
+                            ],
+                            "Thickness": 1,
+                            "Transparency": 0.2
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "ClassName": "Frame",
+                  "Name": "Row_WallRunClingCorrectionRate",
+                  "Properties": {
+                    "LayoutOrder": 33,
+                    "BackgroundTransparency": 1,
+                    "Size": {
+                      "UDim2": [
+                        [
+                          1,
+                          0
+                        ],
+                        [
+                          0,
+                          20
+                        ]
+                      ]
+                    }
+                  },
+                  "Children": [
+                    {
+                      "ClassName": "UIListLayout",
+                      "Properties": {
+                        "FillDirection": "Horizontal",
+                        "SortOrder": "LayoutOrder",
+                        "VerticalAlignment": "Center",
+                        "Padding": {
+                          "UDim": [
+                            0,
+                            4
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "ClassName": "TextLabel",
+                      "Name": "Key",
+                      "Properties": {
+                        "LayoutOrder": 0,
+                        "BackgroundTransparency": 1,
+                        "Size": {
+                          "UDim2": [
+                            [
+                              0,
+                              96
+                            ],
+                            [
+                              1,
+                              0
+                            ]
+                          ]
+                        },
+                        "Font": "Gotham",
+                        "TextSize": 11,
+                        "TextColor3": [
+                          0.541,
+                          0.561,
+                          0.596
+                        ],
+                        "TextXAlignment": "Left",
+                        "TextTruncate": "AtEnd",
+                        "Text": "Wall Run Cling Rate"
+                      }
+                    },
+                    {
+                      "ClassName": "TextLabel",
+                      "Name": "Value",
+                      "Properties": {
+                        "LayoutOrder": 1,
+                        "BackgroundTransparency": 1,
+                        "Size": {
+                          "UDim2": [
+                            [
+                              0,
+                              48
+                            ],
+                            [
+                              1,
+                              0
+                            ]
+                          ]
+                        },
+                        "Font": "Code",
+                        "TextSize": 11,
+                        "TextColor3": [
+                          0.894,
+                          0.902,
+                          0.918
+                        ],
+                        "TextXAlignment": "Left",
+                        "Text": "\u2014"
+                      }
+                    },
+                    {
+                      "ClassName": "TextBox",
+                      "Name": "Input",
+                      "Properties": {
+                        "LayoutOrder": 2,
+                        "Size": {
+                          "UDim2": [
+                            [
+                              0,
+                              60
+                            ],
+                            [
+                              0,
+                              18
+                            ]
+                          ]
+                        },
+                        "BackgroundColor3": [
+                          0.051,
+                          0.055,
+                          0.071
+                        ],
+                        "BorderSizePixel": 0,
+                        "Font": "Code",
+                        "TextSize": 11,
+                        "TextColor3": [
+                          0.894,
+                          0.902,
+                          0.918
+                        ],
+                        "PlaceholderText": "value",
+                        "PlaceholderColor3": [
+                          0.4,
+                          0.42,
+                          0.45
+                        ],
+                        "ClearTextOnFocus": false,
+                        "Text": ""
+                      },
+                      "Children": [
+                        {
+                          "ClassName": "UICorner",
+                          "Properties": {
+                            "CornerRadius": {
+                              "UDim": [
+                                0,
+                                3
+                              ]
+                            }
+                          }
+                        },
+                        {
+                          "ClassName": "UIPadding",
+                          "Properties": {
+                            "PaddingLeft": {
+                              "UDim": [
+                                0,
+                                4
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "ClassName": "TextButton",
+                      "Name": "SetButton",
+                      "Properties": {
+                        "LayoutOrder": 3,
+                        "Size": {
+                          "UDim2": [
+                            [
+                              0,
+                              34
+                            ],
+                            [
+                              0,
+                              18
+                            ]
+                          ]
+                        },
+                        "BackgroundColor3": [
+                          0.35,
+                          0.68,
+                          0.75
+                        ],
+                        "BorderSizePixel": 0,
+                        "AutoButtonColor": true,
+                        "Font": "GothamMedium",
+                        "TextSize": 10,
+                        "TextColor3": [
+                          0.051,
+                          0.055,
+                          0.071
+                        ],
+                        "Text": "Set"
+                      },
+                      "Children": [
+                        {
+                          "ClassName": "UICorner",
+                          "Properties": {
+                            "CornerRadius": {
+                              "UDim": [
+                                0,
+                                3
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "ClassName": "TextButton",
+                      "Name": "ClearButton",
+                      "Properties": {
+                        "LayoutOrder": 4,
+                        "Size": {
+                          "UDim2": [
+                            [
+                              0,
+                              40
+                            ],
+                            [
+                              0,
+                              18
+                            ]
+                          ]
+                        },
+                        "BackgroundColor3": [
+                          0.051,
+                          0.055,
+                          0.071
+                        ],
+                        "BorderSizePixel": 0,
+                        "AutoButtonColor": true,
+                        "Font": "GothamMedium",
+                        "TextSize": 10,
+                        "TextColor3": [
+                          0.541,
+                          0.561,
+                          0.596
+                        ],
+                        "Text": "Clear"
+                      },
+                      "Children": [
+                        {
+                          "ClassName": "UICorner",
+                          "Properties": {
+                            "CornerRadius": {
+                              "UDim": [
+                                0,
+                                3
+                              ]
+                            }
+                          }
+                        },
+                        {
+                          "ClassName": "UIStroke",
+                          "Properties": {
+                            "Color": [
+                              0.145,
+                              0.157,
+                              0.18
+                            ],
+                            "Thickness": 1,
+                            "Transparency": 0.2
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "ClassName": "Frame",
+                  "Name": "Row_WallRunClingMaxCorrectionSpeed",
+                  "Properties": {
+                    "LayoutOrder": 34,
+                    "BackgroundTransparency": 1,
+                    "Size": {
+                      "UDim2": [
+                        [
+                          1,
+                          0
+                        ],
+                        [
+                          0,
+                          20
+                        ]
+                      ]
+                    }
+                  },
+                  "Children": [
+                    {
+                      "ClassName": "UIListLayout",
+                      "Properties": {
+                        "FillDirection": "Horizontal",
+                        "SortOrder": "LayoutOrder",
+                        "VerticalAlignment": "Center",
+                        "Padding": {
+                          "UDim": [
+                            0,
+                            4
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "ClassName": "TextLabel",
+                      "Name": "Key",
+                      "Properties": {
+                        "LayoutOrder": 0,
+                        "BackgroundTransparency": 1,
+                        "Size": {
+                          "UDim2": [
+                            [
+                              0,
+                              96
+                            ],
+                            [
+                              1,
+                              0
+                            ]
+                          ]
+                        },
+                        "Font": "Gotham",
+                        "TextSize": 11,
+                        "TextColor3": [
+                          0.541,
+                          0.561,
+                          0.596
+                        ],
+                        "TextXAlignment": "Left",
+                        "TextTruncate": "AtEnd",
+                        "Text": "Wall Run Cling Max Spd"
+                      }
+                    },
+                    {
+                      "ClassName": "TextLabel",
+                      "Name": "Value",
+                      "Properties": {
+                        "LayoutOrder": 1,
+                        "BackgroundTransparency": 1,
+                        "Size": {
+                          "UDim2": [
+                            [
+                              0,
+                              48
+                            ],
+                            [
+                              1,
+                              0
+                            ]
+                          ]
+                        },
+                        "Font": "Code",
+                        "TextSize": 11,
+                        "TextColor3": [
+                          0.894,
+                          0.902,
+                          0.918
+                        ],
+                        "TextXAlignment": "Left",
+                        "Text": "\u2014"
+                      }
+                    },
+                    {
+                      "ClassName": "TextBox",
+                      "Name": "Input",
+                      "Properties": {
+                        "LayoutOrder": 2,
+                        "Size": {
+                          "UDim2": [
+                            [
+                              0,
+                              60
+                            ],
+                            [
+                              0,
+                              18
+                            ]
+                          ]
+                        },
+                        "BackgroundColor3": [
+                          0.051,
+                          0.055,
+                          0.071
+                        ],
+                        "BorderSizePixel": 0,
+                        "Font": "Code",
+                        "TextSize": 11,
+                        "TextColor3": [
+                          0.894,
+                          0.902,
+                          0.918
+                        ],
+                        "PlaceholderText": "value",
+                        "PlaceholderColor3": [
+                          0.4,
+                          0.42,
+                          0.45
+                        ],
+                        "ClearTextOnFocus": false,
+                        "Text": ""
+                      },
+                      "Children": [
+                        {
+                          "ClassName": "UICorner",
+                          "Properties": {
+                            "CornerRadius": {
+                              "UDim": [
+                                0,
+                                3
+                              ]
+                            }
+                          }
+                        },
+                        {
+                          "ClassName": "UIPadding",
+                          "Properties": {
+                            "PaddingLeft": {
+                              "UDim": [
+                                0,
+                                4
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "ClassName": "TextButton",
+                      "Name": "SetButton",
+                      "Properties": {
+                        "LayoutOrder": 3,
+                        "Size": {
+                          "UDim2": [
+                            [
+                              0,
+                              34
+                            ],
+                            [
+                              0,
+                              18
+                            ]
+                          ]
+                        },
+                        "BackgroundColor3": [
+                          0.35,
+                          0.68,
+                          0.75
+                        ],
+                        "BorderSizePixel": 0,
+                        "AutoButtonColor": true,
+                        "Font": "GothamMedium",
+                        "TextSize": 10,
+                        "TextColor3": [
+                          0.051,
+                          0.055,
+                          0.071
+                        ],
+                        "Text": "Set"
+                      },
+                      "Children": [
+                        {
+                          "ClassName": "UICorner",
+                          "Properties": {
+                            "CornerRadius": {
+                              "UDim": [
+                                0,
+                                3
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "ClassName": "TextButton",
+                      "Name": "ClearButton",
+                      "Properties": {
+                        "LayoutOrder": 4,
+                        "Size": {
+                          "UDim2": [
+                            [
+                              0,
+                              40
+                            ],
+                            [
+                              0,
+                              18
+                            ]
+                          ]
+                        },
+                        "BackgroundColor3": [
+                          0.051,
+                          0.055,
+                          0.071
+                        ],
+                        "BorderSizePixel": 0,
+                        "AutoButtonColor": true,
+                        "Font": "GothamMedium",
+                        "TextSize": 10,
+                        "TextColor3": [
+                          0.541,
+                          0.561,
+                          0.596
+                        ],
+                        "Text": "Clear"
+                      },
+                      "Children": [
+                        {
+                          "ClassName": "UICorner",
+                          "Properties": {
+                            "CornerRadius": {
+                              "UDim": [
+                                0,
+                                3
+                              ]
+                            }
+                          }
+                        },
+                        {
+                          "ClassName": "UIStroke",
+                          "Properties": {
+                            "Color": [
+                              0.145,
+                              0.157,
+                              0.18
+                            ],
+                            "Thickness": 1,
+                            "Transparency": 0.2
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "ClassName": "Frame",
+                  "Name": "Row_WallRunMaxNormalDeviationDegrees",
+                  "Properties": {
+                    "LayoutOrder": 35,
+                    "BackgroundTransparency": 1,
+                    "Size": {
+                      "UDim2": [
+                        [
+                          1,
+                          0
+                        ],
+                        [
+                          0,
+                          20
+                        ]
+                      ]
+                    }
+                  },
+                  "Children": [
+                    {
+                      "ClassName": "UIListLayout",
+                      "Properties": {
+                        "FillDirection": "Horizontal",
+                        "SortOrder": "LayoutOrder",
+                        "VerticalAlignment": "Center",
+                        "Padding": {
+                          "UDim": [
+                            0,
+                            4
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "ClassName": "TextLabel",
+                      "Name": "Key",
+                      "Properties": {
+                        "LayoutOrder": 0,
+                        "BackgroundTransparency": 1,
+                        "Size": {
+                          "UDim2": [
+                            [
+                              0,
+                              96
+                            ],
+                            [
+                              1,
+                              0
+                            ]
+                          ]
+                        },
+                        "Font": "Gotham",
+                        "TextSize": 11,
+                        "TextColor3": [
+                          0.541,
+                          0.561,
+                          0.596
+                        ],
+                        "TextXAlignment": "Left",
+                        "TextTruncate": "AtEnd",
+                        "Text": "Wall Run Deviation"
+                      }
+                    },
+                    {
+                      "ClassName": "TextLabel",
+                      "Name": "Value",
+                      "Properties": {
+                        "LayoutOrder": 1,
+                        "BackgroundTransparency": 1,
+                        "Size": {
+                          "UDim2": [
+                            [
+                              0,
+                              48
+                            ],
+                            [
+                              1,
+                              0
+                            ]
+                          ]
+                        },
+                        "Font": "Code",
+                        "TextSize": 11,
+                        "TextColor3": [
+                          0.894,
+                          0.902,
+                          0.918
+                        ],
+                        "TextXAlignment": "Left",
+                        "Text": "\u2014"
                       }
                     },
                     {
@@ -11812,7 +13316,7 @@
                   "ClassName": "Frame",
                   "Name": "Row_WallRunMaxDurationSeconds",
                   "Properties": {
-                    "LayoutOrder": 26,
+                    "LayoutOrder": 36,
                     "BackgroundTransparency": 1,
                     "Size": {
                       "UDim2": [
@@ -11898,7 +13402,302 @@
                           0.918
                         ],
                         "TextXAlignment": "Left",
-                        "Text": "—"
+                        "Text": "\u2014"
+                      }
+                    },
+                    {
+                      "ClassName": "TextBox",
+                      "Name": "Input",
+                      "Properties": {
+                        "LayoutOrder": 2,
+                        "Size": {
+                          "UDim2": [
+                            [
+                              0,
+                              60
+                            ],
+                            [
+                              0,
+                              18
+                            ]
+                          ]
+                        },
+                        "BackgroundColor3": [
+                          0.051,
+                          0.055,
+                          0.071
+                        ],
+                        "BorderSizePixel": 0,
+                        "Font": "Code",
+                        "TextSize": 11,
+                        "TextColor3": [
+                          0.894,
+                          0.902,
+                          0.918
+                        ],
+                        "PlaceholderText": "value",
+                        "PlaceholderColor3": [
+                          0.4,
+                          0.42,
+                          0.45
+                        ],
+                        "ClearTextOnFocus": false,
+                        "Text": ""
+                      },
+                      "Children": [
+                        {
+                          "ClassName": "UICorner",
+                          "Properties": {
+                            "CornerRadius": {
+                              "UDim": [
+                                0,
+                                3
+                              ]
+                            }
+                          }
+                        },
+                        {
+                          "ClassName": "UIPadding",
+                          "Properties": {
+                            "PaddingLeft": {
+                              "UDim": [
+                                0,
+                                4
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "ClassName": "TextButton",
+                      "Name": "SetButton",
+                      "Properties": {
+                        "LayoutOrder": 3,
+                        "Size": {
+                          "UDim2": [
+                            [
+                              0,
+                              34
+                            ],
+                            [
+                              0,
+                              18
+                            ]
+                          ]
+                        },
+                        "BackgroundColor3": [
+                          0.35,
+                          0.68,
+                          0.75
+                        ],
+                        "BorderSizePixel": 0,
+                        "AutoButtonColor": true,
+                        "Font": "GothamMedium",
+                        "TextSize": 10,
+                        "TextColor3": [
+                          0.051,
+                          0.055,
+                          0.071
+                        ],
+                        "Text": "Set"
+                      },
+                      "Children": [
+                        {
+                          "ClassName": "UICorner",
+                          "Properties": {
+                            "CornerRadius": {
+                              "UDim": [
+                                0,
+                                3
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "ClassName": "TextButton",
+                      "Name": "ClearButton",
+                      "Properties": {
+                        "LayoutOrder": 4,
+                        "Size": {
+                          "UDim2": [
+                            [
+                              0,
+                              40
+                            ],
+                            [
+                              0,
+                              18
+                            ]
+                          ]
+                        },
+                        "BackgroundColor3": [
+                          0.051,
+                          0.055,
+                          0.071
+                        ],
+                        "BorderSizePixel": 0,
+                        "AutoButtonColor": true,
+                        "Font": "GothamMedium",
+                        "TextSize": 10,
+                        "TextColor3": [
+                          0.541,
+                          0.561,
+                          0.596
+                        ],
+                        "Text": "Clear"
+                      },
+                      "Children": [
+                        {
+                          "ClassName": "UICorner",
+                          "Properties": {
+                            "CornerRadius": {
+                              "UDim": [
+                                0,
+                                3
+                              ]
+                            }
+                          }
+                        },
+                        {
+                          "ClassName": "UIStroke",
+                          "Properties": {
+                            "Color": [
+                              0.145,
+                              0.157,
+                              0.18
+                            ],
+                            "Thickness": 1,
+                            "Transparency": 0.2
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "ClassName": "TextLabel",
+                  "Name": "Section_WALLLEAP",
+                  "Properties": {
+                    "LayoutOrder": 37,
+                    "BackgroundTransparency": 1,
+                    "Size": {
+                      "UDim2": [
+                        [
+                          1,
+                          0
+                        ],
+                        [
+                          0,
+                          14
+                        ]
+                      ]
+                    },
+                    "Font": "GothamMedium",
+                    "TextSize": 10,
+                    "TextColor3": [
+                      0.35,
+                      0.68,
+                      0.75
+                    ],
+                    "TextTransparency": 0.45,
+                    "TextXAlignment": "Left",
+                    "Text": "W A L L   L E A P"
+                  }
+                },
+                {
+                  "ClassName": "Frame",
+                  "Name": "Row_WallLeapBurstForce",
+                  "Properties": {
+                    "LayoutOrder": 38,
+                    "BackgroundTransparency": 1,
+                    "Size": {
+                      "UDim2": [
+                        [
+                          1,
+                          0
+                        ],
+                        [
+                          0,
+                          20
+                        ]
+                      ]
+                    }
+                  },
+                  "Children": [
+                    {
+                      "ClassName": "UIListLayout",
+                      "Properties": {
+                        "FillDirection": "Horizontal",
+                        "SortOrder": "LayoutOrder",
+                        "VerticalAlignment": "Center",
+                        "Padding": {
+                          "UDim": [
+                            0,
+                            4
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "ClassName": "TextLabel",
+                      "Name": "Key",
+                      "Properties": {
+                        "LayoutOrder": 0,
+                        "BackgroundTransparency": 1,
+                        "Size": {
+                          "UDim2": [
+                            [
+                              0,
+                              96
+                            ],
+                            [
+                              1,
+                              0
+                            ]
+                          ]
+                        },
+                        "Font": "Gotham",
+                        "TextSize": 11,
+                        "TextColor3": [
+                          0.541,
+                          0.561,
+                          0.596
+                        ],
+                        "TextXAlignment": "Left",
+                        "TextTruncate": "AtEnd",
+                        "Text": "Wall Leap Burst"
+                      }
+                    },
+                    {
+                      "ClassName": "TextLabel",
+                      "Name": "Value",
+                      "Properties": {
+                        "LayoutOrder": 1,
+                        "BackgroundTransparency": 1,
+                        "Size": {
+                          "UDim2": [
+                            [
+                              0,
+                              48
+                            ],
+                            [
+                              1,
+                              0
+                            ]
+                          ]
+                        },
+                        "Font": "Code",
+                        "TextSize": 11,
+                        "TextColor3": [
+                          0.894,
+                          0.902,
+                          0.918
+                        ],
+                        "TextXAlignment": "Left",
+                        "Text": "\u2014"
                       }
                     },
                     {
@@ -12075,9 +13874,9 @@
                 },
                 {
                   "ClassName": "Frame",
-                  "Name": "Row_WallLatchSnapDistance",
+                  "Name": "Row_WallLeapPushForce",
                   "Properties": {
-                    "LayoutOrder": 28,
+                    "LayoutOrder": 39,
                     "BackgroundTransparency": 1,
                     "Size": {
                       "UDim2": [
@@ -12134,7 +13933,7 @@
                         ],
                         "TextXAlignment": "Left",
                         "TextTruncate": "AtEnd",
-                        "Text": "Wall Latch Snap"
+                        "Text": "Wall Leap Push"
                       }
                     },
                     {
@@ -12163,7 +13962,7 @@
                           0.918
                         ],
                         "TextXAlignment": "Left",
-                        "Text": "—"
+                        "Text": "\u2014"
                       }
                     },
                     {
@@ -12340,9 +14139,9 @@
                 },
                 {
                   "ClassName": "Frame",
-                  "Name": "Row_WallLeapForce",
+                  "Name": "Row_WallLeapUpwardForce",
                   "Properties": {
-                    "LayoutOrder": 29,
+                    "LayoutOrder": 40,
                     "BackgroundTransparency": 1,
                     "Size": {
                       "UDim2": [
@@ -12399,7 +14198,7 @@
                         ],
                         "TextXAlignment": "Left",
                         "TextTruncate": "AtEnd",
-                        "Text": "Wall Leap"
+                        "Text": "Wall Leap Upward"
                       }
                     },
                     {
@@ -12428,7 +14227,7 @@
                           0.918
                         ],
                         "TextXAlignment": "Left",
-                        "Text": "—"
+                        "Text": "\u2014"
                       }
                     },
                     {
@@ -12607,7 +14406,7 @@
                   "ClassName": "TextLabel",
                   "Name": "Hint",
                   "Properties": {
-                    "LayoutOrder": 30,
+                    "LayoutOrder": 41,
                     "BackgroundTransparency": 1,
                     "AutomaticSize": "Y",
                     "Size": {

@@ -135,7 +135,8 @@ function LocomotionAnimator.new(
 	rootPart: BasePart,
 	fsm: StateMachine.StateMachine<MovementState, MovementContext>,
 	inputController: InputController.InputController,
-	characterMover: CharacterMover.CharacterMover
+	characterMover: CharacterMover.CharacterMover,
+	getWallRunSide: () -> ("Left" | "Right")?
 ): LocomotionAnimator
 	local self = setmetatable({}, LocomotionAnimator) :: any
 	self._trove = Trove.new()
@@ -144,7 +145,20 @@ function LocomotionAnimator.new(
 	self._fsm = fsm
 	self._inputController = inputController
 	self._characterMover = characterMover
+	self._getWallRunSide = getWallRunSide
 	self._currentKey = nil :: string?
+	-- Which side WallRun was last locked to (Wall Run & Leap Mechanic
+	-- Guideline §1/§3, animation wiring 2026-09-18) -- captured the instant
+	-- WallRun is entered (`fsm.changed` below), not read live every frame,
+	-- because `WallRunState`'s own module-scope entry snapshot is already
+	-- nulled by `WallRunState.Exit` before this animator ever gets a chance
+	-- to observe `previous == WallLeap` (WallLeap's own transition is
+	-- reentrant -- see WallLeapState's own doc comment -- so by the time ANY
+	-- `fsm.changed` handler here runs for it, WallRun has already fully
+	-- exited). Reused for WallLeap's one-shot hold below, since a leap's
+	-- side is definitionally whichever side the WallRun it launched from was
+	-- on.
+	self._lastWallRunSide = nil :: ("Left" | "Right")?
 	-- One-shot-on-exit hold, shared by every synchronous-frame/instant-cue
 	-- state (Land, SlideJump): when set, `_update` plays `.key`
 	-- unconditionally until `os.clock()` passes `.until`, overriding normal
@@ -201,6 +215,17 @@ function LocomotionAnimator.new(
 	-- impulse itself is a short, fixed-duration decay (DoubleJumpDecayDurationSeconds),
 	-- same treatment as Jump rather than the indefinite Fall loop.
 	self._tracks.DoubleJump = loadTrack(animator, ANIMATIONS_ROOT, "DoubleJump", self._trove, false)
+	-- WallRun/WallLeap (Wall Run & Leap Mechanic Guideline, animation wiring
+	-- 2026-09-18): WallRun is a sustained hold, looped like Run/Sprint/Slide;
+	-- WallLeap is a single launch impulse, one-shot like Jump/DoubleJump.
+	-- Side-specific (Left/Right), same reasoning Walk's 8 directional clips
+	-- already established -- the mechanic itself is inherently
+	-- handed/directional (which arm/leg plants against the wall), not
+	-- something a single mirrored clip could represent.
+	self._tracks.WallRunLeft = loadTrack(animator, ANIMATIONS_ROOT, "WallRunLeft", self._trove, true)
+	self._tracks.WallRunRight = loadTrack(animator, ANIMATIONS_ROOT, "WallRunRight", self._trove, true)
+	self._tracks.WallLeapLeft = loadTrack(animator, ANIMATIONS_ROOT, "WallLeapLeft", self._trove, false)
+	self._tracks.WallLeapRight = loadTrack(animator, ANIMATIONS_ROOT, "WallLeapRight", self._trove, false)
 
 	-- Landing detection (docs/MOVEMENT.md §10; corrected TRAVERSAL-ROADMAP.md
 	-- Phase 1; simplified again once HardLanding became a real FSM state): an
@@ -238,6 +263,32 @@ function LocomotionAnimator.new(
 			local duration = (track and track.Length > 0) and track.Length
 				or MovementConstants.OneShotAnimationHoldFallbackSeconds
 			self:_setTransientHold("SlideJump", duration)
+		end
+
+		-- WallRun entry (animation wiring 2026-09-18): captured HERE, not read
+		-- live in `_update` -- see `_lastWallRunSide`'s own doc comment above
+		-- for why WallLeap's reentrant self-transition makes a live read
+		-- unreliable by the time this animator would otherwise need it.
+		if next == MovementStates.WallRun then
+			self._lastWallRunSide = self._getWallRunSide()
+		end
+
+		-- WallLeap lasts exactly one synchronous frame, same reentrant
+		-- self-transition shape as SlideJump above -- `_update` never actually
+		-- observes `fsm.current == WallLeap` on a real rendered frame either.
+		-- Side comes from `_lastWallRunSide` (the run this leap launched
+		-- from), never re-derived here.
+		if previous == MovementStates.WallLeap then
+			local key = if self._lastWallRunSide == "Left"
+				then "WallLeapLeft"
+				elseif self._lastWallRunSide == "Right" then "WallLeapRight"
+				else nil
+			if key then
+				local track = self._tracks[key]
+				local duration = (track and track.Length > 0) and track.Length
+					or MovementConstants.OneShotAnimationHoldFallbackSeconds
+				self:_setTransientHold(key, duration)
+			end
 		end
 
 		local fromAirborneFamily = previous == MovementStates.Airborne
@@ -323,6 +374,14 @@ function LocomotionAnimator:_update()
 		key = "DoubleJump"
 	elseif state == MovementStates.SlideJump then
 		key = "SlideJump"
+	elseif state == MovementStates.WallRun then
+		-- `_lastWallRunSide`, not a live re-query -- see its own doc comment;
+		-- side is locked at Entry and never changes mid-hold by design
+		-- anyway (guideline §0), so there's nothing "live" to gain here.
+		key = if self._lastWallRunSide == "Left"
+			then "WallRunLeft"
+			elseif self._lastWallRunSide == "Right" then "WallRunRight"
+			else nil
 	elseif state == MovementStates.HardLanding then
 		key = "LandHard"
 	end

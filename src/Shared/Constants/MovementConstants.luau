@@ -191,6 +191,59 @@ local MovementConstants = {
 	-- live-tunable set, same reasoning as SpeedCheckIntervalSeconds/
 	-- TraversalSpeedSanityGraceSeconds above.
 	GroundQueryCastDistance = 4,
+
+	-- WallRun side-cast (Wall Run & Leap Mechanic Guideline §1/§7).
+	-- Shapecast sphere radius for QueryWallRun.
+	WallRunSideCastRadius = 1.5,
+	-- Structural cast reach, not live-tunable -- same exclusion as
+	-- GroundQueryCastDistance. Kept short on purpose: this distance is also
+	-- what stops WallRun's entry from stealing a DoubleJump press (§0/§7).
+	WallRunSideCastDistance = 3.5,
+	-- Flatness gate: a side-cast hit only counts as a wall if its normal's
+	-- dot with world-up is at or below this.
+	WallDetectMaxUpDot = 0.3,
+	-- QueryWallRun's own throttle, same dt-accumulator idiom as
+	-- SlideGroundRaycastThrottleSeconds.
+	WallRunQueryThrottleSeconds = 0.1,
+	-- CanEnter[WallRun]'s momentum gate (guideline §2) -- no wall run from a
+	-- standstill jump.
+	WallRunMinEntrySpeed = 10,
+	-- CanEnter[WallRun]'s alignment gate (guideline §2), a dot-product
+	-- threshold against the signed wall tangent -- same "comfortably admits
+	-- real WASD angles" idiom as SprintForwardDeadzone.
+	WallRunEntryDotThreshold = 0.5,
+	-- Locked horizontal speed while running (guideline §3) -- kept at/under
+	-- SprintSpeed on purpose so the still-pending server validation (§6) can't
+	-- false-positive against Airborne's own speed-sanity ceiling in the
+	-- meantime (docs/MOVEMENT.md §5).
+	WallRunSpeed = 35,
+	-- Controlled vertical sink while running -- the "gravity-defying" tuning
+	-- knob, not zero (a hover) and not full gravity.
+	WallRunSinkSpeed = 6,
+	-- Target perpendicular distance from the wall surface (guideline §3's
+	-- cling snap/hold) -- roughly an R6 torso-width offset.
+	WallRunClingDistance = 2,
+	-- P-controller gain for the continuous hold correction.
+	WallRunClingCorrectionRate = 8,
+	-- Clamp on the hold correction so a post-corner re-settle is firm, never a
+	-- jolt.
+	WallRunClingMaxCorrectionSpeed = 20,
+	-- Corner/curve snap-off budget: live wall normal vs. the locked entry
+	-- normal, in degrees.
+	WallRunMaxNormalDeviationDegrees = 35,
+	-- Safety duration cap -- Qinggong drain is meant to own the real duration
+	-- once that resource exists (still math.huge/always-available for now).
+	WallRunMaxDurationSeconds = 3,
+	-- WallLeap launch vector (guideline §4, redesigned 2026-09-18): flat
+	-- momentum burst added on top of whatever horizontal speed you actually
+	-- have at leap time, along that same direction -- a kick, not a
+	-- retention-scaled curve.
+	WallLeapBurstForce = 75,
+	-- Fixed lateral push-away-from-wall magnitude.
+	WallLeapPushForce = 75,
+	-- Fixed vertical arc magnitude -- a flat constant, not a decaying
+	-- impulse like DoubleJump's.
+	WallLeapUpwardForce = 100,
 }
 
 return MovementConstants

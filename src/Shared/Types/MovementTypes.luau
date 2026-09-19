@@ -3,6 +3,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local MovementTuning = require(ReplicatedStorage.Shared.Movement.MovementTuning)
 local MovementStates = require(ReplicatedStorage.Shared.FSM.MovementStates)
+local SpatialQueries = require(ReplicatedStorage.Shared.Movement.SpatialQueries)
 
 -- `forward`/`backward`/`strafeLeft`/`strafeRight` are the raw WASD axis holds, kept
 -- alongside the resolved `direction` because Sprint's continuation rule cares about
@@ -67,6 +68,20 @@ export type MoveIntent = {
 -- ResolveLandingTarget` (and its server mirror) reads this against
 -- `constants.HardLandingHeightThreshold` to decide whether a landing forces
 -- the `HardLanding` lock instead of resolving normally.
+-- `horizontalVelocity` (Wall Run & Leap Mechanic Guideline §2) is the real
+-- flattened AssemblyLinearVelocity, read fresh by each side from its own
+-- trusted source (client: CharacterMover:GetHorizontalVelocity, server: its
+-- own rootPart read) -- never derived from moveIntent, which is INPUT, not
+-- actual physical velocity. CanEnter[WallRun]'s speed gate and
+-- TraversalMath.WallRunTangent's momentum-agreement sign both need the real
+-- vector, not the intent.
+-- `wallRunQuery` (Wall Run & Leap Mechanic Guideline §1) is this frame's
+-- throttled side-cast result -- populated by each side from its own probe
+-- (SpatialQueries.QueryWallRun) BEFORE calling into StateRules, same
+-- "computed by the caller, never inside StateRules itself" treatment every
+-- other spatial-claim field in this codebase already gets. nil whenever no
+-- wall is currently in range on either side, or while not airborne (both
+-- sides only probe at all while `not grounded`).
 -- `qinggong` (§0/§3) is the resource gate Vault (and any future Qinggong
 -- move) reads --
 -- still an open design decision (is this the same Qi pool combat will spend,
@@ -74,6 +89,22 @@ export type MoveIntent = {
 -- both sides default it to "always available" (`math.huge`) until that
 -- resource system exists, same "wired as an abstracted field now, pointed at
 -- a real source later without a rewrite" treatment the roadmap calls for.
+-- `cameraLocked` (landing-resume fix, hardened 2026-09-18) is `Humanoid.
+-- AutoRotate == false` -- a plain replicated property both sides already
+-- trust elsewhere (`mirrorPassiveTransitions`'s own Sprint-demotion branch
+-- reads it directly for the identical reason this field exists). Needed
+-- because `moveIntent.forward` means two different things depending on this:
+-- while LOCKED (Shift Lock/first-person), `FacingController` snaps facing to
+-- the camera every frame, so `classifyMoveIntent`'s facing-vs-MoveDirection
+-- dot product is a real, reliable "are you actually holding forward" signal.
+-- While UNLOCKED, `Humanoid.AutoRotate` instead turns facing toward
+-- MoveDirection GRADUALLY (Roblox's own ground/air controller), so facing
+-- can lag MoveDirection by several frames after any turn or takeoff --
+-- exactly the "facing hasn't caught up yet" window a landing tends to land
+-- in. `LandingResolution.Resolve` uses this to skip the unreliable geometric
+-- check while unlocked (any held input already counts as forward there, per
+-- this codebase's own established "unlocked -> always facing where you
+-- walk" convention -- see LocomotionAnimator's Walk-bucketing comment).
 export type MovementContext = {
 	moveIntent: MoveIntent,
 	grounded: boolean,
@@ -83,7 +114,10 @@ export type MovementContext = {
 	runDuration: number?,
 	preAirborneLocomotion: MovementStates.MovementState?,
 	fallHeight: number?,
+	horizontalVelocity: Vector3,
+	wallRunQuery: SpatialQueries.WallRunQueryResult?,
 	qinggong: number,
+	cameraLocked: boolean,
 	constants: MovementTuning.EffectiveMovementConstants,
 }
 

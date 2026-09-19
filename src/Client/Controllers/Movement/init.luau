@@ -10,6 +10,9 @@ local MovementStateGroups = require(ReplicatedStorage.Shared.FSM.MovementStateGr
 local MovementStateNames = require(ReplicatedStorage.Shared.FSM.MovementStateNames)
 local StateRules = require(ReplicatedStorage.Shared.Movement.StateRules)
 local CollisionGroups = require(ReplicatedStorage.Shared.Movement.CollisionGroups)
+local SpatialQueries = require(ReplicatedStorage.Shared.Movement.SpatialQueries)
+local MovementConstants = require(ReplicatedStorage.Shared.Constants.MovementConstants)
+local TraversalMath = require(ReplicatedStorage.Shared.Movement.TraversalMath)
 
 local CharacterMover = require(script.CharacterMover)
 local InputController = require(script.InputController)
@@ -33,6 +36,8 @@ local SlideState = require(script.States.SlideState)
 local SlideJumpState = require(script.States.SlideJumpState)
 local DoubleJumpState = require(script.States.DoubleJumpState)
 local HardLandingState = require(script.States.HardLandingState)
+local WallRunState = require(script.States.WallRunState)
+local WallLeapState = require(script.States.WallLeapState)
 
 type MovementState = MovementStates.MovementState
 type ClientMovementContext = ClientMovementContextModule.ClientMovementContext
@@ -57,6 +62,8 @@ local States = {
 	[MovementStates.SlideJump] = SlideJumpState,
 	[MovementStates.DoubleJump] = DoubleJumpState,
 	[MovementStates.HardLanding] = HardLandingState,
+	[MovementStates.WallRun] = WallRunState,
+	[MovementStates.WallLeap] = WallLeapState,
 }
 
 -- Only Run/Sprint are earned, exploit-relevant transitions that need a server
@@ -104,6 +111,13 @@ local GROUNDED_STATES = MovementStateGroups.Grounded
 -- there.
 local CLAIM_RESYNC_INTERVAL_SECONDS = 1
 
+-- Temporary capture switch for testing QueryWallRun in isolation (Wall Run &
+-- Leap Mechanic Guideline §1, Part 1) -- off by default, same
+-- flip-on-for-a-playtest pattern as MovementValidationService's
+-- SPEED_SANITY_DEBUG_LOGGING. Prints only on a hit/miss/side CHANGE, not every
+-- probe, so it's readable while walking the character along a wall in Studio.
+local WALLRUN_DEBUG_LOGGING = false
+
 local input: InputController.InputController
 
 local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
@@ -117,9 +131,12 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 	)
 
 	-- Presentation: purely cosmetic, never touched by states or the FSM (they only
-	-- read it) -- docs/MOVEMENT.md §3/§4.
-	lifeTrove:Add(FacingController.new(humanoid, rootPart))
-	lifeTrove:Add(LocomotionAnimator.new(humanoid, rootPart, fsm, input, characterMover))
+	-- read it) -- docs/MOVEMENT.md §3/§4 -- except WallRunState's own
+	-- `SetLockDirection` escape hatch (guideline §3, playtest fix 2026-09-18),
+	-- reached via `buildContext`'s `facingController` field below like every
+	-- other client-only accessor.
+	local facingController = lifeTrove:Add(FacingController.new(humanoid, rootPart))
+	lifeTrove:Add(LocomotionAnimator.new(humanoid, rootPart, fsm, input, characterMover, WallRunState.GetEntrySide))
 
 	-- Live tuning (docs/MOVEMENT.md §8): pushes the server's effective-constants
 	-- broadcast into TuningSnapshot and re-applies JumpPower immediately, since
@@ -150,6 +167,18 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 			SlideMaxWalkableSlopeDegrees = value.slideMaxWalkableSlopeDegrees,
 			SlideSlopeAmplificationCap = value.slideSlopeAmplificationCap,
 			SlideGroundRaycastThrottleSeconds = value.slideGroundRaycastThrottleSeconds,
+			WallRunMinEntrySpeed = value.wallRunMinEntrySpeed,
+			WallRunEntryDotThreshold = value.wallRunEntryDotThreshold,
+			WallRunSpeed = value.wallRunSpeed,
+			WallRunSinkSpeed = value.wallRunSinkSpeed,
+			WallRunClingDistance = value.wallRunClingDistance,
+			WallRunClingCorrectionRate = value.wallRunClingCorrectionRate,
+			WallRunClingMaxCorrectionSpeed = value.wallRunClingMaxCorrectionSpeed,
+			WallRunMaxNormalDeviationDegrees = value.wallRunMaxNormalDeviationDegrees,
+			WallRunMaxDurationSeconds = value.wallRunMaxDurationSeconds,
+			WallLeapBurstForce = value.wallLeapBurstForce,
+			WallLeapPushForce = value.wallLeapPushForce,
+			WallLeapUpwardForce = value.wallLeapUpwardForce,
 		})
 		characterMover:SetJumpPower(value.jumpPower)
 	end))
@@ -210,6 +239,16 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 	-- ResolveLandingTarget` to decide whether a landing forces `HardLanding`.
 	local peakHeight: number? = nil
 
+	-- WallRun's own throttled side-cast (Wall Run & Leap Mechanic Guideline
+	-- §1): only probed while airborne, cleared immediately on grounding,
+	-- re-fired via a dt-accumulator rather than every Heartbeat
+	-- (ARCHITECTURE.md §6). `wallRunQueryLastLogged` only feeds the debug
+	-- print below, never gameplay.
+	local wallRunQuery: SpatialQueries.WallRunQueryResult? = nil
+	local wallRunQueryAccumulatedDt = 0
+	local wallRunQueryLastLogged: SpatialQueries.WallRunQueryResult? = nil
+	local wallRunCanEnterLastLogged = false
+
 	local function buildContext(): ClientMovementContext
 		local runDuration = if fsm.current == MovementStates.Run
 			then RunState.GetDuration()
@@ -223,15 +262,26 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 			runDuration = runDuration,
 			preAirborneLocomotion = preAirborneLocomotion,
 			fallHeight = if peakHeight then peakHeight - rootPart.Position.Y else nil,
+			horizontalVelocity = characterMover:GetHorizontalVelocity(),
+			wallRunQuery = wallRunQuery,
 			-- Still an open design decision (TRAVERSAL-ROADMAP.md §0/§3) --
 			-- "always available" until a real Qinggong/stamina resource
 			-- exists, same placeholder both sides use.
 			qinggong = math.huge,
+			-- Landing-resume fix, hardened 2026-09-18 (see MovementTypes.luau's
+			-- own field comment) -- read off `humanoid.AutoRotate` rather than
+			-- `UserInputService.MouseBehavior` directly so this agrees with
+			-- whatever the SERVER sees off the same replicated property,
+			-- never a client-only signal the server has no way to check.
+			cameraLocked = not humanoid.AutoRotate,
 			constants = TuningSnapshot.Get(),
 			characterMover = characterMover,
+			facingController = facingController,
 			fsm = fsm,
 			slideSpeed = SlideState.GetCurrentSpeed(),
 			slideDirection = SlideState.GetCurrentDirection(),
+			wallRunEntryNormal = WallRunState.GetEntryNormal(),
+			wallRunEntryTangent = WallRunState.GetEntryTangent(),
 		}
 	end
 
@@ -287,9 +337,22 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 		-- lands -- checked as two separate branches (not "next == DoubleJump
 		-- else GROUNDED_STATES[next]") since landing can happen directly from
 		-- Airborne without ever touching DoubleJump this life.
+		--
+		-- WallRun/WallLeap claims (Wall Run & Leap Mechanic Guideline §6):
+		-- fired the same fire-and-forget way DoubleJump's already is, AFTER
+		-- `States[next].Enter` above has already applied this life's own
+		-- client-predicted physics -- the server's own `onClaimTraversalMove`
+		-- resimulates legality independently off its own `wallRunQuery`/
+		-- `GetHorizontalVelocity`, never trusting this claim's mere arrival.
+		-- Neither touches `doubleJumpUsed` -- only an actual landing does,
+		-- same as every other airborne-family entry.
 		if next == MovementStates.DoubleJump then
 			doubleJumpUsed = true
 			Network.ClaimTraversalMove.Fire("DoubleJump")
+		elseif next == MovementStates.WallRun then
+			Network.ClaimTraversalMove.Fire("WallRun")
+		elseif next == MovementStates.WallLeap then
+			Network.ClaimTraversalMove.Fire("WallLeap")
 		elseif GROUNDED_STATES[next] then
 			doubleJumpUsed = false
 		end
@@ -323,12 +386,21 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 		-- HardLanding fall-height bookkeeping (docs/MOVEMENT.md §10 rework):
 		-- seeded on the real takeoff edge -- `next == Airborne` covers every
 		-- grounded-state jump-off AND Slide -> SlideJump -> Airborne (`previous`
-		-- there is SlideJump); excluded when `previous == DoubleJump` so the
-		-- Airborne <-> DoubleJump hop doesn't reset the peak mid-excursion.
+		-- there is SlideJump); excluded when `previous` is DoubleJump, WallRun,
+		-- or WallLeap so none of those hops back to Airborne resets the peak
+		-- mid-excursion (found while wiring WallRun into this same edge --
+		-- each is still the same continuous excursion, exactly like the
+		-- DoubleJump hop already correctly treated it -- WallLeap needs the
+		-- same exclusion as WallRun since WallRun -> WallLeap -> Airborne all
+		-- happens within one excursion too).
 		-- Cleared the instant a landing actually resolves, same edge as
 		-- `preAirborneLocomotion` just above.
 		if next == MovementStates.Airborne then
-			if previous ~= MovementStates.DoubleJump then
+			if
+				previous ~= MovementStates.DoubleJump
+				and previous ~= MovementStates.WallRun
+				and previous ~= MovementStates.WallLeap
+			then
 				peakHeight = rootPart.Position.Y
 			end
 		elseif GROUNDED_STATES[next] then
@@ -340,15 +412,37 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 		fsm:RequestTransition(MovementStates.Run, buildContext())
 	end)
 
-	-- DoubleJump's own entry trigger (TRAVERSAL-ROADMAP.md §4) -- fires on
-	-- EVERY jump-action request regardless of grounded state (see
-	-- InputController.JumpRequested's own doc comment for why that has to be
-	-- the signal); no explicit "currently Airborne" guard needed here, same
-	-- reasoning as SlideJump's own CanEnter comment -- topology alone already
-	-- makes this a no-op unless DoubleJump is actually reachable from the
-	-- current state.
+	-- Unified jump-action priority handler (Wall Run & Leap Mechanic Guideline
+	-- §2/§5): WallRun is attempted BEFORE DoubleJump on the same press -- the
+	-- stricter, more deliberate gesture wins when both are legal, same
+	-- priority idiom the pre-revert design used for WallClimb vs. WallRun.
+	-- Falls through to today's unchanged DoubleJump attempt when
+	-- CanEnter[WallRun] fails (no wall, wrong angle, too slow) -- a player
+	-- with no wall nearby sees no behavior change. Fires on EVERY jump-action
+	-- request regardless of grounded state (see InputController.JumpRequested's
+	-- own doc comment for why that has to be the signal); no explicit
+	-- "currently Airborne"/"currently WallRun" guard needed for the DoubleJump
+	-- branch, same reasoning as SlideJump's own CanEnter comment -- topology
+	-- alone already makes it a no-op unless legally reachable.
+	--
+	-- A third press while already wall-running fires WallLeap directly
+	-- (guideline §4) -- a plain RequestTransition, same as every other edge;
+	-- no CanEnter[WallLeap] exists so topology alone gates it (see
+	-- StateRules.luau's own comment on that edge). WallLeapState.Enter does
+	-- the actual launch-impulse work and immediately hands off to Airborne in
+	-- the same synchronous call, the identical one-tick shape SlideJump
+	-- already established -- checked FIRST here so "the press that entered
+	-- WallRun" and "the press that leaps out of it" can never be the same
+	-- press.
 	lifeTrove:Connect(input.JumpRequested, function()
-		fsm:RequestTransition(MovementStates.DoubleJump, buildContext())
+		local context = buildContext()
+		if fsm.current == MovementStates.WallRun then
+			fsm:RequestTransition(MovementStates.WallLeap, context)
+			return
+		end
+		if not fsm:RequestTransition(MovementStates.WallRun, context) then
+			fsm:RequestTransition(MovementStates.DoubleJump, context)
+		end
 	end)
 
 	-- Crouch/Slide claim (docs/MOVEMENT.md §9): unlike Run/Sprint's claims
@@ -381,6 +475,64 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 		-- the landing decision has already consumed the real peak.
 		if peakHeight then
 			peakHeight = math.max(peakHeight, rootPart.Position.Y)
+		end
+
+		-- WallRun side-cast throttle (Wall Run & Leap Mechanic Guideline §1):
+		-- only while airborne, cleared the instant grounded, re-fired on its
+		-- own dt-accumulator cadence rather than raw per-tick.
+		if characterMover:IsGrounded() then
+			wallRunQuery = nil
+			wallRunQueryAccumulatedDt = 0
+		else
+			wallRunQueryAccumulatedDt += dt
+			if wallRunQueryAccumulatedDt >= MovementConstants.WallRunQueryThrottleSeconds then
+				wallRunQueryAccumulatedDt = 0
+				wallRunQuery = characterMover:QueryWallRun()
+			end
+		end
+
+		if WALLRUN_DEBUG_LOGGING and wallRunQuery ~= wallRunQueryLastLogged then
+			wallRunQueryLastLogged = wallRunQuery
+			if wallRunQuery then
+				print(string.format(
+					"[WallRunQuery] side=%s normal=%s",
+					wallRunQuery.side,
+					tostring(wallRunQuery.normal)
+				))
+			else
+				print("[WallRunQuery] no wall")
+			end
+		end
+
+		-- CanEnter[WallRun] observability (Wall Run & Leap Mechanic Guideline
+		-- §2, Part 2) -- evaluated directly here rather than through
+		-- fsm:RequestTransition, since there's no Transitions edge into WallRun
+		-- yet (that's §5's job); this only confirms the four-gate predicate
+		-- itself is reading real context correctly, no state change happens.
+		if WALLRUN_DEBUG_LOGGING then
+			local debugContext = buildContext()
+			local canEnter = StateRules.CanEnter[MovementStates.WallRun](debugContext)
+			if canEnter ~= wallRunCanEnterLastLogged then
+				wallRunCanEnterLastLogged = canEnter
+				local speed = debugContext.horizontalVelocity.Magnitude
+				if wallRunQuery then
+					local tangent = TraversalMath.WallRunTangent(wallRunQuery.normal, debugContext.horizontalVelocity)
+					local dot = if debugContext.moveIntent.direction.Magnitude > 0
+						then debugContext.moveIntent.direction.Unit:Dot(tangent)
+						else 0
+					print(string.format(
+						"[WallRunCanEnter] %s speed=%.1f (need>=%.1f) dot=%.2f (need>=%.2f) tangent=%s",
+						tostring(canEnter),
+						speed,
+						debugContext.constants.WallRunMinEntrySpeed,
+						dot,
+						debugContext.constants.WallRunEntryDotThreshold,
+						tostring(tangent)
+					))
+				else
+					print(string.format("[WallRunCanEnter] %s (no wall) speed=%.1f", tostring(canEnter), speed))
+				end
+			end
 		end
 
 		States[fsm.current].Update(dt, buildContext())

@@ -32,6 +32,35 @@ local LandingResolution = {}
 -- this same field, since a resumed Sprint has no `runDuration` to re-check
 -- (fsm.current is still Airborne here, not Run).
 --
+-- Hardened 2026-09-18 (real playtest bug: plain sprint + jump + land,
+-- SERVER mirror kept resolving to Walk while the client correctly resumed
+-- Sprint, triggering a `enforceSpeedSanity` rubber-band every ~0.5s): while
+-- unlocked, `context.moveIntent.forward` is `classifyMoveIntent`'s
+-- facing-vs-MoveDirection geometric approximation on the SERVER (the client's
+-- own `forward` is a raw held-key read with no such lag), and
+-- `Humanoid.AutoRotate` only turns facing to CATCH UP to MoveDirection
+-- gradually while unlocked -- exactly the several-frame window a landing
+-- tends to land in right after a jump's own facing/rotation disturbance. The
+-- client never has this problem (raw key state doesn't lag), so the
+-- resulting client/server disagreement was one-sided: server wrongly
+-- demoting to Walk while the client, correctly, kept moving at Sprint speed.
+--
+-- `context.cameraLocked` skips the unreliable geometric check in exactly that
+-- window, but NARROWLY -- only past `moveIntent.backward`, not "any held
+-- input" (found immediately after shipping the first version of this fix:
+-- a landing genuinely moving backward/unlocked was resuming Sprint/Run
+-- anyway, since a bare `not cameraLocked` bypass admits EVERY direction --
+-- and `LocomotionAnimator` has no directional variant for Run/Sprint, only
+-- Walk's 8-way blend, so that showed up as a forward-sprint clip playing
+-- while visibly moving backward, i.e. "the animations are fighting").
+-- `moveIntent.backward` is the SAME lagged geometry as `forward`, but a
+-- genuine backward hold still reads as clearly opposite-of-facing even
+-- through a moderate lag transient (the ambiguous middle ground the lag
+-- produces sits much closer to "neither" than to "clearly backward"), so
+-- gating on "not explicitly backward" rather than "explicitly forward"
+-- keeps the fix narrow: it only rescues the ambiguous near-perpendicular
+-- readings the lag window actually produces, not a real reversal.
+--
 -- Also called for the rare "landed mid-impulse" case (TRAVERSAL-ROADMAP.md
 -- §4, Phase 1), where handing off to Airborne first isn't legal
 -- (Airborne.CanEnter requires `not grounded`, which already failed by the
@@ -56,7 +85,9 @@ function LandingResolution.Resolve(context: MovementContext): MovementStates.Mov
 	if context.crouchHeld then
 		return if hasInput then MovementStates.CrouchWalk else MovementStates.CrouchIdle
 	elseif hasInput then
-		if context.moveIntent.forward and context.preAirborneLocomotion then
+		local reallyForward = context.moveIntent.forward
+			or (not context.cameraLocked and not context.moveIntent.backward)
+		if reallyForward and context.preAirborneLocomotion then
 			return context.preAirborneLocomotion :: MovementStates.MovementState
 		end
 		return MovementStates.Walk

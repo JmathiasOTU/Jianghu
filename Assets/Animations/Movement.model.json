@@ -103,14 +103,14 @@
       "Name": "WallRunLeft",
       "ClassName": "Animation",
       "Properties": {
-        "AnimationId": "rbxassetid://99335883514665"
+        "AnimationId": "rbxassetid://73439185871630"
       }
     },
     {
       "Name": "WallRunRight",
       "ClassName": "Animation",
       "Properties": {
-        "AnimationId": ""
+        "AnimationId": "rbxassetid://138269410083909"
       }
     },
     {
@@ -121,10 +121,17 @@
       }
     },
     {
-      "Name": "WallLeap",
+      "Name": "WallLeapLeft",
       "ClassName": "Animation",
       "Properties": {
-        "AnimationId": "rbxassetid://110005570264714"
+        "AnimationId": "rbxassetid://103898545115791"
+      }
+    },
+    {
+      "Name": "WallLeapRight",
+      "ClassName": "Animation",
+      "Properties": {
+        "AnimationId": "rbxassetid://105572157004127"
       }
     }
   ]

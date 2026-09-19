@@ -56,7 +56,7 @@ event RequestMovementTransition = {
 -- -- Dash was deliberately skipped (docs/MOVEMENT.md), wall running/climbing
 -- was removed for a from-scratch redo, and Vault is added to this enum only
 -- once its own phase lands, never all speculatively up front.
-type ClaimableTraversalMove = enum { "DoubleJump" }
+type ClaimableTraversalMove = enum { "DoubleJump", "WallRun", "WallLeap" }
 
 event ClaimTraversalMove = {
 	from: Client,
@@ -84,6 +84,8 @@ type DebugMovementState = enum {
 	"SlideJump",
 	"DoubleJump",
 	"HardLanding",
+	"WallRun",
+	"WallLeap",
 }
 
 -- One recent speed-sanity correction (Shared/Util/ViolationTracker.luau's
@@ -154,6 +156,18 @@ type TunableConstantName = enum {
 	"SlideMaxWalkableSlopeDegrees",
 	"SlideSlopeAmplificationCap",
 	"SlideGroundRaycastThrottleSeconds",
+	"WallRunMinEntrySpeed",
+	"WallRunEntryDotThreshold",
+	"WallRunSpeed",
+	"WallRunSinkSpeed",
+	"WallRunClingDistance",
+	"WallRunClingCorrectionRate",
+	"WallRunClingMaxCorrectionSpeed",
+	"WallRunMaxNormalDeviationDegrees",
+	"WallRunMaxDurationSeconds",
+	"WallLeapBurstForce",
+	"WallLeapPushForce",
+	"WallLeapUpwardForce",
 }
 
 event RequestSetTuning = {
@@ -202,6 +216,18 @@ event TuningState = {
 		slideMaxWalkableSlopeDegrees: f32,
 		slideSlopeAmplificationCap: f32,
 		slideGroundRaycastThrottleSeconds: f32,
+		wallRunMinEntrySpeed: f32,
+		wallRunEntryDotThreshold: f32,
+		wallRunSpeed: f32,
+		wallRunSinkSpeed: f32,
+		wallRunClingDistance: f32,
+		wallRunClingCorrectionRate: f32,
+		wallRunClingMaxCorrectionSpeed: f32,
+		wallRunMaxNormalDeviationDegrees: f32,
+		wallRunMaxDurationSeconds: f32,
+		wallLeapBurstForce: f32,
+		wallLeapPushForce: f32,
+		wallLeapUpwardForce: f32,
 	},
 }
 

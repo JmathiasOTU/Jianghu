@@ -132,6 +132,15 @@ type PlayerSession = {
 	-- every Heartbeat (`mirrorPassiveTransitions`) to detect a corner/curve
 	-- exceeding `WallRunMaxNormalDeviationDegrees`.
 	wallRunEntryNormal: Vector3?,
+	-- Claim-buffering deadlines (2026-09-19 playtest fix, see
+	-- `WallRunClaimBufferSeconds`'s own comment for the full root-cause
+	-- reasoning) -- set the instant a "WallRun"/"WallLeap" claim is rejected
+	-- for a reason that might just be replication catching up (still
+	-- airborne / still wall-running, respectively), cleared the instant the
+	-- buffered retry succeeds, is abandoned, or expires. `retryBufferedTraversalClaims`
+	-- is the only reader; `onClaimTraversalMove` is the only writer.
+	pendingWallRunClaimUntil: number?,
+	pendingWallLeapClaimUntil: number?,
 	-- WallLeap's own speed-sanity ceiling (playtest fix 2026-09-18) -- see
 	-- `onClaimTraversalMove`'s WallLeap branch for the full reasoning: a
 	-- flat one-shot suspension window (`speedSanitySuspendedUntil`, sized
@@ -443,14 +452,42 @@ local function mirrorPassiveTransitions(session: PlayerSession)
 		end
 
 		local query = session.wallRunQuery
+
+		-- Lazy-anchor the corner-deviation reference (2026-09-19 playtest fix:
+		-- a real force-exit was observed ~0.12s after a legitimately accepted
+		-- entry, `angleExceeded=true` on the very first post-entry query).
+		-- `onClaimTraversalMove` locks `wallRunEntryNormal` off a FORCED probe
+		-- taken at the exact claim instant -- but that probe reads
+		-- `session.rootPart.CFrame`, and CFrame (rotation), not just position,
+		-- replicates from the client with its own lag independent of
+		-- `WallRunSideCastDistance`'s already-documented position lag. A
+		-- player's rig is still finishing its turn to face along the wall
+		-- tangent at the instant the claim lands, so the FIRST cast can read a
+		-- glancing, not-yet-settled normal; the very next throttled query
+		-- (~`WallRunQueryThrottleSeconds` later, once rotation has caught up)
+		-- then reads the REAL normal, which can easily be > the corner budget
+		-- away from that first noisy sample -- a false corner, not a real one.
+		-- Anchoring instead off the first query `mirrorPassiveTransitions`
+		-- itself observes (this Heartbeat loop's own natural throttled
+		-- cadence, not a claim-time forced probe) gives rotation a beat to
+		-- settle before anything gets compared against it. This doesn't
+		-- relax the anti-exploit check -- the SAME angle/duration budget still
+		-- applies from here on -- it only fixes which sample the budget is
+		-- measured against.
+		if not session.wallRunEntryNormal then
+			if query then
+				session.wallRunEntryNormal = query.normal
+			end
+			return
+		end
+
 		local angleExceeded = query
-			and session.wallRunEntryNormal
 			and TraversalMath.AngleBetween(query.normal, session.wallRunEntryNormal :: Vector3)
 				> context.constants.WallRunMaxNormalDeviationDegrees
 		local durationExceeded = os.clock() - (session.traversalEntryAt or session.lastTransitionAt)
 			>= context.constants.WallRunMaxDurationSeconds
 
-		if not query or not session.wallRunEntryNormal or angleExceeded or durationExceeded then
+		if not query or angleExceeded or durationExceeded then
 			if WALL_TRAVERSAL_DEBUG_LOGGING then
 				print(
 					string.format(
@@ -883,6 +920,8 @@ local function createSession(player: Player, humanoid: Humanoid, rootPart: BaseP
 		wallRunQueryAt = 0,
 		wallRunEntryNormal = nil,
 		wallLeapAllowedSpeed = nil,
+		pendingWallRunClaimUntil = nil,
+		pendingWallLeapClaimUntil = nil,
 	}
 
 	-- Reset the speed-sanity baseline on EVERY FSM transition, not just Sprint
@@ -1150,6 +1189,111 @@ local function enforceDoubleJumpTrajectory(
 	end
 end
 
+-- Shared acceptance bookkeeping for a WallRun entry landing -- whether it's
+-- accepted on the FIRST attempt (`onClaimTraversalMove`) or a BUFFERED retry
+-- a few Heartbeats later (`retryBufferedTraversalClaims`, see
+-- `WallRunClaimBufferSeconds`) -- one source of truth so the two paths can
+-- never drift out of sync with each other. Deliberately does NOT set
+-- `wallRunEntryNormal` here -- see `mirrorPassiveTransitions`'s WallRun
+-- branch for why that reference is anchored lazily off the Heartbeat loop's
+-- own next throttled probe instead of whatever probe accepted the claim
+-- (2026-09-19 fix for a spurious near-instant corner-exceeded force-exit).
+local function acceptWallRunEntry(session: PlayerSession)
+	session.traversalEntryAt = os.clock()
+	session.speedCheckPosition = session.rootPart.Position
+	session.speedCheckAt = os.clock()
+	session.wallRunEntryNormal = nil
+	session.pendingWallRunClaimUntil = nil
+end
+
+-- Shared acceptance bookkeeping for a WallLeap launch -- same two-caller
+-- reasoning as `acceptWallRunEntry` above.
+local function acceptWallLeapLaunch(session: PlayerSession, context: MovementContext)
+	session.traversalEntryAt = os.clock()
+	session.speedCheckPosition = session.rootPart.Position
+	session.speedCheckAt = os.clock()
+	-- One-shot launch, same short exemption DoubleJump's own impulse gets --
+	-- sized to cover the single frame the impulse needs to register, never a
+	-- sustained exemption (guideline §6).
+	session.speedSanitySuspendedUntil = os.clock()
+		+ MovementConstants.TraversalSpeedSanityGraceSeconds
+
+	-- The REAL fix for the "boost gets erased" playtest bug (2026-09-18): the
+	-- suspension window above only covers the launch INSTANT, but WallLeap's
+	-- resulting speed doesn't decay the way DoubleJump's impulse does --
+	-- Roblox applies no horizontal air drag, so the excess speed persists for
+	-- the whole flight. Without this, the very first `enforceSpeedSanity`
+	-- check after the window above expired would measure the whole flight
+	-- against the ordinary Airborne/SprintSpeed cap and snap the player
+	-- straight back to the wall, discarding the entire leap. A conservative
+	-- upper bound -- current speed + burst + push SUMMED, not
+	-- vector-combined -- so this never needs to match the client's own
+	-- `TraversalMath.WallLeapVelocity` bit for bit: real vector addition of
+	-- two roughly perpendicular components is always <= this sum.
+	-- `effectiveMaxSpeed` consults it; cleared the instant this session lands
+	-- (`fsm.changed` above).
+	session.wallLeapAllowedSpeed = context.horizontalVelocity.Magnitude
+		+ context.constants.WallLeapBurstForce
+		+ context.constants.WallLeapPushForce
+
+	-- Mirrors the client's own synchronous two-step (WallLeapState.Enter):
+	-- hand straight back to Airborne in the SAME call, matching the client's
+	-- own FSM shape rather than leaving the mirror sitting in WallLeap for a
+	-- Heartbeat. The server never re-derives or pushes its own velocity
+	-- vector onto the character here (guideline §6) -- Roblox's own network
+	-- ownership model keeps this player's physics client-authoritative, same
+	-- as every other move in this file; this is legality plus the
+	-- anti-exploit measures above, not a resimulation of the launch itself.
+	session.wallRunEntryNormal = nil
+	session.pendingWallLeapClaimUntil = nil
+	session.fsm:RequestTransition(MovementStates.Airborne, context)
+end
+
+-- Heartbeat-driven follow-through for the claim-buffering set up in
+-- `onClaimTraversalMove` below (see `WallRunClaimBufferSeconds`'s own comment
+-- for the full root-cause reasoning: a claim can arrive before the server's
+-- own replicated state has caught up to support it, purely from ordinary
+-- Roblox replication lag on a fast, continuous gesture like a double jump
+-- chained straight into a wall run). Retries the exact SAME legality gate
+-- `onClaimTraversalMove` already ran -- `RequestTransition`'s real
+-- `CanEnter`/topology check -- off whatever fresher server state THIS
+-- Heartbeat has, every Heartbeat, until it succeeds or the buffer window
+-- closes. Never invents new legality of its own.
+local function retryBufferedTraversalClaims(session: PlayerSession)
+	local now = os.clock()
+
+	if session.pendingWallRunClaimUntil then
+		if now >= session.pendingWallRunClaimUntil then
+			session.pendingWallRunClaimUntil = nil
+		elseif session.fsm.current == MovementStates.Airborne then
+			local context = buildContext(session)
+			if session.fsm:RequestTransition(MovementStates.WallRun, context) then
+				acceptWallRunEntry(session)
+			end
+		else
+			-- No longer airborne (landed, or moved into some other move
+			-- entirely) -- the gesture this claim wanted no longer applies.
+			session.pendingWallRunClaimUntil = nil
+		end
+	end
+
+	if session.pendingWallLeapClaimUntil then
+		if now >= session.pendingWallLeapClaimUntil then
+			session.pendingWallLeapClaimUntil = nil
+		elseif session.fsm.current == MovementStates.WallRun then
+			local context = buildContext(session)
+			if session.fsm:RequestTransition(MovementStates.WallLeap, context) then
+				acceptWallLeapLaunch(session, context)
+			end
+		elseif session.fsm.current ~= MovementStates.Airborne then
+			-- Landed, or otherwise left the WallRun/Airborne family entirely
+			-- (e.g. the buffered WallRun claim above never itself landed) --
+			-- the leap this claim wanted no longer makes sense.
+			session.pendingWallLeapClaimUntil = nil
+		end
+	end
+end
+
 -- The real exploit surface for the new traversal moves (TRAVERSAL-ROADMAP.md
 -- §6/§7; Wall Run & Leap Mechanic Guideline §6 for WallRun/WallLeap): a
 -- modified client could claim DoubleJump without ever earning it (already
@@ -1208,11 +1352,10 @@ local function onClaimTraversalMove(player: Player, claim: Network.ClaimableTrav
 
 	local context = buildContext(session)
 	if session.fsm:RequestTransition(claimedState, context) then
-		session.traversalEntryAt = os.clock()
-		session.speedCheckPosition = session.rootPart.Position
-		session.speedCheckAt = os.clock()
-
 		if claimedState == MovementStates.DoubleJump then
+			session.traversalEntryAt = os.clock()
+			session.speedCheckPosition = session.rootPart.Position
+			session.speedCheckAt = os.clock()
 			session.doubleJumpUsed = true
 			-- Exemption window (TRAVERSAL-ROADMAP.md §7.4, shipped alongside
 			-- Phase 1 per the roadmap's own risk register -- without it, this
@@ -1221,56 +1364,30 @@ local function onClaimTraversalMove(player: Player, claim: Network.ClaimableTrav
 			session.speedSanitySuspendedUntil = os.clock()
 				+ MovementConstants.TraversalSpeedSanityGraceSeconds
 		elseif claimedState == MovementStates.WallRun then
-			-- `CanEnter[WallRun]` (already run inside `RequestTransition` above)
-			-- guarantees `context.wallRunQuery` is non-nil here -- store the
-			-- SERVER's own probe result, locked at Entry and never re-read live
-			-- (guideline §0/§6), for `mirrorPassiveTransitions`'s corner check.
-			-- Deliberately NO `speedSanitySuspendedUntil` -- see the comment on
-			-- `maxSpeedForState`'s own WallRun branch for why a sustained hold
-			-- gets a raised LIVE cap instead of a suspended check.
-			session.wallRunEntryNormal = if context.wallRunQuery
-				then context.wallRunQuery.normal
-				else nil
+			acceptWallRunEntry(session)
 		elseif claimedState == MovementStates.WallLeap then
-			-- One-shot launch, same short exemption DoubleJump's own impulse
-			-- gets -- sized to cover the single frame the impulse needs to
-			-- register, never a sustained exemption (guideline §6).
-			session.speedSanitySuspendedUntil = os.clock()
-				+ MovementConstants.TraversalSpeedSanityGraceSeconds
-
-			-- The REAL fix for the "boost gets erased" playtest bug
-			-- (2026-09-18): the suspension window above only covers the
-			-- launch INSTANT, but WallLeap's resulting speed doesn't decay
-			-- the way DoubleJump's impulse does -- Roblox applies no
-			-- horizontal air drag, so the excess speed persists for the
-			-- whole flight. Without this, the very first `enforceSpeedSanity`
-			-- check after the window above expired would measure the whole
-			-- flight against the ordinary Airborne/SprintSpeed cap and snap
-			-- the player straight back to the wall, discarding the entire
-			-- leap. A conservative upper bound -- current speed + burst +
-			-- push SUMMED, not vector-combined -- so this never needs to
-			-- match the client's own `TraversalMath.WallLeapVelocity` bit
-			-- for bit: real vector addition of two roughly perpendicular
-			-- components is always <= this sum. `effectiveMaxSpeed` consults
-			-- it; cleared the instant this session lands (`fsm.changed`
-			-- above).
-			session.wallLeapAllowedSpeed = context.horizontalVelocity.Magnitude
-				+ context.constants.WallLeapBurstForce
-				+ context.constants.WallLeapPushForce
-
-			-- Mirrors the client's own synchronous two-step (WallLeapState.Enter):
-			-- hand straight back to Airborne in the SAME call, matching the
-			-- client's own FSM shape rather than leaving the mirror sitting in
-			-- WallLeap for a Heartbeat. The server never re-derives or pushes its
-			-- own velocity vector onto the character here (guideline §6) --
-			-- Roblox's own network ownership model keeps this player's physics
-			-- client-authoritative, same as every other move in this file; this
-			-- is legality plus the anti-exploit measures above, not a
-			-- resimulation of the launch itself.
-			session.wallRunEntryNormal = nil
-			session.fsm:RequestTransition(MovementStates.Airborne, context)
+			acceptWallLeapLaunch(session, context)
 		end
-	elseif
+		return
+	end
+
+	-- Claim-buffering (2026-09-19 playtest fix -- see `WallRunClaimBufferSeconds`'s
+	-- own comment for the full root-cause reasoning): a rejection here can
+	-- simply mean the server's own replicated state hasn't caught up YET to
+	-- support a claim the player genuinely, legitimately just earned. Buffer
+	-- it and let `retryBufferedTraversalClaims` keep re-checking the SAME
+	-- legality gate every Heartbeat until it either succeeds or this window
+	-- closes -- a claim that's actually illegal (no wall anywhere, standing
+	-- still, etc.) gets buffered exactly the same way, but simply never
+	-- succeeds during that window, since the real `CanEnter`/topology check
+	-- keeps running against it unchanged.
+	if claimedState == MovementStates.WallRun then
+		session.pendingWallRunClaimUntil = os.clock() + MovementConstants.WallRunClaimBufferSeconds
+	elseif claimedState == MovementStates.WallLeap then
+		session.pendingWallLeapClaimUntil = os.clock() + MovementConstants.WallRunClaimBufferSeconds
+	end
+
+	if
 		WALL_TRAVERSAL_DEBUG_LOGGING
 		and (claimedState == MovementStates.WallRun or claimedState == MovementStates.WallLeap)
 	then
@@ -1416,24 +1533,28 @@ function MovementValidationService.Init()
 		end
 	end)
 
-	-- Six per-session checks run unconditionally for every player every
+	-- Seven per-session checks run unconditionally for every player every
 	-- Heartbeat -- each is already throttled internally (see e.g.
 	-- SpeedCheckIntervalSeconds/SlideGroundRaycastThrottleSeconds/
 	-- WallRunQueryThrottleSeconds), but staggering the OUTER loop itself
 	-- (which players get checked which frame) is a real design decision, not
 	-- a drive-by cleanup -- open scalability question for whenever a future
-	-- traversal phase adds a seventh check here.
+	-- traversal phase adds an eighth check here.
 	--
 	-- `updateWallRunQuery` runs BEFORE `mirrorPassiveTransitions` for the same
 	-- same-frame-race reason `updatePeakHeight` already does (guideline §6):
 	-- the sustain check inside `mirrorPassiveTransitions` needs THIS frame's
-	-- fresh probe, not last frame's.
+	-- fresh probe, not last frame's. `retryBufferedTraversalClaims` runs
+	-- AFTER `mirrorPassiveTransitions` for the identical reason -- a buffered
+	-- WallRun retry needs to see THIS frame's mirrored state (e.g. a landing
+	-- `mirrorPassiveTransitions` just resolved), not last frame's.
 	RunService.Heartbeat:Connect(function()
 		for _, session in sessions do
 			local constants = MovementTuningState.GetEffective(session.player)
 			updatePeakHeight(session)
 			updateWallRunQuery(session)
 			mirrorPassiveTransitions(session)
+			retryBufferedTraversalClaims(session)
 			updateSlideGroundQuery(session, constants)
 			enforceSpeedSanity(session, constants)
 			enforceDoubleJumpTrajectory(session, constants)

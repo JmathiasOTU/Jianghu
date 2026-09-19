@@ -234,6 +234,28 @@ local MovementConstants = {
 	-- QueryWallRun's own throttle, same dt-accumulator idiom as
 	-- SlideGroundRaycastThrottleSeconds.
 	WallRunQueryThrottleSeconds = 0.1,
+	-- Claim-buffering window (2026-09-19 playtest bug): a "WallRun"/"WallLeap"
+	-- claim can arrive while the server's OWN mirrored state hasn't caught up
+	-- yet to support it -- e.g. the player left the ground and reached the
+	-- wall in one fast, continuous gesture (a double jump chained straight
+	-- into a wall run), and the claim lands before Roblox has replicated
+	-- enough of the resulting position/CFrame change for `updateWallRunQuery`
+	-- to see the wall, or even before the Humanoid state change that flips
+	-- `context.grounded` has replicated. Same root cause `WallRunSideCastDistance`'s
+	-- own widening (above) already diagnosed -- lag on a client-owned part
+	-- that no single "query fresher at claim time" fix can fully outrun --
+	-- just arriving from the timing side instead of the distance side. Rather
+	-- than drop the claim after one failed attempt, it's buffered for this
+	-- long and retried every Heartbeat off progressively fresher server state
+	-- (`retryBufferedTraversalClaims`) -- the exact "input buffering" idiom
+	-- every jump-adjacent game already uses for "pressed a frame early".
+	-- Buffering changes nothing about what's LEGAL (every retry re-runs the
+	-- identical `CanEnter`/topology check against the server's own state),
+	-- only how many ticks it keeps checking for it. Short on purpose -- long
+	-- enough to absorb real replication lag, not long enough to let a stale
+	-- gesture "come true" against wall geometry the player has since moved
+	-- well past.
+	WallRunClaimBufferSeconds = 0.25,
 	-- CanEnter[WallRun]'s momentum gate (guideline §2) -- no wall run from a
 	-- standstill jump.
 	WallRunMinEntrySpeed = 10,

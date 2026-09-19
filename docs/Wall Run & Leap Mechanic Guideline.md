@@ -521,6 +521,33 @@ clock and **its own** shapecast, never a client-reported timestamp or normal, so
 high-ping player's inputs simply arrive later — what's legal never changes, only when the server
 finds out about it.
 
+**2026-09-19 playtest fix — claim-buffering, plus a lazy-anchored corner reference.** Real
+playtesting surfaced two related server-authority bugs, both from the same underlying cause
+(Roblox's replication of a client-owned part's position *and* CFrame always lags the server's view
+of it by some amount, independent of network latency — the same root cause
+`WallRunSideCastDistance`'s 3.5→6 widening already diagnosed, just showing up two more ways):
+
+1. **A `WallRun` (or `WallLeap`) claim arriving before the server's own state had caught up got
+   dropped outright**, permanently desyncing that session's mirror from the client (client shows
+   `WallRun`/`WallLeap`, server stays `Airborne` forever after). Confirmed via
+   `WALL_TRAVERSAL_DEBUG_LOGGING`: `wallRunQuery=false` at claim time on a fast double-jump-into-
+   wall-run gesture — the claim legitimately outran the server's own replicated position by a beat.
+   **Fix:** a short claim buffer (`WallRunClaimBufferSeconds`, `MovementValidationService`'s
+   `retryBufferedTraversalClaims`) — a rejected `WallRun`/`WallLeap` claim is retried every
+   Heartbeat, off the exact same `CanEnter`/topology gate, until it either succeeds or the buffer
+   window closes. This is the standard "input buffering" idiom for "pressed a frame early," not a
+   relaxed tolerance — it changes how many ticks the server keeps checking a claim, never what
+   makes that claim legal.
+2. **A legitimately accepted `WallRun` immediately force-exited** (`angleExceeded=true` ~0.12s
+   after entry). Cause: `wallRunEntryNormal` was locked from the *claim-time forced probe*, which
+   reads `rootPart.CFrame` — still mid-replication for the character's own turn-to-face-the-tangent
+   rotation — producing a noisy, not-yet-settled normal that the very next (rotation-caught-up)
+   throttled probe could easily read >35° away from, tripping the corner budget on a wall with no
+   real corner. **Fix:** `wallRunEntryNormal` is no longer set at claim/accept time at all — it's
+   lazy-anchored off the first query `mirrorPassiveTransitions` itself observes on its own natural
+   throttled cadence, giving rotation a beat to settle before anything is compared against it. The
+   corner/duration budget itself is unchanged — this only fixes which sample it's measured from.
+
 ---
 
 ## 7. New Constants (`MovementConstants.luau`, live-tunable via the existing F4 pipeline)

@@ -297,6 +297,21 @@ function LocomotionAnimator.new(
 	-- plays "LandHard" for as long as `fsm.current` says so. Only a landing
 	-- into any OTHER grounded state still needs this brief "Land" overlay.
 	self._trove:Connect(fsm.changed, function(next: MovementState, previous: MovementState)
+		-- A double jump can land mid-hold -- e.g. immediately off a SlideJump
+		-- or WallLeap, whose one-shot clip is still being held below at the
+		-- moment the player air-jumps. That hold exists only to bridge a
+		-- reentrant same-frame hand-off into Airborne (see its own doc
+		-- comment); it was never meant to outlast a real, separate input the
+		-- player takes afterward. DoubleJump is committed to explicitly by
+		-- the FSM (unlike SlideJump/WallLeap, it's actually observed as
+		-- `fsm.current` on a real frame), so it always deserves its own clip
+		-- immediately rather than finishing out whatever one-shot happened to
+		-- still be held. Clearing here lets `_update`'s normal per-state
+		-- resolution pick "DoubleJump" this same frame.
+		if next == MovementStates.DoubleJump then
+			self._transientHold = nil
+		end
+
 		-- SlideJump lasts exactly one synchronous frame before handing off to
 		-- Airborne -- `_update` runs on RenderStepped, so `fsm.current` is
 		-- never actually observed as SlideJump on a real rendered frame, and

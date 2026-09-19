@@ -7,7 +7,11 @@ local Trove = require(ReplicatedStorage.Packages.Trove)
 export type StateMachine<State, Context> = {
 	current: State,
 	changed: LemonSignal.Signal<State, State>,
-	RequestTransition: (self: StateMachine<State, Context>, next: State, context: Context) -> boolean,
+	RequestTransition: (
+		self: StateMachine<State, Context>,
+		next: State,
+		context: Context
+	) -> boolean,
 	CanTransition: (self: StateMachine<State, Context>, next: State, context: Context) -> boolean,
 	Destroy: (self: StateMachine<State, Context>) -> (),
 }

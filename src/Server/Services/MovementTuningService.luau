@@ -54,6 +54,9 @@ local function toTuningStatePayload(constants: EffectiveMovementConstants)
 		landingAnimationHoldSeconds = constants.LandingAnimationHoldSeconds,
 		hardLandingHeightThreshold = constants.HardLandingHeightThreshold,
 		hardLandingDurationSeconds = constants.HardLandingDurationSeconds,
+		mediumLandingHeightThreshold = constants.MediumLandingHeightThreshold,
+		mediumLandingDurationSeconds = constants.MediumLandingDurationSeconds,
+		mediumLandingSpeedMultiplier = constants.MediumLandingSpeedMultiplier,
 		doubleJumpForce = constants.DoubleJumpForce,
 		doubleJumpDecayDurationSeconds = constants.DoubleJumpDecayDurationSeconds,
 		slideSlopeAngleThresholdDegrees = constants.SlideSlopeAngleThresholdDegrees,
@@ -86,26 +89,25 @@ end
 -- "never trust a client-claimed number" rule as everywhere else
 -- (docs/ARCHITECTURE.md §3) even though only a developer can reach this at
 -- all -- a developer's client is still a client.
-local onRequestSetTuning = DevToolsService.RegisterDevOnly(function(
-	player: Player,
-	request: { name: TunableConstantName, value: number? }
-)
-	local limiter = rateLimiters[player]
-	if not limiter or not limiter:tryAcquire() then
-		return
-	end
-
-	if request.value == nil then
-		MovementTuningState.ClearOverride(player, request.name)
-	else
-		if not MovementTuning.IsValidValue(request.name, request.value) then
+local onRequestSetTuning = DevToolsService.RegisterDevOnly(
+	function(player: Player, request: { name: TunableConstantName, value: number? })
+		local limiter = rateLimiters[player]
+		if not limiter or not limiter:TryAcquire() then
 			return
 		end
-		MovementTuningState.SetOverride(player, request.name, request.value)
-	end
 
-	broadcast(player)
-end)
+		if request.value == nil then
+			MovementTuningState.ClearOverride(player, request.name)
+		else
+			if not MovementTuning.IsValidValue(request.name, request.value) then
+				return
+			end
+			MovementTuningState.SetOverride(player, request.name, request.value)
+		end
+
+		broadcast(player)
+	end
+)
 
 local function onPlayerAdded(player: Player)
 	rateLimiters[player] = RateLimiter.new(TUNING_CLAIMS_PER_SECOND, 1)

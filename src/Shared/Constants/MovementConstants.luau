@@ -114,7 +114,7 @@ local MovementConstants = {
 	-- lock instead of resolving normally to Idle/Walk/Run/Sprint/Crouch.
 	-- Starting-point value, not measured -- retune in Studio (F4 Tuning tab)
 	-- once real fall-damage numbers exist to anchor it to.
-	HardLandingHeightThreshold = 40,
+	HardLandingHeightThreshold = 120,
 	-- How long `HardLanding` holds movement (WalkSpeed pinned to 0) and jump
 	-- locked, once entered -- sized to the real `LandHard` clip's length so
 	-- the lock and the animation end together. A fixed duration, not a
@@ -126,6 +126,20 @@ local MovementConstants = {
 	-- a client-local `AnimationTrack.Length` can never guarantee the server
 	-- side of.
 	HardLandingDurationSeconds = 1.11,
+
+	-- MediumLanding: NOT a real FSM state (unlike HardLanding) -- a landing in
+	-- this height band still resolves normally to Idle/Walk/Run/Sprint/Crouch,
+	-- just with a brief "LandMedium" animation overlay and a temporary
+	-- WalkSpeed multiplier, both timed to this one duration. Purely a
+	-- movement-feel debuff, not a security-relevant cap (skipping it just
+	-- means moving at your already-normal tier speed slightly early, never
+	-- above any existing cap), so deliberately NOT mirrored server-side --
+	-- same reasoning as OneShotAnimationHoldFallbackSeconds above. Live-tunable
+	-- via the F4 Tuning tab (Shared/Movement/MovementTuning.luau), same as
+	-- HardLanding's own pair -- starting-point values below, not measured.
+	MediumLandingHeightThreshold = 60,
+	MediumLandingDurationSeconds = 0.55,
+	MediumLandingSpeedMultiplier = 0.7,
 
 	-- DoubleJump (TRAVERSAL-ROADMAP.md §5/§8 Phase 1) -- starting-point values,
 	-- not yet playtested, chosen the same "Fast & fluid" way as the original
@@ -196,9 +210,24 @@ local MovementConstants = {
 	-- Shapecast sphere radius for QueryWallRun.
 	WallRunSideCastRadius = 1.5,
 	-- Structural cast reach, not live-tunable -- same exclusion as
-	-- GroundQueryCastDistance. Kept short on purpose: this distance is also
-	-- what stops WallRun's entry from stealing a DoubleJump press (§0/§7).
-	WallRunSideCastDistance = 3.5,
+	-- GroundQueryCastDistance. Widened 3.5 -> 6 on 2026-09-18 (real playtest
+	-- bug: `CanEnter[WallRun]`'s SERVER-side evaluation kept rejecting a
+	-- claim the client had already legitimately earned -- confirmed via
+	-- `WALL_TRAVERSAL_DEBUG_LOGGING` to be a genuine geometry miss, not a
+	-- stale-cache issue, since `onClaimTraversalMove` already re-probes fresh
+	-- immediately before evaluating the claim). Root cause: Roblox's own
+	-- replication cadence for a fast-moving, client-owned part is inherently
+	-- lower than the physics/render rate -- the server's view of the
+	-- player's position always lags by some amount no server-side "query
+	-- fresher" fix can outrun, and at WallRunSpeed's real tuned value that
+	-- lag alone can exceed a few studs even with zero network latency.
+	-- Widening this is safe, not a reopened false-positive hole, because the
+	-- cast distance was only ever the THIRD line of defense against
+	-- accidentally stealing a DoubleJump press -- `WallRunMinEntrySpeed` and
+	-- `WallRunEntryDotThreshold` both still have to ALSO pass simultaneously,
+	-- and a player merely double-jumping near a wall isn't also moving fast
+	-- AND aimed along that wall's tangent by coincidence.
+	WallRunSideCastDistance = 6,
 	-- Flatness gate: a side-cast hit only counts as a wall if its normal's
 	-- dot with world-up is at or below this.
 	WallDetectMaxUpDot = 0.3,

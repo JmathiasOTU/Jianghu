@@ -51,34 +51,36 @@ end
 -- Migrated onto RegisterDevOnly first (docs/MOVEMENT.md §8), as the proof it
 -- behaves identically to the inline check it replaces, before any other
 -- handler adopts it.
-local onRequestDevTeleport = DevToolsService.RegisterDevOnly(function(player: Player, position: vector)
-	local limiter = teleportRateLimiters[player]
-	if not limiter or not limiter:tryAcquire() then
-		return
+local onRequestDevTeleport = DevToolsService.RegisterDevOnly(
+	function(player: Player, position: vector)
+		local limiter = teleportRateLimiters[player]
+		if not limiter or not limiter:TryAcquire() then
+			return
+		end
+
+		local character = player.Character
+		if not character then
+			return
+		end
+
+		local rootPart = character:FindFirstChild("HumanoidRootPart")
+		if not rootPart or not rootPart:IsA("BasePart") then
+			return
+		end
+
+		local destination = Vector3.new(position.x, position.y, position.z)
+		rootPart.CFrame = (rootPart.CFrame - rootPart.Position) + destination
+		rootPart.AssemblyLinearVelocity = Vector3.zero
+
+		-- MovementValidationService's speed/delta-position sanity check has no way to
+		-- distinguish this from a speed hack on its own -- without this, it would
+		-- measure the teleport as an impossible jump and snap the player straight back
+		-- on the very next sample, silently undoing the teleport. See
+		-- docs/ARCHITECTURE.md §2 on why this is a published event rather than
+		-- DevToolsService reaching into that service's session state directly.
+		CharacterTeleported:Fire(player)
 	end
-
-	local character = player.Character
-	if not character then
-		return
-	end
-
-	local rootPart = character:FindFirstChild("HumanoidRootPart")
-	if not rootPart or not rootPart:IsA("BasePart") then
-		return
-	end
-
-	local destination = Vector3.new(position.x, position.y, position.z)
-	rootPart.CFrame = (rootPart.CFrame - rootPart.Position) + destination
-	rootPart.AssemblyLinearVelocity = Vector3.zero
-
-	-- MovementValidationService's speed/delta-position sanity check has no way to
-	-- distinguish this from a speed hack on its own -- without this, it would
-	-- measure the teleport as an impossible jump and snap the player straight back
-	-- on the very next sample, silently undoing the teleport. See
-	-- docs/ARCHITECTURE.md §2 on why this is a published event rather than
-	-- DevToolsService reaching into that service's session state directly.
-	CharacterTeleported:Fire(player)
-end)
+)
 
 -- Noclip/fly scouting tool (docs/MOVEMENT.md §8). Collision is disabled here,
 -- server-side, on every BasePart of the character -- the actual fly movement
@@ -88,50 +90,54 @@ end)
 -- WalkSpeed-based motion. `NoclipState` (Server/State/NoclipState.luau) is the
 -- server-authorized record MovementValidationService.enforceSpeedSanity
 -- exempts against -- never anything the client asserts about itself.
-local onRequestSetNoclip = DevToolsService.RegisterDevOnly(function(player: Player, enabled: boolean)
-	local limiter = noclipRateLimiters[player]
-	if not limiter or not limiter:tryAcquire() then
-		return
-	end
-
-	local character = player.Character
-	if not character then
-		return
-	end
-
-	NoclipState.SetActive(player, enabled)
-	for _, descendant in character:GetDescendants() do
-		if descendant:IsA("BasePart") then
-			descendant.CanCollide = not enabled
+local onRequestSetNoclip = DevToolsService.RegisterDevOnly(
+	function(player: Player, enabled: boolean)
+		local limiter = noclipRateLimiters[player]
+		if not limiter or not limiter:TryAcquire() then
+			return
 		end
-	end
 
-	if not enabled then
-		-- Same "reset the baseline, don't pad the tolerance" fix as the
-		-- teleport handler above: while noclipping, enforceSpeedSanity skips
-		-- this session entirely and its speed-check baseline goes stale, so
-		-- the moment collision/gravity resume, this avoids comparing the
-		-- discontinuous re-entry position against wherever the player was
-		-- flying long before.
-		CharacterTeleported:Fire(player)
-	end
+		local character = player.Character
+		if not character then
+			return
+		end
 
-	Network.NoclipState.Fire(player, enabled)
-end)
+		NoclipState.SetActive(player, enabled)
+		for _, descendant in character:GetDescendants() do
+			if descendant:IsA("BasePart") then
+				descendant.CanCollide = not enabled
+			end
+		end
+
+		if not enabled then
+			-- Same "reset the baseline, don't pad the tolerance" fix as the
+			-- teleport handler above: while noclipping, enforceSpeedSanity skips
+			-- this session entirely and its speed-check baseline goes stale, so
+			-- the moment collision/gravity resume, this avoids comparing the
+			-- discontinuous re-entry position against wherever the player was
+			-- flying long before.
+			CharacterTeleported:Fire(player)
+		end
+
+		Network.NoclipState.Fire(player, enabled)
+	end
+)
 
 -- F4 overlay open/close (docs/MOVEMENT.md §10, `TRAVERSAL-ROADMAP.md` Phase
 -- 0 cleanup). `DebugOverlayState` is what `MovementValidationService.
 -- broadcastDebugState` gates its per-Heartbeat broadcast on -- without this,
 -- that broadcast runs unconditionally for every connected developer
 -- regardless of whether their panel is even visible.
-local onRequestSetDebugOverlayOpen = DevToolsService.RegisterDevOnly(function(player: Player, isOpen: boolean)
-	local limiter = debugOverlayOpenRateLimiters[player]
-	if not limiter or not limiter:tryAcquire() then
-		return
-	end
+local onRequestSetDebugOverlayOpen = DevToolsService.RegisterDevOnly(
+	function(player: Player, isOpen: boolean)
+		local limiter = debugOverlayOpenRateLimiters[player]
+		if not limiter or not limiter:TryAcquire() then
+			return
+		end
 
-	DebugOverlayState.SetOpen(player, isOpen)
-end)
+		DebugOverlayState.SetOpen(player, isOpen)
+	end
+)
 
 local function onPlayerAdded(player: Player)
 	teleportRateLimiters[player] = RateLimiter.new(TELEPORT_CLAIMS_PER_SECOND, 1)

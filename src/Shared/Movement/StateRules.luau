@@ -275,7 +275,8 @@ local CanEnter: { [MovementState]: (context: MovementContext) -> boolean } = {
 			return false
 		end
 		local tangent = TraversalMath.WallRunTangent(wallQuery.normal, context.horizontalVelocity)
-		return context.moveIntent.direction.Unit:Dot(tangent) >= context.constants.WallRunEntryDotThreshold
+		return context.moveIntent.direction.Unit:Dot(tangent)
+			>= context.constants.WallRunEntryDotThreshold
 	end,
 }
 

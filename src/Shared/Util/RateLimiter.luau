@@ -1,7 +1,7 @@
 --!strict
 
 export type RateLimiter = {
-	tryAcquire: (self: RateLimiter) -> boolean,
+	TryAcquire: (self: RateLimiter) -> boolean,
 }
 
 local RateLimiter = {}
@@ -36,7 +36,7 @@ end
 
 -- Returns true and records the call if under the limit; returns false (and
 -- records nothing) if the caller is currently over the limit.
-function RateLimiter:tryAcquire(): boolean
+function RateLimiter:TryAcquire(): boolean
 	local now = os.clock()
 	pruneExpired(self, now)
 

@@ -12,14 +12,44 @@ local AirborneState = {}
 
 AirborneState.CanEnter = StateRules.CanEnter[MovementStates.Airborne]
 
--- Thin re-export of the shared landing-resolution logic (Shared/Movement/
+-- MediumLanding severity of the most recent landing this life, for
+-- LocomotionAnimator's own getter-injection (same pattern as WallRunState.
+-- GetEntrySide) -- set here, BEFORE `RequestTransition`/`changed:Fire` below,
+-- so every `fsm.changed` subscriber sees it fresh regardless of connection
+-- order.
+local lastLandingWasMedium = false
+
+-- Wraps the shared landing-resolution logic (Shared/Movement/
 -- LandingResolution.luau, unified there during the 2026-09-15 cleanup pass --
 -- this used to be a full copy, hand-duplicated with the server's own
--- `resolveLandingTarget`). Kept under this name, not renamed, since
--- DoubleJumpState and HardLandingState both call `AirborneState.
--- ResolveLandingTarget` directly -- see LandingResolution.luau itself for the
--- full reasoning behind the branching.
-AirborneState.ResolveLandingTarget = LandingResolution.Resolve
+-- `resolveLandingTarget`) with the client-only MediumLanding effect
+-- (animation + WalkSpeed slow, a third landing tier alongside the existing
+-- light `Land` and real `HardLanding` state) -- deliberately NOT added to
+-- the shared function itself, which stays a pure,
+-- side-effect-free target-state lookup both client and server call
+-- identically. DoubleJumpState and HardLandingState both call this same
+-- wrapper (not `LandingResolution.Resolve` directly), so the effect fires
+-- from every real landing edge without being duplicated per call site.
+function AirborneState.ResolveLandingTarget(
+	context: ClientMovementContext
+): MovementStates.MovementState
+	local target = LandingResolution.Resolve(context)
+	local isMedium = target ~= MovementStates.HardLanding
+		and context.fallHeight ~= nil
+		and (context.fallHeight :: number) >= context.constants.MediumLandingHeightThreshold
+	lastLandingWasMedium = isMedium
+	if isMedium then
+		context.characterMover:ApplyLandingSlow(
+			context.constants.MediumLandingSpeedMultiplier,
+			context.constants.MediumLandingDurationSeconds
+		)
+	end
+	return target
+end
+
+function AirborneState.GetLastLandingWasMedium(): boolean
+	return lastLandingWasMedium
+end
 
 function AirborneState.Enter(_context: ClientMovementContext) end
 

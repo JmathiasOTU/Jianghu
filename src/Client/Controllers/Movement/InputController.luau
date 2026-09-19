@@ -106,7 +106,8 @@ function InputController.new(): InputController
 				local now = os.clock()
 				if
 					self._lastWPressAt
-					and now - self._lastWPressAt <= TuningSnapshot.Get().RunDoubleTapWindowSeconds
+					and now - self._lastWPressAt
+						<= TuningSnapshot.Get().RunDoubleTapWindowSeconds
 				then
 					self.RunRequested:Fire()
 					self._lastWPressAt = nil

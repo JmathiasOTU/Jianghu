@@ -84,7 +84,8 @@ function SpatialQueries.QueryWallRun(
 		-- register a hit at all, which is exactly the "too close, won't
 		-- activate" symptom this fixes.
 		local pulledBackOrigin = origin - direction * radius
-		local result = Workspace:Spherecast(pulledBackOrigin, radius, direction * (distance + radius), params)
+		local result =
+			Workspace:Spherecast(pulledBackOrigin, radius, direction * (distance + radius), params)
 		if not result then
 			return nil
 		end

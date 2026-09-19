@@ -63,11 +63,16 @@ local FULL_FORCE = Vector3.new(math.huge, math.huge, math.huge)
 -- Locked tangent (constants.WallRunSpeed) + a clamped P-controller cling
 -- correction along the LIVE wall normal (guideline §3's "Cling Distance"
 -- subsection) -- one SetVelocityOverride call, not a separate constraint.
-local function applyVelocity(context: ClientMovementContext, wallQuery: SpatialQueries.WallRunQueryResult)
+local function applyVelocity(
+	context: ClientMovementContext,
+	wallQuery: SpatialQueries.WallRunQueryResult
+)
 	local tangent = entryTangent :: Vector3
 	local horizontal = tangent * context.constants.WallRunSpeed
 
-	local currentOffset = (context.characterMover:GetPosition() - wallQuery.position):Dot(wallQuery.normal)
+	local currentOffset = (context.characterMover:GetPosition() - wallQuery.position):Dot(
+		wallQuery.normal
+	)
 	local offsetError = context.constants.WallRunClingDistance - currentOffset
 	local clingCorrection = wallQuery.normal
 		* math.clamp(
@@ -102,7 +107,9 @@ function WallRunState.Enter(context: ClientMovementContext)
 	-- whatever the entry approach angle/distance was to a flush
 	-- WallRunClingDistance offset, before the first velocity override is even
 	-- applied.
-	local currentOffset = (context.characterMover:GetPosition() - wallQuery.position):Dot(wallQuery.normal)
+	local currentOffset = (context.characterMover:GetPosition() - wallQuery.position):Dot(
+		wallQuery.normal
+	)
 	local correction = wallQuery.normal * (context.constants.WallRunClingDistance - currentOffset)
 	context.characterMover:NudgeIntoWall(correction)
 

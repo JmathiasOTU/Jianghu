@@ -67,7 +67,11 @@ function DoubleJumpState.Update(_dt: number, context: ClientMovementContext)
 		return
 	end
 
-	local velocity = TraversalMath.DoubleJumpVerticalVelocity(elapsed, context.constants.DoubleJumpForce, decayDuration)
+	local velocity = TraversalMath.DoubleJumpVerticalVelocity(
+		elapsed,
+		context.constants.DoubleJumpForce,
+		decayDuration
+	)
 	context.characterMover:SetVelocityOverride(Vector3.new(0, velocity, 0), VERTICAL_ONLY_FORCE)
 end
 

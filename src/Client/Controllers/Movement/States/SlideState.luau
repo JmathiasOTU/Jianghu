@@ -72,7 +72,10 @@ function SlideState.Enter(context: ClientMovementContext)
 	cachedGroundQuery = context.characterMover:QueryGround()
 
 	context.characterMover:SetSpeed(0)
-	context.characterMover:SetVelocityOverride((currentDirection :: Vector3) * (currentSpeed :: number), HORIZONTAL_ONLY_FORCE)
+	context.characterMover:SetVelocityOverride(
+		(currentDirection :: Vector3) * (currentSpeed :: number),
+		HORIZONTAL_ONLY_FORCE
+	)
 end
 
 -- Speed decays via LINEAR friction (docs/MOVEMENT.md §9,
@@ -163,7 +166,9 @@ function SlideState.Update(dt: number, context: ClientMovementContext)
 	-- closed-form decay window.
 	if speed <= context.constants.CrouchSpeed then
 		context.fsm:RequestTransition(
-			if StateRules.HasMoveInput(context) then MovementStates.CrouchWalk else MovementStates.CrouchIdle,
+			if StateRules.HasMoveInput(context)
+				then MovementStates.CrouchWalk
+				else MovementStates.CrouchIdle,
 			context
 		)
 	end

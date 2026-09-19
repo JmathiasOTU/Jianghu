@@ -78,7 +78,10 @@ local LandingResolution = {}
 -- function re-run from there falls straight through to the normal branches
 -- below -- no separate "already handled" flag needed.
 function LandingResolution.Resolve(context: MovementContext): MovementStates.MovementState
-	if context.fallHeight and context.fallHeight >= context.constants.HardLandingHeightThreshold then
+	if
+		context.fallHeight
+		and context.fallHeight >= context.constants.HardLandingHeightThreshold
+	then
 		return MovementStates.HardLanding
 	end
 	local hasInput = StateRules.HasMoveInput(context)

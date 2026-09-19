@@ -124,7 +124,8 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 	local humanoid = character:WaitForChild("Humanoid") :: Humanoid
 	local rootPart = character:WaitForChild("HumanoidRootPart") :: BasePart
 
-	local characterMover = lifeTrove:Add(CharacterMover.new(humanoid, TuningSnapshot.Get().JumpPower))
+	local characterMover =
+		lifeTrove:Add(CharacterMover.new(humanoid, TuningSnapshot.Get().JumpPower))
 	local noclip = lifeTrove:Add(NoclipController.new(humanoid, rootPart, input))
 	local fsm = lifeTrove:Add(
 		StateMachine.new(MovementStates.Idle, StateRules.Transitions, StateRules.CanEnter)
@@ -136,7 +137,17 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 	-- reached via `buildContext`'s `facingController` field below like every
 	-- other client-only accessor.
 	local facingController = lifeTrove:Add(FacingController.new(humanoid, rootPart))
-	lifeTrove:Add(LocomotionAnimator.new(humanoid, rootPart, fsm, input, characterMover, WallRunState.GetEntrySide))
+	lifeTrove:Add(
+		LocomotionAnimator.new(
+			humanoid,
+			rootPart,
+			fsm,
+			input,
+			characterMover,
+			WallRunState.GetEntrySide,
+			AirborneState.GetLastLandingWasMedium
+		)
+	)
 
 	-- Live tuning (docs/MOVEMENT.md §8): pushes the server's effective-constants
 	-- broadcast into TuningSnapshot and re-applies JumpPower immediately, since
@@ -161,6 +172,9 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 			LandingAnimationHoldSeconds = value.landingAnimationHoldSeconds,
 			HardLandingHeightThreshold = value.hardLandingHeightThreshold,
 			HardLandingDurationSeconds = value.hardLandingDurationSeconds,
+			MediumLandingHeightThreshold = value.mediumLandingHeightThreshold,
+			MediumLandingDurationSeconds = value.mediumLandingDurationSeconds,
+			MediumLandingSpeedMultiplier = value.mediumLandingSpeedMultiplier,
 			DoubleJumpForce = value.doubleJumpForce,
 			DoubleJumpDecayDurationSeconds = value.doubleJumpDecayDurationSeconds,
 			SlideSlopeAngleThresholdDegrees = value.slideSlopeAngleThresholdDegrees,
@@ -315,11 +329,22 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 		-- module-local variables, never the context table itself.
 		local context = buildContext()
 		States[previous].Exit(context)
-		States[next].Enter(context)
 
-		-- F4 debug overlay state history (docs/MOVEMENT.md §8): populated off
-		-- this existing `fsm.changed` connection, not a new one.
+		-- F4 debug overlay state history (docs/MOVEMENT.md §8): recorded
+		-- BEFORE `Enter` below, not after (fixed 2026-09-18, external audit
+		-- finding) -- `WallLeapState`/`SlideJumpState`'s own `Enter` calls
+		-- `RequestTransition` synchronously, reentrantly firing THIS SAME
+		-- `fsm.changed` handler for their own hand-off to Airborne before this
+		-- call even returns. Recording AFTER `Enter` meant the reentrant
+		-- inner transition's own `RecordTransition` call landed first,
+		-- scrambling the history's real chronological order (e.g. showing
+		-- "WallLeap" as more recent than the "Airborne" it actually leads
+		-- into). `RecordTransition` only appends a string to a list -- it
+		-- reads nothing off `context` and has no dependency on `Enter` having
+		-- run first, so moving it earlier is free.
 		DebugSnapshot.RecordTransition(DEBUG_STATE_NAMES[next])
+
+		States[next].Enter(context)
 
 		-- Passability (docs/MOVEMENT.md §9): switched on every transition, not
 		-- gated on "did the group actually change" -- cheap enough, and
@@ -435,6 +460,12 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 	-- WallRun" and "the press that leaps out of it" can never be the same
 	-- press.
 	lifeTrove:Connect(input.JumpRequested, function()
+		-- Force a fresh probe here rather than reusing the throttled Heartbeat
+		-- cache -- same staleness fix as the server's `updateWallRunQuery(session, true)`.
+		if fsm.current ~= MovementStates.WallRun and not characterMover:IsGrounded() then
+			wallRunQuery = characterMover:QueryWallRun()
+			wallRunQueryAccumulatedDt = 0
+		end
 		local context = buildContext()
 		if fsm.current == MovementStates.WallRun then
 			fsm:RequestTransition(MovementStates.WallLeap, context)
@@ -494,11 +525,13 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 		if WALLRUN_DEBUG_LOGGING and wallRunQuery ~= wallRunQueryLastLogged then
 			wallRunQueryLastLogged = wallRunQuery
 			if wallRunQuery then
-				print(string.format(
-					"[WallRunQuery] side=%s normal=%s",
-					wallRunQuery.side,
-					tostring(wallRunQuery.normal)
-				))
+				print(
+					string.format(
+						"[WallRunQuery] side=%s normal=%s",
+						wallRunQuery.side,
+						tostring(wallRunQuery.normal)
+					)
+				)
 			else
 				print("[WallRunQuery] no wall")
 			end
@@ -516,21 +549,32 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 				wallRunCanEnterLastLogged = canEnter
 				local speed = debugContext.horizontalVelocity.Magnitude
 				if wallRunQuery then
-					local tangent = TraversalMath.WallRunTangent(wallRunQuery.normal, debugContext.horizontalVelocity)
+					local tangent = TraversalMath.WallRunTangent(
+						wallRunQuery.normal,
+						debugContext.horizontalVelocity
+					)
 					local dot = if debugContext.moveIntent.direction.Magnitude > 0
 						then debugContext.moveIntent.direction.Unit:Dot(tangent)
 						else 0
-					print(string.format(
-						"[WallRunCanEnter] %s speed=%.1f (need>=%.1f) dot=%.2f (need>=%.2f) tangent=%s",
-						tostring(canEnter),
-						speed,
-						debugContext.constants.WallRunMinEntrySpeed,
-						dot,
-						debugContext.constants.WallRunEntryDotThreshold,
-						tostring(tangent)
-					))
+					print(
+						string.format(
+							"[WallRunCanEnter] %s speed=%.1f (need>=%.1f) dot=%.2f (need>=%.2f) tangent=%s",
+							tostring(canEnter),
+							speed,
+							debugContext.constants.WallRunMinEntrySpeed,
+							dot,
+							debugContext.constants.WallRunEntryDotThreshold,
+							tostring(tangent)
+						)
+					)
 				else
-					print(string.format("[WallRunCanEnter] %s (no wall) speed=%.1f", tostring(canEnter), speed))
+					print(
+						string.format(
+							"[WallRunCanEnter] %s (no wall) speed=%.1f",
+							tostring(canEnter),
+							speed
+						)
+					)
 				end
 			end
 		end
@@ -546,7 +590,10 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 		-- reasoning as Run/Sprint's own resync above) -- independent of
 		-- `fsm.current` on purpose, since the crouch flag matters even while
 		-- Airborne (see the mid-air comment above).
-		if input:IsCrouchHeld() and os.clock() - lastCrouchResyncAt >= CLAIM_RESYNC_INTERVAL_SECONDS then
+		if
+			input:IsCrouchHeld()
+			and os.clock() - lastCrouchResyncAt >= CLAIM_RESYNC_INTERVAL_SECONDS
+		then
 			Network.RequestMovementTransition.Fire("CrouchDown")
 			lastCrouchResyncAt = os.clock()
 		end

@@ -1,6 +1,7 @@
 --!strict
 local ContextActionService = game:GetService("ContextActionService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 
 local Trove = require(ReplicatedStorage.Packages.Trove)
 local SpatialQueries = require(ReplicatedStorage.Shared.Movement.SpatialQueries)
@@ -18,6 +19,7 @@ local GROUNDED_STATES = {
 export type CharacterMover = {
 	SetSpeed: (self: CharacterMover, speed: number) -> (),
 	GetSpeed: (self: CharacterMover) -> number,
+	ApplyLandingSlow: (self: CharacterMover, multiplier: number, duration: number) -> (),
 	SetJumpPower: (self: CharacterMover, jumpPower: number) -> (),
 	IsGrounded: (self: CharacterMover) -> boolean,
 	IsJumping: (self: CharacterMover) -> boolean,
@@ -101,11 +103,42 @@ function CharacterMover.new(humanoid: Humanoid, jumpPower: number): CharacterMov
 	self._trove:Add(attachment)
 	self._linearVelocity = self._trove:Add(linearVelocity)
 
+	-- MediumLanding's WalkSpeed slow (ApplyLandingSlow below) needs to wear
+	-- off on its own timer even if the player never changes state during the
+	-- window (SetSpeed is only ever called again on the NEXT state's Enter,
+	-- which wouldn't happen for a while if they just keep walking) -- so this
+	-- re-applies `_baseSpeed * penalty` every Heartbeat instead of leaving the
+	-- discounted WalkSpeed stuck until the next unrelated transition.
+	self._baseSpeed = 0
+	self._speedPenaltyMultiplier = 1
+	self._speedPenaltyUntil = 0
+	self._trove:Connect(RunService.Heartbeat, function()
+		self:_applySpeed()
+	end)
+
 	return self
 end
 
+function CharacterMover:_applySpeed()
+	local multiplier = if os.clock() < self._speedPenaltyUntil
+		then self._speedPenaltyMultiplier
+		else 1
+	self._humanoid.WalkSpeed = self._baseSpeed * multiplier
+end
+
 function CharacterMover:SetSpeed(speed: number)
-	self._humanoid.WalkSpeed = speed
+	self._baseSpeed = speed
+	self:_applySpeed()
+end
+
+-- MediumLanding (no FSM state of its own -- see
+-- AirborneState.ResolveLandingTarget): a temporary WalkSpeed multiplier,
+-- transparent to every caller of SetSpeed above, so no individual state
+-- needs to know landing recovery is happening.
+function CharacterMover:ApplyLandingSlow(multiplier: number, duration: number)
+	self._speedPenaltyMultiplier = multiplier
+	self._speedPenaltyUntil = os.clock() + duration
+	self:_applySpeed()
 end
 
 -- Real flattened horizontal velocity vector (docs/MOVEMENT.md §9, extended
@@ -307,7 +340,12 @@ function CharacterMover:QueryWallRun(
 	if not rootPart then
 		return nil
 	end
-	return SpatialQueries.QueryWallRun(rootPart, self._humanoid.Parent :: Instance, castRadius, castDistance)
+	return SpatialQueries.QueryWallRun(
+		rootPart,
+		self._humanoid.Parent :: Instance,
+		castRadius,
+		castDistance
+	)
 end
 
 function CharacterMover:Destroy()

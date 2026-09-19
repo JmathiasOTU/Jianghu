@@ -22,6 +22,14 @@ type MovementContext = MovementTypes.MovementContext
 -- with DIRECTION_NAMES below -- it should never block a real, up-to-date sync.
 local ANIMATION_LOOKUP_TIMEOUT_SECONDS = 1
 
+-- Diagnostic capture for animation loading, same `*_DEBUG_LOGGING` convention
+-- every other opt-in print in this codebase already follows (found in an
+-- external audit 2026-09-18 -- these two prints ran unconditionally on every
+-- spawn/track load, unlike everywhere else). The missing-child `warn` below
+-- stays unconditional -- that one signals a real sync/name mismatch worth
+-- always seeing, not routine load confirmation.
+local ANIMATION_LOAD_DEBUG_LOGGING = false
+
 local DIRECTION_NAMES: { string } =
 	{ "Forward", "ForwardRight", "Right", "BackRight", "Back", "BackLeft", "Left", "ForwardLeft" }
 
@@ -100,23 +108,27 @@ local function loadTrack(
 		return nil
 	end
 	if animation.AnimationId == "" then
-		print(
-			string.format(
-				"[LocomotionAnimator] %s.%s found but AnimationId is blank -- not authored yet",
-				container:GetFullName(),
-				name
+		if ANIMATION_LOAD_DEBUG_LOGGING then
+			print(
+				string.format(
+					"[LocomotionAnimator] %s.%s found but AnimationId is blank -- not authored yet",
+					container:GetFullName(),
+					name
+				)
 			)
-		)
+		end
 		return nil
 	end
-	print(
-		string.format(
-			"[LocomotionAnimator] loaded %s.%s (%s)",
-			container:GetFullName(),
-			name,
-			animation.AnimationId
+	if ANIMATION_LOAD_DEBUG_LOGGING then
+		print(
+			string.format(
+				"[LocomotionAnimator] loaded %s.%s (%s)",
+				container:GetFullName(),
+				name,
+				animation.AnimationId
+			)
 		)
-	)
+	end
 	local track = trove:Add(animator:LoadAnimation(animation), "Destroy")
 	track.Looped = looped
 	return track
@@ -136,7 +148,8 @@ function LocomotionAnimator.new(
 	fsm: StateMachine.StateMachine<MovementState, MovementContext>,
 	inputController: InputController.InputController,
 	characterMover: CharacterMover.CharacterMover,
-	getWallRunSide: () -> ("Left" | "Right")?
+	getWallRunSide: () -> ("Left" | "Right")?,
+	getLastLandingWasMedium: () -> boolean
 ): LocomotionAnimator
 	local self = setmetatable({}, LocomotionAnimator) :: any
 	self._trove = Trove.new()
@@ -146,6 +159,7 @@ function LocomotionAnimator.new(
 	self._inputController = inputController
 	self._characterMover = characterMover
 	self._getWallRunSide = getWallRunSide
+	self._getLastLandingWasMedium = getLastLandingWasMedium
 	self._currentKey = nil :: string?
 	-- Which side WallRun was last locked to (Wall Run & Leap Mechanic
 	-- Guideline §1/§3, animation wiring 2026-09-18) -- captured the instant
@@ -182,7 +196,11 @@ function LocomotionAnimator.new(
 		end)
 	end
 
-	print("[LocomotionAnimator] new() constructing for " .. (character and character.Name or "?"))
+	if ANIMATION_LOAD_DEBUG_LOGGING then
+		print(
+			"[LocomotionAnimator] new() constructing for " .. (character and character.Name or "?")
+		)
+	end
 	local animator = humanoid:WaitForChild("Animator") :: Animator
 
 	self._tracks = {} :: { [string]: AnimationTrack? }
@@ -210,6 +228,7 @@ function LocomotionAnimator.new(
 	self._tracks.SlideJump = loadTrack(animator, ANIMATIONS_ROOT, "SlideJump", self._trove, false)
 	self._tracks.Fall = loadTrack(animator, ANIMATIONS_ROOT, "Fall", self._trove, true)
 	self._tracks.Land = loadTrack(animator, ANIMATIONS_ROOT, "Land", self._trove, false)
+	self._tracks.LandMedium = loadTrack(animator, ANIMATIONS_ROOT, "LandMedium", self._trove, false)
 	self._tracks.LandHard = loadTrack(animator, ANIMATIONS_ROOT, "LandHard", self._trove, false)
 	-- DoubleJump (TRAVERSAL-ROADMAP.md Phase 1): a one-shot, not looped -- the
 	-- impulse itself is a short, fixed-duration decay (DoubleJumpDecayDurationSeconds),
@@ -222,10 +241,40 @@ function LocomotionAnimator.new(
 	-- already established -- the mechanic itself is inherently
 	-- handed/directional (which arm/leg plants against the wall), not
 	-- something a single mirrored clip could represent.
-	self._tracks.WallRunLeft = loadTrack(animator, ANIMATIONS_ROOT, "WallRunLeft", self._trove, true)
-	self._tracks.WallRunRight = loadTrack(animator, ANIMATIONS_ROOT, "WallRunRight", self._trove, true)
-	self._tracks.WallLeapLeft = loadTrack(animator, ANIMATIONS_ROOT, "WallLeapLeft", self._trove, false)
-	self._tracks.WallLeapRight = loadTrack(animator, ANIMATIONS_ROOT, "WallLeapRight", self._trove, false)
+	self._tracks.WallRunLeft =
+		loadTrack(animator, ANIMATIONS_ROOT, "WallRunLeft", self._trove, true)
+	self._tracks.WallRunRight =
+		loadTrack(animator, ANIMATIONS_ROOT, "WallRunRight", self._trove, true)
+	self._tracks.WallLeapLeft =
+		loadTrack(animator, ANIMATIONS_ROOT, "WallLeapLeft", self._trove, false)
+	self._tracks.WallLeapRight =
+		loadTrack(animator, ANIMATIONS_ROOT, "WallLeapRight", self._trove, false)
+
+	-- Belt-and-suspenders against anything else that plays a track on this
+	-- Animator (playtest bug 2026-09-18: "basic Roblox animations fighting
+	-- with mine," recurring even with the "Animate" script destroyed above).
+	-- Destroying "Animate" by NAME only helps if a script by that exact name
+	-- is always the culprit -- this instead watches the `Animator` instance
+	-- itself, which is the one thing EVERY animation source (a script, a
+	-- `HumanoidDescription`-driven default, a leftover baked track on the
+	-- rig) has to go through to actually play anything. Any track that
+	-- starts playing here and isn't one WE loaded gets stopped immediately,
+	-- no fade -- there's nothing legitimate for a foreign track to blend
+	-- with, so a fade would just prolong the visible fight. Built from
+	-- `self._tracks` AFTER every `loadTrack` call above, not incrementally,
+	-- so a blank-AnimationId slot (`loadTrack` returning `nil`) is correctly
+	-- absent from the allow-list rather than needing a nil-check per entry.
+	local ownTracks: { [AnimationTrack]: true } = {}
+	for _, track in self._tracks do
+		if track then
+			ownTracks[track] = true
+		end
+	end
+	self._trove:Connect(animator.AnimationPlayed, function(track: AnimationTrack)
+		if not ownTracks[track] then
+			track:Stop(0)
+		end
+	end)
 
 	-- Landing detection (docs/MOVEMENT.md §10; corrected TRAVERSAL-ROADMAP.md
 	-- Phase 1; simplified again once HardLanding became a real FSM state): an
@@ -293,12 +342,24 @@ function LocomotionAnimator.new(
 
 		local fromAirborneFamily = previous == MovementStates.Airborne
 			or previous == MovementStates.DoubleJump
-		if not fromAirborneFamily or not self._characterMover:IsGrounded() or next == MovementStates.HardLanding then
+		if
+			not fromAirborneFamily
+			or not self._characterMover:IsGrounded()
+			or next == MovementStates.HardLanding
+		then
 			return
 		end
 		-- An immediate landing (e.g. a slide jump off a tiny ledge) should show
 		-- the real landing clip, not keep holding a one-shot past its welcome.
-		self:_setTransientHold("Land", TuningSnapshot.Get().LandingAnimationHoldSeconds)
+		-- MediumLanding (set by AirborneState.ResolveLandingTarget BEFORE this
+		-- `fsm.changed` fires, same ordering guarantee `_lastWallRunSide` above
+		-- relies on) holds for its own full duration, not the short `Land`
+		-- bridge window -- it's a real recovery animation, not a blend-in pose.
+		if self._getLastLandingWasMedium() then
+			self:_setTransientHold("LandMedium", TuningSnapshot.Get().MediumLandingDurationSeconds)
+		else
+			self:_setTransientHold("Land", TuningSnapshot.Get().LandingAnimationHoldSeconds)
+		end
 	end)
 
 	self._trove:Connect(RunService.RenderStepped, function()

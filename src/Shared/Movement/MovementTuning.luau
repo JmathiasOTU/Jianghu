@@ -27,6 +27,9 @@ export type TunableConstantName =
 	| "LandingAnimationHoldSeconds"
 	| "HardLandingHeightThreshold"
 	| "HardLandingDurationSeconds"
+	| "MediumLandingHeightThreshold"
+	| "MediumLandingDurationSeconds"
+	| "MediumLandingSpeedMultiplier"
 	| "DoubleJumpForce"
 	| "DoubleJumpDecayDurationSeconds"
 	| "SlideSlopeAngleThresholdDegrees"
@@ -71,6 +74,9 @@ export type EffectiveMovementConstants = {
 	LandingAnimationHoldSeconds: number,
 	HardLandingHeightThreshold: number,
 	HardLandingDurationSeconds: number,
+	MediumLandingHeightThreshold: number,
+	MediumLandingDurationSeconds: number,
+	MediumLandingSpeedMultiplier: number,
 	DoubleJumpForce: number,
 	DoubleJumpDecayDurationSeconds: number,
 	SlideSlopeAngleThresholdDegrees: number,
@@ -110,6 +116,9 @@ local TUNABLE_NAMES: { TunableConstantName } = {
 	"LandingAnimationHoldSeconds",
 	"HardLandingHeightThreshold",
 	"HardLandingDurationSeconds",
+	"MediumLandingHeightThreshold",
+	"MediumLandingDurationSeconds",
+	"MediumLandingSpeedMultiplier",
 	"DoubleJumpForce",
 	"DoubleJumpDecayDurationSeconds",
 	"SlideSlopeAngleThresholdDegrees",
@@ -158,6 +167,14 @@ local VALID_RANGES: { [TunableConstantName]: { min: number, max: number } } = {
 	-- stretch it for testing, but can't zero it out into a permanent lock nor
 	-- push it absurdly long by fat-fingering the F4 input box.
 	HardLandingDurationSeconds = { min = 0.1, max = 10 },
+	-- Same reasoning as HardLandingHeightThreshold above, just for the lower tier.
+	MediumLandingHeightThreshold = { min = 0, max = 2000 },
+	-- Same reasoning as HardLandingDurationSeconds above, tighter since the
+	-- real clip is much shorter (~0.55s).
+	MediumLandingDurationSeconds = { min = 0.05, max = 5 },
+	-- A WalkSpeed multiplier, not a speed -- 0 pins it like HardLanding, 2 lets
+	-- a developer experiment with a landing BOOST instead of a slow.
+	MediumLandingSpeedMultiplier = { min = 0, max = 2 },
 	DoubleJumpForce = { min = 0, max = 500 },
 	DoubleJumpDecayDurationSeconds = { min = 0.05, max = 5 },
 	SlideSlopeAngleThresholdDegrees = { min = 0, max = 89 },
@@ -202,6 +219,9 @@ function MovementTuning.Defaults(): EffectiveMovementConstants
 		LandingAnimationHoldSeconds = MovementConstants.LandingAnimationHoldSeconds,
 		HardLandingHeightThreshold = MovementConstants.HardLandingHeightThreshold,
 		HardLandingDurationSeconds = MovementConstants.HardLandingDurationSeconds,
+		MediumLandingHeightThreshold = MovementConstants.MediumLandingHeightThreshold,
+		MediumLandingDurationSeconds = MovementConstants.MediumLandingDurationSeconds,
+		MediumLandingSpeedMultiplier = MovementConstants.MediumLandingSpeedMultiplier,
 		DoubleJumpForce = MovementConstants.DoubleJumpForce,
 		DoubleJumpDecayDurationSeconds = MovementConstants.DoubleJumpDecayDurationSeconds,
 		SlideSlopeAngleThresholdDegrees = MovementConstants.SlideSlopeAngleThresholdDegrees,

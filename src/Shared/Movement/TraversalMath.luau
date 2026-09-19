@@ -18,7 +18,11 @@ local UP = Vector3.new(0, 1, 0)
 -- back to Airborne once its own duration/landing condition is met -- this
 -- function only ever describes "what should the impulse read right now",
 -- never when to stop applying it).
-function TraversalMath.DoubleJumpVerticalVelocity(elapsed: number, force: number, decayDuration: number): number
+function TraversalMath.DoubleJumpVerticalVelocity(
+	elapsed: number,
+	force: number,
+	decayDuration: number
+): number
 	local t = if decayDuration > 0 then math.clamp(elapsed / decayDuration, 0, 1) else 1
 	return force * (1 - 0.5 * t)
 end

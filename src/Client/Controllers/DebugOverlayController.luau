@@ -177,12 +177,16 @@ function DebugOverlayController.Init()
 	local tuningTab = tabContent:WaitForChild("TuningTab") :: ScrollingFrame
 
 	local clientSection = movementTab:WaitForChild("ClientSection")
-	local clientStateValue = clientSection:WaitForChild("RowState"):WaitForChild("Value") :: TextLabel
-	local clientGroundedValue = clientSection:WaitForChild("RowGrounded"):WaitForChild("Value") :: TextLabel
+	local clientStateValue =
+		clientSection:WaitForChild("RowState"):WaitForChild("Value") :: TextLabel
+	local clientGroundedValue =
+		clientSection:WaitForChild("RowGrounded"):WaitForChild("Value") :: TextLabel
 	local clientRunDurationValue =
 		clientSection:WaitForChild("RowRunDuration"):WaitForChild("Value") :: TextLabel
-	local clientSpeedValue = clientSection:WaitForChild("RowSpeed"):WaitForChild("Value") :: TextLabel
-	local clientVelocityValue = clientSection:WaitForChild("RowVelocity"):WaitForChild("Value") :: TextLabel
+	local clientSpeedValue =
+		clientSection:WaitForChild("RowSpeed"):WaitForChild("Value") :: TextLabel
+	local clientVelocityValue =
+		clientSection:WaitForChild("RowVelocity"):WaitForChild("Value") :: TextLabel
 	local clientRotVelocityValue =
 		clientSection:WaitForChild("RowRotVelocity"):WaitForChild("Value") :: TextLabel
 
@@ -193,14 +197,16 @@ function DebugOverlayController.Init()
 	end
 
 	local serverSection = movementTab:WaitForChild("ServerSection")
-	local serverStateValue = serverSection:WaitForChild("RowState"):WaitForChild("Value") :: TextLabel
+	local serverStateValue =
+		serverSection:WaitForChild("RowState"):WaitForChild("Value") :: TextLabel
 	local serverRunDurationValue =
 		serverSection:WaitForChild("RowRunDuration"):WaitForChild("Value") :: TextLabel
 	local serverViolationsValue =
 		serverSection:WaitForChild("RowViolations"):WaitForChild("Value") :: TextLabel
 	local mismatchFlag = serverSection:WaitForChild("MismatchFlag") :: TextLabel
 
-	local violationHistoryList = movementTab:WaitForChild("ViolationHistorySection"):WaitForChild("List")
+	local violationHistoryList =
+		movementTab:WaitForChild("ViolationHistorySection"):WaitForChild("List")
 	local violationHistoryRows: { TextLabel } = {}
 	for i = 1, 5 do
 		violationHistoryRows[i] = violationHistoryList:WaitForChild("Row" .. i) :: TextLabel
@@ -223,12 +229,15 @@ function DebugOverlayController.Init()
 	local teleportStatusLabel = teleportSection:WaitForChild("Status") :: TextLabel
 
 	local noclipSection = worldTab:WaitForChild("NoclipSection")
-	local noclipToggleButton = noclipSection:WaitForChild("ToggleRow"):WaitForChild("ToggleButton") :: TextButton
+	local noclipToggleButton =
+		noclipSection:WaitForChild("ToggleRow"):WaitForChild("ToggleButton") :: TextButton
 	local noclipStatusLabel = noclipSection:WaitForChild("Status") :: TextLabel
 
 	local waypointsSection = worldTab:WaitForChild("WaypointsSection")
-	local waypointNameBox = waypointsSection:WaitForChild("SaveRow"):WaitForChild("NameBox") :: TextBox
-	local waypointSaveButton = waypointsSection:WaitForChild("SaveRow"):WaitForChild("SaveButton") :: TextButton
+	local waypointNameBox =
+		waypointsSection:WaitForChild("SaveRow"):WaitForChild("NameBox") :: TextBox
+	local waypointSaveButton =
+		waypointsSection:WaitForChild("SaveRow"):WaitForChild("SaveButton") :: TextButton
 	local waypointStatusLabel = waypointsSection:WaitForChild("Status") :: TextLabel
 	local waypointList = waypointsSection:WaitForChild("List")
 	local waypointRows: { { row: Frame, nameLabel: TextLabel, jumpButton: TextButton, deleteButton: TextButton } } =
@@ -462,7 +471,8 @@ function DebugOverlayController.Init()
 	-- GuiObject, not Frame -- `tuningTab` is a ScrollingFrame now, and this
 	-- table only ever touches `.Visible`, which both classes share via their
 	-- common GuiObject ancestor.
-	local tabPages: { [string]: GuiObject } = { Movement = movementTab, World = worldTab, Tuning = tuningTab }
+	local tabPages: { [string]: GuiObject } =
+		{ Movement = movementTab, World = worldTab, Tuning = tuningTab }
 
 	local function setTab(name: string)
 		for tabName, page in tabPages do
@@ -545,7 +555,12 @@ function DebugOverlayController.Init()
 					then "✓"
 					elseif entry.reflected == false then "✗ unconfirmed"
 					else "…"
-				label.Text = string.format("%s  ·  %s  ·  %s", entry.state, formatAgo(now - entry.at), status)
+				label.Text = string.format(
+					"%s  ·  %s  ·  %s",
+					entry.state,
+					formatAgo(now - entry.at),
+					status
+				)
 				label.TextColor3 = if entry.reflected == false then TEXT_ALARM else TEXT_PRIMARY
 			else
 				label.Visible = i == 1
@@ -626,7 +641,10 @@ function DebugOverlayController.Init()
 		for _, rawName in MovementTuning.Names do
 			local name = rawName :: TunableConstantName
 			local refs = tuningRows[name]
-			if not UserInputService:GetFocusedTextBox() or UserInputService:GetFocusedTextBox() ~= refs.input then
+			if
+				not UserInputService:GetFocusedTextBox()
+				or UserInputService:GetFocusedTextBox() ~= refs.input
+			then
 				refs.value.Text = string.format("%.2f", (TuningSnapshot.Get() :: any)[name])
 			end
 		end
@@ -729,7 +747,9 @@ function DebugOverlayController.Init()
 	trove:Connect(noclipToggleButton.MouseButton1Click, function()
 		local currentlyActive = DebugSnapshot.Get().noclip
 		Network.RequestSetNoclip.Fire(not currentlyActive)
-		noclipStatusLabel.Text = if currentlyActive then "Requested noclip off…" else "Requested noclip on…"
+		noclipStatusLabel.Text = if currentlyActive
+			then "Requested noclip off…"
+			else "Requested noclip on…"
 	end)
 
 	-- Waypoints -----------------------------------------------------------------

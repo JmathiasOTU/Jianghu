@@ -210,10 +210,12 @@ local SPEED_SANITY_DEBUG_LOGGING = false
 -- Diagnostic capture for the 2026-09-18 "WallLeap boost gets erased" bug --
 -- same pattern as the other *_DEBUG_LOGGING flags above. Prints why a
 -- WallRun/WallLeap claim was rejected, or why `mirrorPassiveTransitions`
--- force-exits WallRun. Confirmed fixed by the `wallLeapAllowedSpeed` ceiling
--- (see `onClaimTraversalMove`'s WallLeap branch) -- left in, off by default,
--- for the next time a WallRun/WallLeap claim mysteriously doesn't land.
-local WALL_TRAVERSAL_DEBUG_LOGGING = false
+-- force-exits WallRun. Re-enabled (still 2026-09-18) after the SpeedSanity
+-- rubber-band came back post-retune (WallRunSpeed 26->35,
+-- WallLeapBurstForce/PushForce 14/16->75/75) -- need to confirm whether the
+-- claim is being rejected again (same root cause as before) versus something
+-- new, rather than guessing at a second patch on top of the first.
+local WALL_TRAVERSAL_DEBUG_LOGGING = true
 
 -- Sized from a real 2026-09-14 playtest capture (docs/MOVEMENT.md §5), not a
 -- guess: every landing sample showed the FIRST `enforceSpeedSanity` check after
@@ -314,7 +316,9 @@ local function buildContext(session: PlayerSession): MovementContext
 		doubleJumpUsed = session.doubleJumpUsed,
 		runDuration = runDuration,
 		preAirborneLocomotion = session.preAirborneLocomotion,
-		fallHeight = if session.peakHeight then session.peakHeight - session.rootPart.Position.Y else nil,
+		fallHeight = if session.peakHeight
+			then session.peakHeight - session.rootPart.Position.Y
+			else nil,
 		horizontalVelocity = Vector3.new(
 			session.rootPart.AssemblyLinearVelocity.X,
 			0,
@@ -443,7 +447,8 @@ local function mirrorPassiveTransitions(session: PlayerSession)
 			and session.wallRunEntryNormal
 			and TraversalMath.AngleBetween(query.normal, session.wallRunEntryNormal :: Vector3)
 				> context.constants.WallRunMaxNormalDeviationDegrees
-		local durationExceeded = os.clock() - (session.traversalEntryAt :: number) >= context.constants.WallRunMaxDurationSeconds
+		local durationExceeded = os.clock() - (session.traversalEntryAt or session.lastTransitionAt)
+			>= context.constants.WallRunMaxDurationSeconds
 
 		if not query or not session.wallRunEntryNormal or angleExceeded or durationExceeded then
 			if WALL_TRAVERSAL_DEBUG_LOGGING then
@@ -455,7 +460,7 @@ local function mirrorPassiveTransitions(session: PlayerSession)
 						tostring(session.wallRunEntryNormal ~= nil),
 						tostring(angleExceeded == true),
 						tostring(durationExceeded),
-						os.clock() - (session.traversalEntryAt :: number)
+						os.clock() - (session.traversalEntryAt or session.lastTransitionAt)
 					)
 				)
 			end
@@ -513,11 +518,15 @@ local function mirrorPassiveTransitions(session: PlayerSession)
 			then context.constants.SprintSpeed
 			else context.constants.RunSpeed
 		local elapsed = os.clock() - session.lastTransitionAt
-		local decayedSpeed =
-			math.max(context.constants.CrouchSpeed, entrySpeed - context.constants.SlideDecayRate * elapsed)
+		local decayedSpeed = math.max(
+			context.constants.CrouchSpeed,
+			entrySpeed - context.constants.SlideDecayRate * elapsed
+		)
 		if decayedSpeed <= context.constants.CrouchSpeed then
 			session.fsm:RequestTransition(
-				if StateRules.HasMoveInput(context) then MovementStates.CrouchWalk else MovementStates.CrouchIdle,
+				if StateRules.HasMoveInput(context)
+					then MovementStates.CrouchWalk
+					else MovementStates.CrouchIdle,
 				context
 			)
 		end
@@ -527,7 +536,9 @@ local function mirrorPassiveTransitions(session: PlayerSession)
 	if current == MovementStates.CrouchIdle then
 		if not context.crouchHeld then
 			session.fsm:RequestTransition(
-				if StateRules.HasMoveInput(context) then MovementStates.Walk else MovementStates.Idle,
+				if StateRules.HasMoveInput(context)
+					then MovementStates.Walk
+					else MovementStates.Idle,
 				context
 			)
 		elseif StateRules.HasMoveInput(context) then
@@ -539,7 +550,9 @@ local function mirrorPassiveTransitions(session: PlayerSession)
 	if current == MovementStates.CrouchWalk then
 		if not context.crouchHeld then
 			session.fsm:RequestTransition(
-				if StateRules.HasMoveInput(context) then MovementStates.Walk else MovementStates.Idle,
+				if StateRules.HasMoveInput(context)
+					then MovementStates.Walk
+					else MovementStates.Idle,
 				context
 			)
 		elseif not StateRules.HasMoveInput(context) then
@@ -656,32 +669,29 @@ local function updateSlideGroundQuery(session: PlayerSession, constants: Effecti
 		return
 	end
 	session.slideGroundQueryAt = now
-	session.slideGroundQuery = SpatialQueries.QueryGround(session.rootPart, session.humanoid.Parent :: Instance)
+	session.slideGroundQuery =
+		SpatialQueries.QueryGround(session.rootPart, session.humanoid.Parent :: Instance)
 end
 
--- Server's own side-cast probe (Wall Run & Leap Mechanic Guideline §1/§6) --
--- the SAME pure `SpatialQueries.QueryWallRun` function client-side prediction
--- calls, never anything the client reports about wall position/normal.
--- Throttled the same `os.clock()`-delta way `updateSlideGroundQuery` above
--- already is, off `MovementConstants.WallRunQueryThrottleSeconds` DIRECTLY --
--- deliberately not `constants.WallRunQueryThrottleSeconds`: this was never
--- made live-tunable (guideline §1, Part 1), same choice the client's own
--- probe already made. Runs whenever this session isn't grounded, independent
--- of its current mirrored state -- needed both for `CanEnter[WallRun]`'s
--- legality check at claim time and for `mirrorPassiveTransitions`'s sustain
--- check while already mirrored into WallRun.
-local function updateWallRunQuery(session: PlayerSession)
+-- Server's own side-cast probe (Wall Run & Leap Mechanic Guideline §1/§6).
+-- `force` bypasses the throttle for claim-time legality checks, which need
+-- real current geometry (§3), not a stale Heartbeat-cadence sample (§9).
+local function updateWallRunQuery(session: PlayerSession, force: boolean?)
 	if isGrounded(session.humanoid:GetState()) then
 		session.wallRunQuery = nil
 		return
 	end
 
 	local now = os.clock()
-	if now - session.wallRunQueryAt < MovementConstants.WallRunQueryThrottleSeconds then
+	if
+		not force
+		and now - session.wallRunQueryAt < MovementConstants.WallRunQueryThrottleSeconds
+	then
 		return
 	end
 	session.wallRunQueryAt = now
-	session.wallRunQuery = SpatialQueries.QueryWallRun(session.rootPart, session.humanoid.Parent :: Instance)
+	session.wallRunQuery =
+		SpatialQueries.QueryWallRun(session.rootPart, session.humanoid.Parent :: Instance)
 end
 
 -- Companion to the client's own slope-amplification read (SlideState.Update)
@@ -691,7 +701,10 @@ end
 -- elsewhere in this file, e.g. `enforceDoubleJumpTrajectory`'s own read of
 -- the Y component) rather than anything the client asserts about its
 -- direction.
-local function slideSlopeAmplification(session: PlayerSession, constants: EffectiveMovementConstants): number
+local function slideSlopeAmplification(
+	session: PlayerSession,
+	constants: EffectiveMovementConstants
+): number
 	local query = session.slideGroundQuery
 	if not query then
 		return 0
@@ -738,11 +751,16 @@ end
 -- site that doesn't have a live ground read to pass (e.g. `effectiveMaxSpeed`'s
 -- own `previousCap` lookup below, which only needs a generous flat ceiling
 -- for grace purposes, never a precise live figure).
-local function maxSpeedForState(state: MovementState, constants: EffectiveMovementConstants, slopeAmplification: number?): number
+local function maxSpeedForState(
+	state: MovementState,
+	constants: EffectiveMovementConstants,
+	slopeAmplification: number?
+): number
 	if state == MovementStates.Run then
 		return constants.RunSpeed
 	elseif state == MovementStates.Slide or state == MovementStates.SlideJump then
-		return constants.SprintSpeed * constants.SlideEntrySpeedMultiplier + (slopeAmplification or 0)
+		return constants.SprintSpeed * constants.SlideEntrySpeedMultiplier
+			+ (slopeAmplification or 0)
 	elseif
 		state == MovementStates.Sprint
 		or state == MovementStates.Airborne
@@ -793,8 +811,15 @@ end
 -- ClimbVault/LedgeGrab/Slide (all of which will exit into Airborne or Walk with
 -- their own residual momentum) get this grace for free the moment their own cap
 -- is taught to `maxSpeedForState`, with no separate copy of this fix needed.
-local function effectiveMaxSpeed(session: PlayerSession, constants: EffectiveMovementConstants): number
-	local currentCap = maxSpeedForState(session.fsm.current, constants, slideSlopeAmplification(session, constants))
+local function effectiveMaxSpeed(
+	session: PlayerSession,
+	constants: EffectiveMovementConstants
+): number
+	local currentCap = maxSpeedForState(
+		session.fsm.current,
+		constants,
+		slideSlopeAmplification(session, constants)
+	)
 
 	-- WallLeap's own computed ceiling (playtest fix 2026-09-18) -- takes over
 	-- from the ordinary Airborne/SprintSpeed cap for as long as this session
@@ -914,7 +939,8 @@ local function createSession(player: Player, humanoid: Humanoid, rootPart: BaseP
 		-- duration) so `mirrorPassiveTransitions`'s own HardLanding branch
 		-- knows exactly when the client-side lock is expected to release.
 		if next == MovementStates.HardLanding then
-			session.hardLandingLockUntil = now + MovementTuningState.GetEffective(player).HardLandingDurationSeconds
+			session.hardLandingLockUntil = now
+				+ MovementTuningState.GetEffective(player).HardLandingDurationSeconds
 		end
 
 		-- Passability (docs/MOVEMENT.md §9): the SERVER's own copy, keyed off
@@ -993,7 +1019,9 @@ local function enforceSpeedSanity(session: PlayerSession, constants: EffectiveMo
 	local position = session.rootPart.Position
 	local previous = session.speedCheckPosition
 	local flatDelta = Vector3.new(position.X - previous.X, 0, position.Z - previous.Z)
-	local maxDistance = effectiveMaxSpeed(session, constants) * elapsed * constants.SpeedToleranceMultiplier
+	local maxDistance = effectiveMaxSpeed(session, constants)
+		* elapsed
+		* constants.SpeedToleranceMultiplier
 
 	if flatDelta.Magnitude > maxDistance then
 		-- Unconditional (not gated behind SPEED_SANITY_DEBUG_LOGGING below): every
@@ -1088,14 +1116,20 @@ end
 -- timestamp, never the client-reported one. Vertical only -- horizontal
 -- speed during DoubleJump is already covered by `enforceSpeedSanity`'s own
 -- cap via `maxSpeedForState`.
-local function enforceDoubleJumpTrajectory(session: PlayerSession, constants: EffectiveMovementConstants)
+local function enforceDoubleJumpTrajectory(
+	session: PlayerSession,
+	constants: EffectiveMovementConstants
+)
 	if session.fsm.current ~= MovementStates.DoubleJump or not session.traversalEntryAt then
 		return
 	end
 
 	local elapsed = os.clock() - (session.traversalEntryAt :: number)
-	local expected =
-		TraversalMath.DoubleJumpVerticalVelocity(elapsed, constants.DoubleJumpForce, constants.DoubleJumpDecayDurationSeconds)
+	local expected = TraversalMath.DoubleJumpVerticalVelocity(
+		elapsed,
+		constants.DoubleJumpForce,
+		constants.DoubleJumpDecayDurationSeconds
+	)
 	local actual = session.rootPart.AssemblyLinearVelocity.Y
 
 	if TRAVERSAL_TRAJECTORY_DEBUG_LOGGING then
@@ -1138,9 +1172,30 @@ local function onClaimTraversalMove(player: Player, claim: Network.ClaimableTrav
 		return
 	end
 
-	if not session.traversalRateLimiter:tryAcquire() then
+	if not session.traversalRateLimiter:TryAcquire() then
 		return
 	end
+
+	-- Root-cause fix, 2026-09-18 (real playtest bug: a "WallRun" claim
+	-- arriving with `session.fsm.current` still `Run`, rejected purely on
+	-- topology, even though the player had genuinely already left the
+	-- ground) -- the mirror only advances passively once per server
+	-- Heartbeat, off the LATEST replicated Humanoid state at the time that
+	-- Heartbeat happens to run. A claim is a completely separate, asynchronous
+	-- network arrival that can land BETWEEN two Heartbeats, before the one
+	-- that would have caught the mirror up to `Airborne`. Rather than widen
+	-- any tolerance to paper over that gap (docs/ARCHITECTURE.md §9), this
+	-- re-runs the SAME passive-mirroring/wall-probe logic the Heartbeat loop
+	-- already uses, right here, off the freshest replicated state available
+	-- AT THE MOMENT the claim is actually processed. `mirrorPassiveTransitions`
+	-- is context-driven with no per-call side effects beyond the state it's
+	-- already meant to reflect, so calling it an extra time between two
+	-- regularly-scheduled Heartbeats only ever catches the mirror up SOONER,
+	-- never differently.
+	-- `force = true`: unlike `mirrorPassiveTransitions`, `updateWallRunQuery`
+	-- is internally throttled, so the plain call above wasn't actually fresh.
+	updateWallRunQuery(session, true)
+	mirrorPassiveTransitions(session)
 
 	local claimedState = if claim == "DoubleJump"
 		then MovementStates.DoubleJump
@@ -1163,7 +1218,8 @@ local function onClaimTraversalMove(player: Player, claim: Network.ClaimableTrav
 			-- Phase 1 per the roadmap's own risk register -- without it, this
 			-- move's residual momentum on landing would immediately rubber-band
 			-- against `enforceSpeedSanity`'s cap for the tier it's landing into).
-			session.speedSanitySuspendedUntil = os.clock() + MovementConstants.TraversalSpeedSanityGraceSeconds
+			session.speedSanitySuspendedUntil = os.clock()
+				+ MovementConstants.TraversalSpeedSanityGraceSeconds
 		elseif claimedState == MovementStates.WallRun then
 			-- `CanEnter[WallRun]` (already run inside `RequestTransition` above)
 			-- guarantees `context.wallRunQuery` is non-nil here -- store the
@@ -1172,12 +1228,15 @@ local function onClaimTraversalMove(player: Player, claim: Network.ClaimableTrav
 			-- Deliberately NO `speedSanitySuspendedUntil` -- see the comment on
 			-- `maxSpeedForState`'s own WallRun branch for why a sustained hold
 			-- gets a raised LIVE cap instead of a suspended check.
-			session.wallRunEntryNormal = if context.wallRunQuery then context.wallRunQuery.normal else nil
+			session.wallRunEntryNormal = if context.wallRunQuery
+				then context.wallRunQuery.normal
+				else nil
 		elseif claimedState == MovementStates.WallLeap then
 			-- One-shot launch, same short exemption DoubleJump's own impulse
 			-- gets -- sized to cover the single frame the impulse needs to
 			-- register, never a sustained exemption (guideline §6).
-			session.speedSanitySuspendedUntil = os.clock() + MovementConstants.TraversalSpeedSanityGraceSeconds
+			session.speedSanitySuspendedUntil = os.clock()
+				+ MovementConstants.TraversalSpeedSanityGraceSeconds
 
 			-- The REAL fix for the "boost gets erased" playtest bug
 			-- (2026-09-18): the suspension window above only covers the
@@ -1211,7 +1270,10 @@ local function onClaimTraversalMove(player: Player, claim: Network.ClaimableTrav
 			session.wallRunEntryNormal = nil
 			session.fsm:RequestTransition(MovementStates.Airborne, context)
 		end
-	elseif WALL_TRAVERSAL_DEBUG_LOGGING and (claimedState == MovementStates.WallRun or claimedState == MovementStates.WallLeap) then
+	elseif
+		WALL_TRAVERSAL_DEBUG_LOGGING
+		and (claimedState == MovementStates.WallRun or claimedState == MovementStates.WallLeap)
+	then
 		print(
 			string.format(
 				"[WallTraversal] %s claim=%s REJECTED current=%s wallRunQuery=%s",
@@ -1256,7 +1318,7 @@ local function onRequestMovementTransition(player: Player, claim: Network.Claima
 		return
 	end
 
-	if not session.rateLimiter:tryAcquire() then
+	if not session.rateLimiter:TryAcquire() then
 		if SPEED_SANITY_DEBUG_LOGGING then
 			-- Confirms/rules out the rate limiter itself as a cause of dropped
 			-- legitimate claims (docs/MOVEMENT.md §5) -- 5/second should never be

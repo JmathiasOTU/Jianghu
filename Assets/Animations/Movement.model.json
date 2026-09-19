@@ -9,13 +9,6 @@
       }
     },
     {
-      "Name": "Sprint",
-      "ClassName": "Animation",
-      "Properties": {
-        "AnimationId": "rbxassetid://115737519957403"
-      }
-    },
-    {
       "Name": "Walk",
       "ClassName": "Folder",
       "Children": [
@@ -34,6 +27,13 @@
       "ClassName": "Animation",
       "Properties": {
         "AnimationId": "rbxassetid://115534453000728"
+      }
+    },
+    {
+      "Name": "Sprint",
+      "ClassName": "Animation",
+      "Properties": {
+        "AnimationId": "rbxassetid://115737519957403"
       }
     },
     {
@@ -58,17 +58,17 @@
       }
     },
     {
-      "Name": "Jump",
-      "ClassName": "Animation",
-      "Properties": {
-        "AnimationId": "rbxassetid://136691088380409"
-      }
-    },
-    {
       "Name": "SlideJump",
       "ClassName": "Animation",
       "Properties": {
         "AnimationId": "rbxassetid://135295565014032"
+      }
+    },
+    {
+      "Name": "Jump",
+      "ClassName": "Animation",
+      "Properties": {
+        "AnimationId": "rbxassetid://136691088380409"
       }
     },
     {
@@ -93,6 +93,13 @@
       }
     },
     {
+      "Name": "LandMedium",
+      "ClassName": "Animation",
+      "Properties": {
+        "AnimationId": "rbxassetid://94537126819535"
+      }
+    },
+    {
       "Name": "LandHard",
       "ClassName": "Animation",
       "Properties": {
@@ -114,13 +121,6 @@
       }
     },
     {
-      "Name": "WallLatch",
-      "ClassName": "Animation",
-      "Properties": {
-        "AnimationId": "rbxassetid://78068464202635"
-      }
-    },
-    {
       "Name": "WallLeapLeft",
       "ClassName": "Animation",
       "Properties": {
@@ -132,6 +132,13 @@
       "ClassName": "Animation",
       "Properties": {
         "AnimationId": "rbxassetid://105572157004127"
+      }
+    },
+    {
+      "Name": "WallLatch",
+      "ClassName": "Animation",
+      "Properties": {
+        "AnimationId": "rbxassetid://78068464202635"
       }
     }
   ]

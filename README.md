@@ -1,8 +1,8 @@
-# Murim Ascent
+# Jianghu
 
 A fast-paced, parry-based movement RPG built for Roblox.
 
-Murim Ascent is a combat-first experience in the vein of *Deepwoken*, *Nethros*, and *Type Soul* — built around tight parry timing, momentum-driven movement, and server-authoritative combat resolution. This repository contains the full Rojo-managed source for the game.
+Jianghu is a combat-first experience in the vein of *Deepwoken*, *Nethros*, and *Type Soul* — built around tight parry timing, momentum-driven movement, and server-authoritative combat resolution. This repository contains the full Rojo-managed source for the game.
 
 ## Status
 

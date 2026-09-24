@@ -38,6 +38,8 @@ export type DebugStateName =
 	| "HardLanding"
 	| "WallRun"
 	| "WallLeap"
+	| "WallCling"
+	| "WallBoost"
 
 local DebugNames: { [MovementState]: DebugStateName } = {
 	[MovementStates.Idle] = "Idle",
@@ -53,6 +55,8 @@ local DebugNames: { [MovementState]: DebugStateName } = {
 	[MovementStates.HardLanding] = "HardLanding",
 	[MovementStates.WallRun] = "WallRun",
 	[MovementStates.WallLeap] = "WallLeap",
+	[MovementStates.WallCling] = "WallCling",
+	[MovementStates.WallBoost] = "WallBoost",
 }
 
 return {

@@ -12,6 +12,47 @@ local TraversalMath = {}
 
 local UP = Vector3.new(0, 1, 0)
 
+-- WallBoost's launch vector (docs/WallClimbingPlan.md §8) -- an instant,
+-- flat impulse: a small separation push away from the wall (so the character
+-- doesn't snag on wall friction while rising) plus a fixed upward force.
+-- Takes raw numeric params (`upwardForce`/`separationSpeed`), matching this
+-- module's own existing convention (e.g. WallLeapVelocity's burst/push/upward
+-- params) rather than the whole MovementConstants table.
+function TraversalMath.WallBoostVelocity(
+	wallNormal: Vector3,
+	upwardForce: number,
+	separationSpeed: number
+): Vector3
+	local away = Vector3.new(wallNormal.X, 0, wallNormal.Z)
+	local separation = Vector3.zero
+	if away.Magnitude > 1e-3 then
+		separation = away.Unit * separationSpeed
+	end
+	return Vector3.new(separation.X, upwardForce, separation.Z)
+end
+
+-- The exact physical envelope of WallBoost's impulse under gravity
+-- (docs/WallClimbingPlan.md §8/§11.5) -- the server enforces THIS instead of a
+-- padded multiplier (docs/ARCHITECTURE.md §9): it naturally decays toward the
+-- separation-only floor as the upward component bleeds off under gravity, and
+-- reaches its own natural end once it drops below the normal Airborne
+-- ceiling -- no grace duration constant needed.
+function TraversalMath.WallBoostSpeedCeilingAt(
+	secondsSinceBoost: number,
+	upwardForce: number,
+	separationSpeed: number,
+	gravity: number
+): number
+	local upwardSpeed = math.max(upwardForce - gravity * secondsSinceBoost, 0)
+	return math.sqrt(upwardSpeed ^ 2 + separationSpeed ^ 2)
+end
+
+-- How tall a gap one boost clears (docs/WallClimbingPlan.md §8) -- for level
+-- designers and tests, not consulted by any runtime enforcement path.
+function TraversalMath.WallBoostPeakHeight(upwardForce: number, gravity: number): number
+	return upwardForce ^ 2 / (2 * gravity)
+end
+
 -- DoubleJump vertical impulse (mechanic 2, §9): starts at `force`, decays
 -- toward roughly half of itself by `decayDuration`, then holds at that floor
 -- for any elapsed time beyond it (the state itself is responsible for exiting

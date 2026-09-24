@@ -1,4 +1,4 @@
-# Murim Ascent — CLAUDE.md
+# Jianghu — CLAUDE.md
 
 Roblox parry-combat/movement RPG, currently mid-rework on the movement system.
 Read `docs/ARCHITECTURE.md` and `CONTRIBUTING.md` in full before making changes —

@@ -38,6 +38,8 @@ local DoubleJumpState = require(script.States.DoubleJumpState)
 local HardLandingState = require(script.States.HardLandingState)
 local WallRunState = require(script.States.WallRunState)
 local WallLeapState = require(script.States.WallLeapState)
+local WallClingState = require(script.States.WallClingState)
+local WallBoostState = require(script.States.WallBoostState)
 
 type MovementState = MovementStates.MovementState
 type ClientMovementContext = ClientMovementContextModule.ClientMovementContext
@@ -64,6 +66,8 @@ local States = {
 	[MovementStates.HardLanding] = HardLandingState,
 	[MovementStates.WallRun] = WallRunState,
 	[MovementStates.WallLeap] = WallLeapState,
+	[MovementStates.WallCling] = WallClingState,
+	[MovementStates.WallBoost] = WallBoostState,
 }
 
 -- Only Run/Sprint are earned, exploit-relevant transitions that need a server
@@ -117,6 +121,14 @@ local CLAIM_RESYNC_INTERVAL_SECONDS = 1
 -- SPEED_SANITY_DEBUG_LOGGING. Prints only on a hit/miss/side CHANGE, not every
 -- probe, so it's readable while walking the character along a wall in Studio.
 local WALLRUN_DEBUG_LOGGING = false
+
+-- Temporary diagnostic capture for the 2026-09-19 "WallCling never triggers"
+-- playtest report -- traces the JumpRequested unified handler's own path
+-- (grounded state, whether WallRun/WallCling/DoubleJump each accepted or
+-- rejected). Root cause confirmed via a real capture (see
+-- SpatialQueries.WALLCLING_DEBUG_LOGGING's own comment): the test wall wasn't
+-- Anchored, not a code bug. Off by default now that it's confirmed.
+local WALLCLING_TRACE_LOGGING = false
 
 local input: InputController.InputController
 
@@ -193,6 +205,15 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 			WallLeapBurstForce = value.wallLeapBurstForce,
 			WallLeapPushForce = value.wallLeapPushForce,
 			WallLeapUpwardForce = value.wallLeapUpwardForce,
+			WallClingMaxDuration = value.wallClingMaxDuration,
+			WallClingMaxFacingAngleDegrees = value.wallClingMaxFacingAngleDegrees,
+			WallClingDropInputThreshold = value.wallClingDropInputThreshold,
+			WallClingTimeoutLockout = value.wallClingTimeoutLockout,
+			WallClingDropLockout = value.wallClingDropLockout,
+			WallClingPostBoostCooldown = value.wallClingPostBoostCooldown,
+			WallBoostUpwardForce = value.wallBoostUpwardForce,
+			WallBoostSeparationSpeed = value.wallBoostSeparationSpeed,
+			WallBoostStateDuration = value.wallBoostStateDuration,
 		})
 		characterMover:SetJumpPower(value.jumpPower)
 	end))
@@ -263,6 +284,23 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 	local wallRunQueryLastLogged: SpatialQueries.WallRunQueryResult? = nil
 	local wallRunCanEnterLastLogged = false
 
+	-- WallCling's own probe (docs/WallClimbingPlan.md §7): forced-fresh only
+	-- at the JumpRequested instant (see that connection below), NOT refreshed
+	-- continuously every Heartbeat like `wallRunQuery` -- the cling gesture is
+	-- a single key press plus a facing check, not a sustained directional
+	-- hold, so there's no need to keep probing while nothing is attempting to
+	-- enter. WallClingState's own ongoing sustain-recheck calls
+	-- `characterMover:QueryClingWall()` directly instead of reading this.
+	local wallClingQuery: SpatialQueries.ClingWallHit? = nil
+
+	-- Wall-leap memory (docs/WallClimbingPlan.md §2/§9): the physical wall
+	-- part this life most recently wall-leapt from, nil otherwise -- set on
+	-- the WallRun -> WallLeap edge below (off `context.wallRunEntryInstance`,
+	-- captured BEFORE WallRunState.Exit nils its own copy), cleared the
+	-- instant this life lands. Read by `StateRules.CanEnter[WallCling]` via
+	-- `buildContext` to block re-clinging to the wall just abandoned.
+	local lastWallLeapWall: BasePart? = nil
+
 	local function buildContext(): ClientMovementContext
 		local runDuration = if fsm.current == MovementStates.Run
 			then RunState.GetDuration()
@@ -278,6 +316,12 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 			fallHeight = if peakHeight then peakHeight - rootPart.Position.Y else nil,
 			horizontalVelocity = characterMover:GetHorizontalVelocity(),
 			wallRunQuery = wallRunQuery,
+			wallClingQuery = wallClingQuery,
+			facingDirection = characterMover:GetFacingDirection(),
+			wallClingLockoutUntil = WallClingState.GetLockoutUntil(),
+			wallClingBoostUsed = WallClingState.GetBoostUsed(),
+			wallClingNormal = WallClingState.GetNormal(),
+			lastWallLeapWall = lastWallLeapWall,
 			-- Still an open design decision (TRAVERSAL-ROADMAP.md §0/§3) --
 			-- "always available" until a real Qinggong/stamina resource
 			-- exists, same placeholder both sides use.
@@ -296,6 +340,7 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 			slideDirection = SlideState.GetCurrentDirection(),
 			wallRunEntryNormal = WallRunState.GetEntryNormal(),
 			wallRunEntryTangent = WallRunState.GetEntryTangent(),
+			wallRunEntryInstance = WallRunState.GetEntryInstance(),
 		}
 	end
 
@@ -378,8 +423,23 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 			Network.ClaimTraversalMove.Fire("WallRun")
 		elseif next == MovementStates.WallLeap then
 			Network.ClaimTraversalMove.Fire("WallLeap")
+			-- Wall-leap memory (docs/WallClimbingPlan.md §2/§9): snapshot off
+			-- `context.wallRunEntryInstance`, captured by `buildContext()`
+			-- above BEFORE `States[WallRun].Exit(context)` ran and nilled
+			-- WallRunState's own copy -- reading `WallRunState.
+			-- GetEntryInstance()` directly here instead would already be nil.
+			lastWallLeapWall = context.wallRunEntryInstance
+		elseif next == MovementStates.WallCling then
+			Network.ClaimTraversalMove.Fire("WallCling")
+		elseif next == MovementStates.WallBoost then
+			Network.ClaimTraversalMove.Fire("WallBoost")
 		elseif GROUNDED_STATES[next] then
 			doubleJumpUsed = false
+			-- Cleared on landing (docs/WallClimbingPlan.md assumption 5) --
+			-- touching a DIFFERENT wall needs no separate clear, since
+			-- `CanEnter[WallCling]`'s own check is instance equality against
+			-- whatever wall is actually being clung to right now.
+			lastWallLeapWall = nil
 		end
 
 		-- Crouch-lock (SlideJump landing fix): armed the instant SlideJump is
@@ -412,12 +472,13 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 		-- seeded on the real takeoff edge -- `next == Airborne` covers every
 		-- grounded-state jump-off AND Slide -> SlideJump -> Airborne (`previous`
 		-- there is SlideJump); excluded when `previous` is DoubleJump, WallRun,
-		-- or WallLeap so none of those hops back to Airborne resets the peak
-		-- mid-excursion (found while wiring WallRun into this same edge --
-		-- each is still the same continuous excursion, exactly like the
-		-- DoubleJump hop already correctly treated it -- WallLeap needs the
-		-- same exclusion as WallRun since WallRun -> WallLeap -> Airborne all
-		-- happens within one excursion too).
+		-- WallLeap, WallCling, or WallBoost so none of those hops back to
+		-- Airborne resets the peak mid-excursion (found while wiring WallRun
+		-- into this same edge -- each is still the same continuous excursion,
+		-- exactly like the DoubleJump hop already correctly treated it --
+		-- WallCling/WallBoost need the identical exclusion: clinging or
+		-- boosting partway down a long fall is still the same excursion, not
+		-- a fresh one, docs/WallClimbingPlan.md §12).
 		-- Cleared the instant a landing actually resolves, same edge as
 		-- `preAirborneLocomotion` just above.
 		if next == MovementStates.Airborne then
@@ -425,6 +486,8 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 				previous ~= MovementStates.DoubleJump
 				and previous ~= MovementStates.WallRun
 				and previous ~= MovementStates.WallLeap
+				and previous ~= MovementStates.WallCling
+				and previous ~= MovementStates.WallBoost
 			then
 				peakHeight = rootPart.Position.Y
 			end
@@ -435,6 +498,17 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 
 	lifeTrove:Connect(input.RunRequested, function()
 		fsm:RequestTransition(MovementStates.Run, buildContext())
+	end)
+
+	-- WallBoost (docs/WallClimbingPlan.md §2/§10.1 step 5): routed through
+	-- WallClingState.RequestBoostTransition, not a raw fsm:RequestTransition,
+	-- so the `Boosted` exit reason is correctly tagged for
+	-- WallClingPostBoostCooldown -- same "external input event -> plain
+	-- request" shape as input.RunRequested above, a harmless no-op via
+	-- CanEnter[WallBoost]/topology if not currently clinging or already
+	-- boosted this cling.
+	lifeTrove:Connect(input.BoostRequested, function()
+		WallClingState.RequestBoostTransition(buildContext())
 	end)
 
 	-- Unified jump-action priority handler (Wall Run & Leap Mechanic Guideline
@@ -462,18 +536,51 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 	lifeTrove:Connect(input.JumpRequested, function()
 		-- Force a fresh probe here rather than reusing the throttled Heartbeat
 		-- cache -- same staleness fix as the server's `updateWallRunQuery(session, true)`.
-		if fsm.current ~= MovementStates.WallRun and not characterMover:IsGrounded() then
+		local probed = fsm.current ~= MovementStates.WallRun and not characterMover:IsGrounded()
+		if probed then
 			wallRunQuery = characterMover:QueryWallRun()
 			wallRunQueryAccumulatedDt = 0
+			wallClingQuery = characterMover:QueryClingWall()
+		end
+		if WALLCLING_TRACE_LOGGING then
+			print(
+				string.format(
+					"[WallClingTrace] JumpRequested fsm=%s grounded=%s probed=%s wallClingQuery=%s",
+					tostring(fsm.current),
+					tostring(characterMover:IsGrounded()),
+					tostring(probed),
+					tostring(wallClingQuery ~= nil)
+				)
+			)
 		end
 		local context = buildContext()
 		if fsm.current == MovementStates.WallRun then
 			fsm:RequestTransition(MovementStates.WallLeap, context)
 			return
 		end
-		if not fsm:RequestTransition(MovementStates.WallRun, context) then
-			fsm:RequestTransition(MovementStates.DoubleJump, context)
+		if fsm:RequestTransition(MovementStates.WallRun, context) then
+			return
 		end
+		-- WallCling (docs/WallClimbingPlan.md §2/§3): tried before the
+		-- DoubleJump fallback so a valid clingable wall always wins over
+		-- spending the midair jump (assumption 1) -- the double jump is never
+		-- consumed unless THIS attempt itself fails. Head-on facing
+		-- (WallCling) and side-on alignment (WallRun, already tried above)
+		-- are mutually exclusive by their own angle gates, so this never
+		-- races WallRun for the same press.
+		local clingAccepted = fsm:RequestTransition(MovementStates.WallCling, context)
+		if WALLCLING_TRACE_LOGGING then
+			print(
+				string.format(
+					"[WallClingTrace] WallCling RequestTransition -> %s",
+					tostring(clingAccepted)
+				)
+			)
+		end
+		if clingAccepted then
+			return
+		end
+		fsm:RequestTransition(MovementStates.DoubleJump, context)
 	end)
 
 	-- Crouch/Slide claim (docs/MOVEMENT.md §9): unlike Run/Sprint's claims

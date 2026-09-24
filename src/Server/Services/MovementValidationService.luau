@@ -2,6 +2,7 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
 
 local StateMachine = require(ReplicatedStorage.Shared.FSM.StateMachine)
 local MovementStates = require(ReplicatedStorage.Shared.FSM.MovementStates)
@@ -132,6 +133,13 @@ type PlayerSession = {
 	-- every Heartbeat (`mirrorPassiveTransitions`) to detect a corner/curve
 	-- exceeding `WallRunMaxNormalDeviationDegrees`.
 	wallRunEntryNormal: Vector3?,
+	-- The physical wall part itself (docs/WallClimbingPlan.md §2/§9), same
+	-- lazy-anchor timing as `wallRunEntryNormal` above (set on the SAME first
+	-- post-entry `mirrorPassiveTransitions` probe, never a claim-time forced
+	-- one, for the identical rotation-lag reason). Snapshotted into
+	-- `lastWallLeapWall` the instant a WallLeap launch is accepted, so the
+	-- server knows which wall to block re-clinging onto.
+	wallRunEntryInstance: BasePart?,
 	-- Claim-buffering deadlines (2026-09-19 playtest fix, see
 	-- `WallRunClaimBufferSeconds`'s own comment for the full root-cause
 	-- reasoning) -- set the instant a "WallRun"/"WallLeap" claim is rejected
@@ -141,6 +149,23 @@ type PlayerSession = {
 	-- is the only reader; `onClaimTraversalMove` is the only writer.
 	pendingWallRunClaimUntil: number?,
 	pendingWallLeapClaimUntil: number?,
+	-- Sprint's own claim-buffering deadline (2026-09-21 "flagged switching
+	-- Run->Sprint" investigation -- see `onRequestMovementTransition`'s Sprint
+	-- rejection branch for the measured root cause). Set the instant a
+	-- "Sprint" claim is rejected while this session is grounded and already
+	-- mirrored into Run -- the ONLY way that combination fails
+	-- `CanEnter[Sprint]` is the dwell check, and the rejection logging added
+	-- during this investigation showed that miss landing within single
+	-- milliseconds of the threshold almost every time (the client fires this
+	-- claim the instant ITS OWN dwell clock crosses 3s; the server's
+	-- independently-tracked, backdated clock needs to have ALSO crossed by
+	-- the time this arrives, an inherent photo finish no amount of backdate
+	-- tuning removes). Same `pendingWallRunClaimUntil` buffering idiom, reused
+	-- rather than invented fresh: cleared the instant the buffered retry
+	-- succeeds, is abandoned (no longer grounded/Run), or expires.
+	-- `retryBufferedSprintClaim` is the only reader; `onRequestMovementTransition`
+	-- is the only writer.
+	pendingSprintClaimUntil: number?,
 	-- WallLeap's own speed-sanity ceiling (playtest fix 2026-09-18) -- see
 	-- `onClaimTraversalMove`'s WallLeap branch for the full reasoning: a
 	-- flat one-shot suspension window (`speedSanitySuspendedUntil`, sized
@@ -174,6 +199,63 @@ type PlayerSession = {
 	-- `maxSpeedForState`'s cap for an unrelated state.
 	slideGroundQuery: SpatialQueries.GroundQueryResult?,
 	slideGroundQueryAt: number,
+	-- WallCling's own probe (docs/WallClimbingPlan.md §7/§11.2) -- the SAME
+	-- `SpatialQueries.castClingWall` pure function the client calls, refreshed
+	-- every Heartbeat while airborne (`updateWallClingQuery`, throttled off
+	-- `WallClingRecheckInterval`, same cadence the client's own sustain-check
+	-- uses) AND force-refreshed at claim time, same two-call-site pattern
+	-- `wallRunQuery`/`updateWallRunQuery` already established. Consulted by
+	-- `mirrorPassiveTransitions`'s own WallCling branch as its independent
+	-- "is the wall still really there" check -- deliberately added even
+	-- though the plan's own §11.3 argued the speed ceiling alone was enough:
+	-- `enforceSpeedSanity` only ever measures HORIZONTAL (X/Z) delta, so a
+	-- player who drops and falls STRAIGHT DOWN would never trip it, leaving
+	-- the mirror stuck in WallCling (blocking a legitimate re-cling attempt
+	-- via `next == self.current` in StateMachine:CanTransition) for up to the
+	-- full `WallClingMaxDuration` -- the same class of mirror-desync bug
+	-- WallRun's own sustain check exists to prevent, so it gets the same fix.
+	wallClingQuery: SpatialQueries.ClingWallHit?,
+	wallClingQueryAt: number,
+	-- Server-owned re-grab lockout (docs/WallClimbingPlan.md §3.5/§4/§11.2) --
+	-- the ONLY authoritative copy (docs/ARCHITECTURE.md §3); the client's own
+	-- `WallClingState.lockoutUntil` is prediction only. Set by this session's
+	-- OWN force-exit bookkeeping (`mirrorPassiveTransitions`'s WallCling
+	-- branch), never anything the client claims.
+	wallClingLockoutUntil: number?,
+	-- Per-cling flag mirroring the client's own `boostUsedThisCling` 1:1 --
+	-- false on every accepted WallCling claim, true the instant a WallBoost
+	-- claim is accepted; `CanEnter[WallBoost]` reads it via `buildContext`.
+	wallClingBoostUsed: boolean,
+	-- Wall-leap memory, server side (docs/WallClimbingPlan.md §2/§9) -- the
+	-- server's OWN copy of `wallRunEntryInstance` at the instant a WallLeap
+	-- launch was accepted, never anything the client asserts. Cleared on
+	-- landing, same edge `peakHeight`/`wallLeapAllowedSpeed` already clear on.
+	lastWallLeapWall: BasePart?,
+	-- WallBoost's own launch timestamp (docs/WallClimbingPlan.md §11.4/§11.5)
+	-- -- a DEDICATED field, not a reuse of the generic `traversalEntryAt`
+	-- (unlike WallCling's own duration check, which does reuse it): the boost
+	-- envelope has to keep being enforced for a while AFTER the mirror has
+	-- already returned to Airborne (`effectiveMaxSpeed`), the same
+	-- "outlives the state itself" lifetime `wallLeapAllowedSpeed` already
+	-- has, so it needs the identical dedicated-field treatment rather than a
+	-- value something else might overwrite mid-flight. Cleared on landing.
+	wallBoostStartedAt: number?,
+	-- Claim-buffering deadline (playtest bug 2026-09-19: "jump toward a wall
+	-- from outside cling range, cross into range mid-air, press Space -- the
+	-- server rejects it every time") -- the SAME root cause
+	-- `WallRunClaimBufferSeconds` was already added to fix for WallRun: the
+	-- server's own replicated position/CFrame always lags the client's real
+	-- one by some amount no query-fresher fix can outrun, so a claim thrown
+	-- the instant the client crosses into range can land before the server's
+	-- OWN `wallClingQuery` (position-dependent) has replicated far enough to
+	-- agree. Reuses `WallRunClaimBufferSeconds` rather than a second,
+	-- unmeasured constant -- same underlying replication-lag phenomenon, no
+	-- reason to assume it needs a different window. Set the instant a
+	-- "WallCling" claim is rejected while still airborne, cleared the instant
+	-- the buffered retry succeeds, is abandoned, or expires.
+	-- `retryBufferedTraversalClaims` is the only reader; `onClaimTraversalMove`
+	-- is the only writer.
+	pendingWallClingClaimUntil: number?,
 }
 
 -- Rate limit for RequestMovementTransition, independent of the FSM's own legality
@@ -214,7 +296,7 @@ local TRAVERSAL_TRAJECTORY_DEBUG_LOGGING = false
 -- at a tolerance. Flip on for a playtest, off for normal play; left in (not
 -- deleted) since Stage 2's WallRun/etc. validation will want the same kind of
 -- capture again.
-local SPEED_SANITY_DEBUG_LOGGING = false
+local SPEED_SANITY_DEBUG_LOGGING = true
 
 -- Diagnostic capture for the 2026-09-18 "WallLeap boost gets erased" bug --
 -- same pattern as the other *_DEBUG_LOGGING flags above. Prints why a
@@ -336,6 +418,16 @@ local function buildContext(session: PlayerSession): MovementContext
 		-- The server's OWN throttled probe (guideline §1/§6, `updateWallRunQuery`
 		-- below) -- never anything the client reports.
 		wallRunQuery = session.wallRunQuery,
+		-- The server's OWN throttled probe (docs/WallClimbingPlan.md §7/§11.2,
+		-- `updateWallClingQuery` below) -- never anything the client reports.
+		wallClingQuery = session.wallClingQuery,
+		-- Real replicated `rootPart.CFrame.LookVector` -- reuses the same
+		-- `facing` value already computed above for `classifyMoveIntent`,
+		-- never a second read.
+		facingDirection = facing,
+		wallClingLockoutUntil = session.wallClingLockoutUntil,
+		wallClingBoostUsed = session.wallClingBoostUsed,
+		lastWallLeapWall = session.lastWallLeapWall,
 		-- Still an open design decision (TRAVERSAL-ROADMAP.md §0/§3) --
 		-- "always available" until a real Qinggong/stamina resource exists,
 		-- same placeholder the client uses.
@@ -477,6 +569,12 @@ local function mirrorPassiveTransitions(session: PlayerSession)
 		if not session.wallRunEntryNormal then
 			if query then
 				session.wallRunEntryNormal = query.normal
+				-- Same lazy-anchor timing as the normal above (docs/
+				-- WallClimbingPlan.md §2/§9) -- captured here, not at claim
+				-- time, so `lastWallLeapWall` (set off this when a leap is
+				-- accepted) agrees with whichever wall the corner-deviation
+				-- check itself is actually anchored to.
+				session.wallRunEntryInstance = query.instance
 			end
 			return
 		end
@@ -501,6 +599,70 @@ local function mirrorPassiveTransitions(session: PlayerSession)
 					)
 				)
 			end
+			session.fsm:RequestTransition(MovementStates.Airborne, context)
+		end
+		return
+	end
+
+	-- WallCling's anti-exploit backbone (docs/WallClimbingPlan.md §11.2/§11.3)
+	-- -- duration cap (reuses the generic `traversalEntryAt`, same as
+	-- DoubleJump/WallRun, since this check only ever matters while still
+	-- mirrored into WallCling) plus an independent wall-presence recheck off
+	-- this session's OWN throttled probe (`updateWallClingQuery`). The plan's
+	-- own §11.3 argued the speed ceiling alone (WallClingSpeedCeiling = 0)
+	-- was enough and skipped a periodic re-cast entirely -- but
+	-- `enforceSpeedSanity` only ever measures HORIZONTAL (X/Z) delta, so a
+	-- player who legitimately drops and falls straight down would never trip
+	-- it, leaving the mirror stuck in WallCling (via `next == self.current`
+	-- in StateMachine:CanTransition) for up to the full duration cap and
+	-- rejecting a legitimate re-cling in the meantime -- the identical
+	-- mirror-desync failure mode WallRun's own sustain check (just above)
+	-- already exists to prevent. Landing mid-cling is its own branch first,
+	-- same "resolve straight to the real grounded target" shape every other
+	-- airborne-family state here already establishes.
+	if current == MovementStates.WallCling then
+		if context.grounded then
+			if session.fsm:RequestTransition(LandingResolution.Resolve(context), context) then
+				session.doubleJumpUsed = false
+				session.preAirborneLocomotion = nil
+			end
+			return
+		end
+
+		local durationExceeded = os.clock() - (session.traversalEntryAt or session.lastTransitionAt)
+			>= context.constants.WallClingMaxDuration
+
+		if not session.wallClingQuery or durationExceeded then
+			-- Only Timeout applies a lockout here (docs/WallClimbingPlan.md
+			-- §4's exit-reason table) -- a server-detected WallLost leaves
+			-- `wallClingLockoutUntil` untouched, same "none" the client's own
+			-- WallLost branch already applies.
+			if durationExceeded then
+				session.wallClingLockoutUntil = os.clock()
+					+ context.constants.WallClingTimeoutLockout
+			end
+			session.fsm:RequestTransition(MovementStates.Airborne, context)
+		end
+		return
+	end
+
+	-- WallBoost (docs/WallClimbingPlan.md §11.4): a short, fixed window off
+	-- its OWN dedicated `wallBoostStartedAt` (not the generic
+	-- `traversalEntryAt` -- see that field's own PlayerSession comment for
+	-- why), hands back to Airborne once it elapses. No further legality to
+	-- check while inside it -- `effectiveMaxSpeed`'s own envelope formula is
+	-- what actually keeps this window honest, not a corner/wall recheck.
+	if current == MovementStates.WallBoost then
+		if context.grounded then
+			if session.fsm:RequestTransition(LandingResolution.Resolve(context), context) then
+				session.doubleJumpUsed = false
+				session.preAirborneLocomotion = nil
+			end
+			return
+		end
+
+		local startedAt = session.wallBoostStartedAt or session.lastTransitionAt
+		if os.clock() - startedAt >= context.constants.WallBoostStateDuration then
 			session.fsm:RequestTransition(MovementStates.Airborne, context)
 		end
 		return
@@ -731,6 +893,34 @@ local function updateWallRunQuery(session: PlayerSession, force: boolean?)
 		SpatialQueries.QueryWallRun(session.rootPart, session.humanoid.Parent :: Instance)
 end
 
+-- WallCling's own forward-cast probe, server side (docs/WallClimbingPlan.md
+-- §7/§11.2/§11.3) -- same throttle-with-force-bypass shape as
+-- `updateWallRunQuery` above, off `WallClingRecheckInterval` (the SAME
+-- non-tunable structural cadence the client's own sustain-check uses, kept
+-- fixed rather than added to live tuning for the identical "server-only
+-- anti-cheat plumbing" reasoning `WallRunQueryThrottleSeconds` already has).
+-- Continuous while airborne (not just while mirrored into WallCling) so a
+-- claim evaluated the instant Space is pressed already has a fresh sample,
+-- same reasoning `wallRunQuery` is kept continuously fresh rather than only
+-- probed on demand.
+local function updateWallClingQuery(session: PlayerSession, force: boolean?)
+	if isGrounded(session.humanoid:GetState()) then
+		session.wallClingQuery = nil
+		return
+	end
+
+	local now = os.clock()
+	if
+		not force
+		and now - session.wallClingQueryAt < MovementConstants.WallClingRecheckInterval
+	then
+		return
+	end
+	session.wallClingQueryAt = now
+	session.wallClingQuery =
+		SpatialQueries.castClingWall(session.rootPart, session.humanoid.Parent :: Instance)
+end
+
 -- Companion to the client's own slope-amplification read (SlideState.Update)
 -- -- same `TraversalMath.SlideSlopeAmplification` function, fed the server's
 -- own cached ground-normal and the session's real, physics-owned
@@ -822,6 +1012,23 @@ local function maxSpeedForState(
 		-- WallRun. `enforceSpeedSanity` stays live throughout, just raised to
 		-- this cap instead of Airborne's lower SprintSpeed ceiling.
 		return constants.WallRunSpeed
+	elseif state == MovementStates.WallCling then
+		-- No horizontal drift while clinging (docs/WallClimbingPlan.md §5/§11.5)
+		-- -- a fixed, non-tunable literal, not `constants.WallClingSpeedCeiling`
+		-- (deliberately excluded from live tuning, docs/ARCHITECTURE.md §9's
+		-- "no band-aid validation": any non-zero value needs a specific,
+		-- measured, documented cause, not a knob a developer can nudge away a
+		-- false flag with).
+		return MovementConstants.WallClingSpeedCeiling
+	elseif state == MovementStates.WallBoost then
+		-- Same "one-shot impulse, real enforcement lives elsewhere" shape as
+		-- DoubleJump/WallLeap above -- WallBoost's actual envelope is a
+		-- computed, decaying ceiling (`TraversalMath.WallBoostSpeedCeilingAt`),
+		-- enforced by `effectiveMaxSpeed` off `session.wallBoostStartedAt`
+		-- instead of a flat tier here; this branch only matters for the
+		-- `previousState` grace lookup right after the mirror hands back to
+		-- Airborne.
+		return constants.SprintSpeed
 	elseif state == MovementStates.CrouchIdle or state == MovementStates.CrouchWalk then
 		return constants.CrouchSpeed
 	elseif state == MovementStates.HardLanding then
@@ -866,6 +1073,27 @@ local function effectiveMaxSpeed(
 	-- current state would already allow.
 	if session.wallLeapAllowedSpeed and session.wallLeapAllowedSpeed > currentCap then
 		currentCap = session.wallLeapAllowedSpeed
+	end
+
+	-- WallBoost's own computed ceiling (docs/WallClimbingPlan.md §11.5) --
+	-- same `math.max`-not-override shape as `wallLeapAllowedSpeed` above, and
+	-- for the identical reason: the mirror can already be back in Airborne by
+	-- the time this evaluates (WallBoostStateDuration is short), but the real
+	-- physical impulse is still decaying under gravity for longer than that,
+	-- so this has to keep being consulted off `session.wallBoostStartedAt`
+	-- regardless of `session.fsm.current`. The envelope naturally ends itself
+	-- once it decays below the normal Airborne/SprintSpeed ceiling -- no fixed
+	-- grace duration needed, exactly as the plan's own formula intends.
+	if session.wallBoostStartedAt then
+		local boostCeiling = TraversalMath.WallBoostSpeedCeilingAt(
+			os.clock() - session.wallBoostStartedAt,
+			constants.WallBoostUpwardForce,
+			constants.WallBoostSeparationSpeed,
+			Workspace.Gravity
+		)
+		if boostCeiling > currentCap then
+			currentCap = boostCeiling
+		end
 	end
 
 	-- Skips the grace below -- it's sized for an ordinary landing's brief
@@ -919,9 +1147,18 @@ local function createSession(player: Player, humanoid: Humanoid, rootPart: BaseP
 		wallRunQuery = nil,
 		wallRunQueryAt = 0,
 		wallRunEntryNormal = nil,
+		wallRunEntryInstance = nil,
 		wallLeapAllowedSpeed = nil,
 		pendingWallRunClaimUntil = nil,
 		pendingWallLeapClaimUntil = nil,
+		pendingSprintClaimUntil = nil,
+		wallClingQuery = nil,
+		wallClingQueryAt = 0,
+		wallClingLockoutUntil = nil,
+		wallClingBoostUsed = false,
+		lastWallLeapWall = nil,
+		wallBoostStartedAt = nil,
+		pendingWallClingClaimUntil = nil,
 	}
 
 	-- Reset the speed-sanity baseline on EVERY FSM transition, not just Sprint
@@ -959,6 +1196,8 @@ local function createSession(player: Player, humanoid: Humanoid, rootPart: BaseP
 				previous ~= MovementStates.DoubleJump
 				and previous ~= MovementStates.WallRun
 				and previous ~= MovementStates.WallLeap
+				and previous ~= MovementStates.WallCling
+				and previous ~= MovementStates.WallBoost
 			then
 				session.peakHeight = rootPart.Position.Y
 			end
@@ -970,6 +1209,10 @@ local function createSession(player: Player, humanoid: Humanoid, rootPart: BaseP
 			-- allowance can never linger as a standing exploit once back on
 			-- the ground.
 			session.wallLeapAllowedSpeed = nil
+			-- WallCling/WallBoost bookkeeping (docs/WallClimbingPlan.md §2/
+			-- §11.5), same landing edge as the two clears just above.
+			session.lastWallLeapWall = nil
+			session.wallBoostStartedAt = nil
 		end
 
 		-- HardLanding lock deadline (docs/MOVEMENT.md §10 rework) -- mirrors
@@ -1203,7 +1446,20 @@ local function acceptWallRunEntry(session: PlayerSession)
 	session.speedCheckPosition = session.rootPart.Position
 	session.speedCheckAt = os.clock()
 	session.wallRunEntryNormal = nil
+	session.wallRunEntryInstance = nil
 	session.pendingWallRunClaimUntil = nil
+end
+
+-- Shared acceptance bookkeeping for a WallCling entry -- same two-caller
+-- reasoning as `acceptWallRunEntry` above (docs/WallClimbingPlan.md §11.2):
+-- whether accepted on the first attempt or a buffered retry a few Heartbeats
+-- later (`pendingWallClingClaimUntil`), one source of truth.
+local function acceptWallClingEntry(session: PlayerSession)
+	session.traversalEntryAt = os.clock()
+	session.speedCheckPosition = session.rootPart.Position
+	session.speedCheckAt = os.clock()
+	session.wallClingBoostUsed = false
+	session.pendingWallClingClaimUntil = nil
 end
 
 -- Shared acceptance bookkeeping for a WallLeap launch -- same two-caller
@@ -1244,7 +1500,13 @@ local function acceptWallLeapLaunch(session: PlayerSession, context: MovementCon
 	-- ownership model keeps this player's physics client-authoritative, same
 	-- as every other move in this file; this is legality plus the
 	-- anti-exploit measures above, not a resimulation of the launch itself.
+	--
+	-- Wall-leap memory (docs/WallClimbingPlan.md §2/§9): snapshotted BEFORE
+	-- `wallRunEntryInstance` is cleared below, mirroring the client's own
+	-- identical ordering in Movement/init.luau's `fsm.changed` handler.
+	session.lastWallLeapWall = session.wallRunEntryInstance
 	session.wallRunEntryNormal = nil
+	session.wallRunEntryInstance = nil
 	session.pendingWallLeapClaimUntil = nil
 	session.fsm:RequestTransition(MovementStates.Airborne, context)
 end
@@ -1292,6 +1554,70 @@ local function retryBufferedTraversalClaims(session: PlayerSession)
 			session.pendingWallLeapClaimUntil = nil
 		end
 	end
+
+	-- Same buffered-retry shape as WallRun/WallLeap above (playtest bug
+	-- 2026-09-19, see `pendingWallClingClaimUntil`'s own PlayerSession
+	-- comment) -- retries the exact SAME `CanEnter[WallCling]`/topology gate
+	-- `onClaimTraversalMove` already ran, off whatever fresher
+	-- `session.wallClingQuery` this Heartbeat's own `updateWallClingQuery`
+	-- call already produced (that call runs earlier in the same Heartbeat,
+	-- before `mirrorPassiveTransitions`/this function -- see the Heartbeat
+	-- loop's own ordering comment).
+	if session.pendingWallClingClaimUntil then
+		if now >= session.pendingWallClingClaimUntil then
+			session.pendingWallClingClaimUntil = nil
+		elseif session.fsm.current == MovementStates.Airborne then
+			local context = buildContext(session)
+			if session.fsm:RequestTransition(MovementStates.WallCling, context) then
+				acceptWallClingEntry(session)
+			end
+		else
+			-- No longer airborne (landed, or moved into some other move
+			-- entirely) -- the gesture this claim wanted no longer applies.
+			session.pendingWallClingClaimUntil = nil
+		end
+	end
+end
+
+-- Sprint's own buffered retry (2026-09-21 "flagged switching Run->Sprint"
+-- investigation, see `pendingSprintClaimUntil`'s own PlayerSession comment
+-- for the full root-cause reasoning) -- same shape as
+-- `retryBufferedTraversalClaims` above, kept as its own function rather than
+-- folded in since Run/Sprint use the dwell-timestamp model, not the
+-- resimulation model every claim in that function shares. Retries the exact
+-- SAME `CanEnter[Sprint]` dwell check `onRequestMovementTransition` already
+-- ran, off whatever fresher `runDuration` THIS Heartbeat's `buildContext`
+-- produces, every Heartbeat, until it succeeds or the buffer window closes.
+-- Never invents new legality of its own -- a still-too-early dwell simply
+-- keeps failing `RequestTransition` the same way it would from a fresh claim.
+local function retryBufferedSprintClaim(session: PlayerSession)
+	if not session.pendingSprintClaimUntil then
+		return
+	end
+
+	local now = os.clock()
+	if now >= session.pendingSprintClaimUntil then
+		session.pendingSprintClaimUntil = nil
+		return
+	end
+
+	if session.fsm.current ~= MovementStates.Run then
+		-- Demoted, landed into a different tier, or otherwise left Run
+		-- entirely since the buffer was armed -- the Sprint this claim wanted
+		-- no longer applies.
+		session.pendingSprintClaimUntil = nil
+		return
+	end
+
+	local context = buildContext(session)
+	if not context.grounded then
+		session.pendingSprintClaimUntil = nil
+		return
+	end
+
+	if session.fsm:RequestTransition(MovementStates.Sprint, context) then
+		session.pendingSprintClaimUntil = nil
+	end
 end
 
 -- The real exploit surface for the new traversal moves (TRAVERSAL-ROADMAP.md
@@ -1338,13 +1664,18 @@ local function onClaimTraversalMove(player: Player, claim: Network.ClaimableTrav
 	-- never differently.
 	-- `force = true`: unlike `mirrorPassiveTransitions`, `updateWallRunQuery`
 	-- is internally throttled, so the plain call above wasn't actually fresh.
+	-- `updateWallClingQuery` gets the identical forced-fresh treatment for the
+	-- same reason (docs/WallClimbingPlan.md §11.2).
 	updateWallRunQuery(session, true)
+	updateWallClingQuery(session, true)
 	mirrorPassiveTransitions(session)
 
 	local claimedState = if claim == "DoubleJump"
 		then MovementStates.DoubleJump
 		elseif claim == "WallRun" then MovementStates.WallRun
 		elseif claim == "WallLeap" then MovementStates.WallLeap
+		elseif claim == "WallCling" then MovementStates.WallCling
+		elseif claim == "WallBoost" then MovementStates.WallBoost
 		else nil
 	if not claimedState then
 		return
@@ -1367,6 +1698,13 @@ local function onClaimTraversalMove(player: Player, claim: Network.ClaimableTrav
 			acceptWallRunEntry(session)
 		elseif claimedState == MovementStates.WallLeap then
 			acceptWallLeapLaunch(session, context)
+		elseif claimedState == MovementStates.WallCling then
+			acceptWallClingEntry(session)
+		elseif claimedState == MovementStates.WallBoost then
+			session.wallClingBoostUsed = true
+			session.wallBoostStartedAt = os.clock()
+			session.speedCheckPosition = session.rootPart.Position
+			session.speedCheckAt = os.clock()
 		end
 		return
 	end
@@ -1385,6 +1723,15 @@ local function onClaimTraversalMove(player: Player, claim: Network.ClaimableTrav
 		session.pendingWallRunClaimUntil = os.clock() + MovementConstants.WallRunClaimBufferSeconds
 	elseif claimedState == MovementStates.WallLeap then
 		session.pendingWallLeapClaimUntil = os.clock() + MovementConstants.WallRunClaimBufferSeconds
+	elseif claimedState == MovementStates.WallCling then
+		-- Same root cause as WallRun's own buffering above (playtest bug
+		-- 2026-09-19): a rejection can simply mean the server's own
+		-- replicated position/CFrame hasn't caught up yet to a wall the
+		-- player only just moved into range of. Reuses
+		-- `WallRunClaimBufferSeconds` rather than a second, unmeasured window
+		-- -- see the field's own PlayerSession comment.
+		session.pendingWallClingClaimUntil = os.clock()
+			+ MovementConstants.WallRunClaimBufferSeconds
 	end
 
 	if
@@ -1470,6 +1817,13 @@ local function onRequestMovementTransition(player: Player, claim: Network.Claima
 	local context = buildContext(session)
 
 	if session.fsm:RequestTransition(claimedState, context) then
+		-- A fresh accept on either claim invalidates any earlier buffered
+		-- Sprint retry (2026-09-21 investigation, see `pendingSprintClaimUntil`'s
+		-- own PlayerSession comment): a new "Run" claim starts a brand new
+		-- dwell cycle the old buffer knows nothing about, and a direct "Sprint"
+		-- accept here means there's nothing left to retry.
+		session.pendingSprintClaimUntil = nil
+
 		if claimedState == MovementStates.Run then
 			-- Backdated by half this player's measured RTT (docs/MOVEMENT.md §5,
 			-- fixed 2026-09-14) -- the claim carrying this instant already reached
@@ -1503,6 +1857,67 @@ local function onRequestMovementTransition(player: Player, claim: Network.Claima
 				)
 			)
 		end
+		return
+	end
+
+	if SPEED_SANITY_DEBUG_LOGGING then
+		-- Rejection path had NO visibility at all before this (2026-09-21
+		-- "flagged switching Run->Sprint" investigation) -- the accept branch
+		-- above already prints dwell overshoot, but a claim that fails
+		-- `CanEnter`/topology here silently returns, leaving the server's
+		-- mirror stuck one tier behind whatever the client already predicted
+		-- and entered. That mismatch is what feeds `effectiveMaxSpeed` (keyed
+		-- off `session.fsm.current`, never the client's state) a stale, lower
+		-- cap, which is what `enforceSpeedSanity` then flags every
+		-- `SpeedCheckIntervalSeconds` until the next resync claim
+		-- (Movement/init.luau's `CLAIM_RESYNC_INTERVAL_SECONDS`) gets through --
+		-- this print is what actually distinguishes "the dwell-backdate
+		-- undercompensated real latency" from every other way this claim could
+		-- have been rejected (already in that state, wrong topology edge, not
+		-- grounded), instead of guessing which one to fix.
+		print(
+			string.format(
+				"[SpeedSanity] %s claim=%s REJECTED current=%s grounded=%s runDuration=%s threshold=%.2f preAirborne=%s",
+				player.Name,
+				claim,
+				tostring(session.fsm.current),
+				tostring(context.grounded),
+				if context.runDuration
+					then string.format("%.3f", context.runDuration :: number)
+					else "nil",
+				context.constants.SprintThresholdSeconds,
+				tostring(context.preAirborneLocomotion)
+			)
+		)
+	end
+
+	-- Buffered Sprint retry (2026-09-21 investigation): the rejection logging
+	-- above, run against a real playtest, showed every rejected "Sprint" claim
+	-- landing with `runDuration` within single milliseconds of `threshold`
+	-- while already grounded and mirrored into Run -- the client fires this
+	-- claim the INSTANT its own local dwell clock crosses 3s, and the server's
+	-- independently-tracked (if backdated) clock has to have ALSO already
+	-- crossed by the time this arrives. That's an inherent photo finish no
+	-- amount of backdate tuning removes -- the two machines' Heartbeat/frame
+	-- boundaries simply don't align. Left unhandled, the session sat capped at
+	-- RunSpeed until the client's next periodic resync claim
+	-- (`CLAIM_RESYNC_INTERVAL_SECONDS`, a full second away), during which
+	-- `enforceSpeedSanity` fired real corrections against real players -- the
+	-- exact rubber-banding this investigation exists to fix. Buffering it here
+	-- follows the SAME `pendingWallRunClaimUntil`/`retryBufferedTraversalClaims`
+	-- idiom `onClaimTraversalMove` already established for this identical class
+	-- of "claim arrived a beat before the server could agree" race, reusing
+	-- `WallRunClaimBufferSeconds` rather than a second, unmeasured window (the
+	-- same reuse `pendingWallClingClaimUntil` already justifies for the
+	-- identical reason). Only armed when grounded-and-Run is the ONLY thing
+	-- that could have failed `CanEnter[Sprint]` -- any other rejection (still
+	-- airborne, wrong topology edge entirely) has nothing to retry toward.
+	if
+		claimedState == MovementStates.Sprint
+		and session.fsm.current == MovementStates.Run
+		and context.grounded
+	then
+		session.pendingSprintClaimUntil = os.clock() + MovementConstants.WallRunClaimBufferSeconds
 	end
 end
 
@@ -1533,28 +1948,31 @@ function MovementValidationService.Init()
 		end
 	end)
 
-	-- Seven per-session checks run unconditionally for every player every
+	-- Eight per-session checks run unconditionally for every player every
 	-- Heartbeat -- each is already throttled internally (see e.g.
 	-- SpeedCheckIntervalSeconds/SlideGroundRaycastThrottleSeconds/
-	-- WallRunQueryThrottleSeconds), but staggering the OUTER loop itself
-	-- (which players get checked which frame) is a real design decision, not
-	-- a drive-by cleanup -- open scalability question for whenever a future
-	-- traversal phase adds an eighth check here.
+	-- WallRunQueryThrottleSeconds/WallClingRecheckInterval), but staggering the
+	-- OUTER loop itself (which players get checked which frame) is a real
+	-- design decision, not a drive-by cleanup -- open scalability question for
+	-- whenever a future traversal phase adds a ninth check here.
 	--
-	-- `updateWallRunQuery` runs BEFORE `mirrorPassiveTransitions` for the same
-	-- same-frame-race reason `updatePeakHeight` already does (guideline §6):
-	-- the sustain check inside `mirrorPassiveTransitions` needs THIS frame's
-	-- fresh probe, not last frame's. `retryBufferedTraversalClaims` runs
-	-- AFTER `mirrorPassiveTransitions` for the identical reason -- a buffered
-	-- WallRun retry needs to see THIS frame's mirrored state (e.g. a landing
+	-- `updateWallRunQuery`/`updateWallClingQuery` both run BEFORE
+	-- `mirrorPassiveTransitions` for the same same-frame-race reason
+	-- `updatePeakHeight` already does (guideline §6): the sustain check inside
+	-- `mirrorPassiveTransitions` needs THIS frame's fresh probe, not last
+	-- frame's. `retryBufferedTraversalClaims`/`retryBufferedSprintClaim` both
+	-- run AFTER `mirrorPassiveTransitions` for the identical reason -- a
+	-- buffered retry needs to see THIS frame's mirrored state (e.g. a landing
 	-- `mirrorPassiveTransitions` just resolved), not last frame's.
 	RunService.Heartbeat:Connect(function()
 		for _, session in sessions do
 			local constants = MovementTuningState.GetEffective(session.player)
 			updatePeakHeight(session)
 			updateWallRunQuery(session)
+			updateWallClingQuery(session)
 			mirrorPassiveTransitions(session)
 			retryBufferedTraversalClaims(session)
+			retryBufferedSprintClaim(session)
 			updateSlideGroundQuery(session, constants)
 			enforceSpeedSanity(session, constants)
 			enforceDoubleJumpTrajectory(session, constants)

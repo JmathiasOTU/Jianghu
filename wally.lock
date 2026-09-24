@@ -18,7 +18,7 @@ version = "1.0.3"
 dependencies = []
 
 [[package]]
-name = "murim-ascent/game"
+name = "jianghu/game"
 version = "0.1.0"
 dependencies = [["LemonSignal", "data-oriented-house/lemonsignal@2.0.0"], ["Loader", "sleitnick/loader@2.0.0"], ["Promise", "evaera/promise@4.0.0"], ["Symbol", "sleitnick/symbol@2.0.1"], ["TableUtil", "sleitnick/table-util@1.2.1"], ["Trove", "sleitnick/trove@1.8.0"], ["ProfileStore", "lm-loleris/profilestore@1.0.3"]]
 

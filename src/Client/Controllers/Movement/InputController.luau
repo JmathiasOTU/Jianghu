@@ -36,6 +36,12 @@ export type InputController = {
 	-- the double jump with no separate second press. Tracking the key edge
 	-- ourselves fires exactly once per physical press-release cycle.
 	JumpRequested: LemonSignal.Signal<()>,
+	-- WallBoost's own input (docs/WallClimbingPlan.md §2/§10.1 step 5): fires
+	-- once per physical F press. A plain InputBegan edge is enough here --
+	-- unlike Space's own JumpRequested, there's no `UserInputService`-level
+	-- engine quirk to guard against (JumpRequested's own doc comment explains
+	-- why that one specifically can't be a raw passthrough).
+	BoostRequested: LemonSignal.Signal<()>,
 	GetMoveIntent: (self: InputController) -> MoveIntent,
 	IsCrouchHeld: (self: InputController) -> boolean,
 	Destroy: (self: InputController) -> (),
@@ -61,6 +67,7 @@ function InputController.new(): InputController
 	self.RunRequested = self._trove:Add(LemonSignal.new(), "Destroy")
 	self.CrouchChanged = self._trove:Add(LemonSignal.new(), "Destroy")
 	self.JumpRequested = self._trove:Add(LemonSignal.new(), "Destroy")
+	self.BoostRequested = self._trove:Add(LemonSignal.new(), "Destroy")
 
 	self._forward = false
 	self._backward = false
@@ -93,6 +100,11 @@ function InputController.new(): InputController
 				end
 				self._jumpHeld = true
 				self.JumpRequested:Fire()
+				return
+			end
+
+			if input.KeyCode == Enum.KeyCode.F then
+				self.BoostRequested:Fire()
 				return
 			end
 

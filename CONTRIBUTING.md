@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for helping build Murim Ascent. This project holds a high, consistent bar for architecture because it's a parry-timing combat game — small inconsistencies in how state and networking are handled translate directly into exploitable or unfair gameplay.
+Thanks for helping build Jianghu. This project holds a high, consistent bar for architecture because it's a parry-timing combat game — small inconsistencies in how state and networking are handled translate directly into exploitable or unfair gameplay.
 
 Before opening a PR, read [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) in full. It is not optional background reading — it's the checklist your change will be reviewed against.
 

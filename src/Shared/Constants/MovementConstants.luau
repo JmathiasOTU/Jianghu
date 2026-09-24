@@ -295,6 +295,76 @@ local MovementConstants = {
 	-- Fixed vertical arc magnitude -- a flat constant, not a decaying
 	-- impulse like DoubleJump's.
 	WallLeapUpwardForce = 100,
+
+	-- WallCling/WallBoost (docs/WallClimbingPlan.md) -- static cling, then a
+	-- single free upward boost. Starting-point values, not measured -- retune
+	-- in Studio once the mechanic is playtested (same "Fast & fluid, not yet
+	-- tuned" status as the original speed/jump tiers).
+	--
+	-- Hard time cap on a single cling -- no Qi drain in v1 (locked design).
+	WallClingMaxDuration = 2.5,
+	-- Blockcast sweep distance (guideline: any near-vertical wall, no tag/
+	-- attribute required).
+	WallClingDistance = 3,
+	-- Sized for R6: HumanoidRootPart sits ~3 studs above the feet, so a
+	-- 4-stud-tall box centered on it spans ~1-5 studs above the feet -- a real
+	-- body-height span, not a point probe, so thin slivers/corners don't
+	-- register as clingable.
+	WallClingCastSize = Vector3.new(2, 4, 0.2),
+	-- Look direction must be within this many degrees of head-on to the wall
+	-- (locked design) -- what actually separates a cling entry from a wall-run
+	-- entry (side-on).
+	WallClingMaxFacingAngleDegrees = 35,
+	-- Flatness gate for a clingable surface, dot of the hit normal with world
+	-- up -- a DIFFERENT threshold from WallRun's own WallDetectMaxUpDot (0.3)
+	-- on purpose: cling is a stricter "near-vertical" gate (~15 degrees off
+	-- vertical) than wall run's side-cast flatness check, since an overhang a
+	-- wall-run side-cast would reject anyway should also never be clingable.
+	WallClingMaxNormalY = 0.26,
+	-- Delta-time accumulator interval for the ongoing wall-still-there recheck
+	-- while holding (ARCHITECTURE.md §6 forbids a raw per-tick cast).
+	WallClingRecheckInterval = 0.1,
+	-- Move-input-along-away-from-wall magnitude that counts as a deliberate
+	-- drop (locked design: S/pull-away drops to Airborne).
+	WallClingDropInputThreshold = 0.5,
+	-- Re-grab lockout after a timeout peel-off (locked design).
+	WallClingTimeoutLockout = 0.75,
+	-- Re-grab lockout after a deliberate drop (locked design).
+	WallClingDropLockout = 0.3,
+	-- Cooldown before a fresh cling is allowed after a boost (locked design:
+	-- one boost per cling, re-cling allowed after a short cooldown).
+	WallClingPostBoostCooldown = 0.25,
+	-- No horizontal drift while clinging -- any non-zero value needs a
+	-- measured, documented cause (docs/ARCHITECTURE.md §9); this is not a
+	-- server tolerance, it's the mechanic's own design (static cling, no
+	-- steered climbing).
+	WallClingSpeedCeiling = 0,
+	-- One-shot away-from-wall push on a voluntary Drop exit (Phase 6 exploit
+	-- audit, 2026-09-19) -- structural/anti-cheat plumbing, same category as
+	-- WallClingDistance/WallClingCastSize above, not a feel dial. The server
+	-- has no signal that a Drop happened other than its OWN castClingWall
+	-- probe going nil (docs/WallClimbingPlan.md §6.4) -- a real geometry
+	-- fact for Timeout/WallLost, but not for a voluntary release: with no
+	-- push, a player who tapped the drop input once and let go of everything
+	-- could keep falling straight past the same wall, still within the
+	-- probe's reach, leaving the server's mirror stuck in WallCling (0 speed
+	-- ceiling) for up to WallClingMaxDuration and rejecting a legitimate
+	-- re-cling on a nearby wall in the meantime. This makes the underlying
+	-- geometry actually change so the existing probe resolves quickly,
+	-- rather than depending on the player continuing to hold input after
+	-- the drop.
+	WallClingDropSeparationSpeed = 10,
+
+	-- Instant upward impulse (locked design: free, instant, then back to
+	-- Airborne) -- ~9.8 studs of rise at default gravity (196.2); recompute if
+	-- gravity is customized.
+	WallBoostUpwardForce = 120,
+	-- Small push away from the wall so the character doesn't snag on friction
+	-- while rising -- set to 0 if it feels wrong in playtest.
+	WallBoostSeparationSpeed = 12,
+	-- Short window, not a control lock -- gives the animation time to play and
+	-- defines the window the server mirrors (docs/WallClimbingPlan.md §10.2).
+	WallBoostStateDuration = 0.6,
 }
 
 return MovementConstants

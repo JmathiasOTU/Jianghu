@@ -1,11 +1,11 @@
 # Architecture
 
-This document is the standing set of design rules for Murim Ascent. It applies to every system in this repository — movement, combat, UI wiring, and persistence alike. Pull requests that violate these rules should be rejected in review regardless of whether the feature "works."
+This document is the standing set of design rules for Jianghu. It applies to every system in this repository — movement, combat, UI wiring, and persistence alike. Pull requests that violate these rules should be rejected in review regardless of whether the feature "works."
 
 ## 1. Project Identity
 
 - **Rig standard:** R6 only, exclusively, to guarantee identical hitbox fairness across all players. No code should branch on or accommodate R15 or custom rigs.
-- **Combat identity:** Murim Ascent is a parry-based combat game. Parry timing, stagger/posture, and server-authoritative hit validation are first-class systems — never bolted onto a generic combat script as an afterthought.
+- **Combat identity:** Jianghu is a parry-based combat game. Parry timing, stagger/posture, and server-authoritative hit validation are first-class systems — never bolted onto a generic combat script as an afterthought.
 
 ## 2. Global Rules
 

@@ -135,10 +135,17 @@
       }
     },
     {
-      "Name": "WallLatch",
+      "Name": "WallCling",
       "ClassName": "Animation",
       "Properties": {
         "AnimationId": "rbxassetid://78068464202635"
+      }
+    },
+    {
+      "Name": "WallBoost",
+      "ClassName": "Animation",
+      "Properties": {
+        "AnimationId": "rbxassetid://136022644832167"
       }
     }
   ]

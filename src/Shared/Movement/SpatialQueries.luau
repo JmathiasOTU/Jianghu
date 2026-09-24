@@ -4,6 +4,17 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local MovementConstants = require(ReplicatedStorage.Shared.Constants.MovementConstants)
 
+-- Temporary diagnostic capture for the 2026-09-19 "WallCling never triggers"
+-- playtest report -- same `*_DEBUG_LOGGING` convention every other opt-in
+-- print in this codebase already follows (e.g. MovementValidationService's
+-- WALL_TRAVERSAL_DEBUG_LOGGING), printing exactly which gate rejected the
+-- cast instead of guessing at a fix. Root cause confirmed via a real capture
+-- (2026-09-19): every rejected hit showed `Anchored=false` on the test wall --
+-- working as designed (v1 scope requires Anchored == true), not a code bug.
+-- Off by default now that it's confirmed; flip back on if a NEW rejection
+-- pattern shows up.
+local WALLCLING_DEBUG_LOGGING = false
+
 -- Pure geometry reads (TRAVERSAL-ROADMAP.md §3) -- called identically by
 -- client prediction (via `CharacterMover:QueryGround`) and server
 -- resimulation (`MovementValidationService`), so both sides can only ever
@@ -21,6 +32,18 @@ export type WallRunQueryResult = {
 	position: Vector3,
 	normal: Vector3,
 	side: "Left" | "Right",
+	-- The hit part itself (docs/WallClimbingPlan.md §2/§9) -- added alongside
+	-- WallCling so a wall-leap's launch wall can be remembered (the "cling
+	-- back onto the wall you just leapt from" block). Existing WallRun/WallLeap
+	-- callers only ever read position/normal/side, so this is purely additive.
+	instance: BasePart,
+}
+
+export type ClingWallHit = {
+	instance: BasePart,
+	position: Vector3,
+	normal: Vector3,
+	distance: number,
 }
 
 -- Slide's own ground-normal read (mechanic 3a) -- only ever called while
@@ -96,6 +119,7 @@ function SpatialQueries.QueryWallRun(
 			position = result.Position,
 			normal = result.Normal,
 			side = side,
+			instance = result.Instance,
 		}
 	end
 
@@ -109,6 +133,124 @@ function SpatialQueries.QueryWallRun(
 	end
 
 	return rightHit or leftHit
+end
+
+-- WallCling's facing-angle gate (docs/WallClimbingPlan.md §2/§7): head-on to
+-- the wall, not side-on like wall run -- angle between the flattened look
+-- vector and the flattened INWARD wall direction (negated normal), in
+-- degrees. Zero on either flattened vector (looking straight up/down, or a
+-- perfectly horizontal wall normal, neither of which real gameplay hits)
+-- returns 180 (maximally not-facing) rather than dividing by a zero
+-- magnitude, same "clamp rather than NaN" convention as TraversalMath.AngleBetween.
+function SpatialQueries.facingAngleToWallDegrees(lookVector: Vector3, wallNormal: Vector3): number
+	local flatLook = Vector3.new(lookVector.X, 0, lookVector.Z)
+	local flatInward = Vector3.new(-wallNormal.X, 0, -wallNormal.Z)
+	if flatLook.Magnitude < 1e-3 or flatInward.Magnitude < 1e-3 then
+		return 180
+	end
+	local cosine = math.clamp(flatLook.Unit:Dot(flatInward.Unit), -1, 1)
+	return math.deg(math.acos(cosine))
+end
+
+-- WallCling's own entry/sustain probe (docs/WallClimbingPlan.md §7) -- same
+-- calling convention as QueryGround/QueryWallRun above: takes the rootPart
+-- and the caller's own filter instance, derives its own RaycastParams and
+-- look direction (`rootPart.CFrame.LookVector`, flattened) rather than
+-- taking a `world`/pre-built `RaycastParams` from the caller -- there's only
+-- ever one `Workspace` per execution context (client vs. server each already
+-- resolve it to their OWN trusted tree), so a `WorldRoot` passthrough
+-- parameter would add indirection this module's own established pattern
+-- doesn't use anywhere else. A forward Blockcast (not WallRun's side-cast:
+-- cling is head-on by design, see `facingAngleToWallDegrees` below), sized to
+-- span roughly body height so thin slivers/corners don't register.
+--
+-- Deliberately does NOT gate on facing angle -- only structural legality
+-- (a real, static, collidable wall) lives here, the exact same split
+-- QueryWallRun/CanEnter[WallRun] already established: this cast finds the
+-- wall, `CanEnter[WallCling]` judges whether the approach angle is good
+-- enough against `constants.WallClingMaxFacingAngleDegrees` (a live-tunable
+-- gameplay-feel dial, docs/WallClimbingPlan.md's own F4 tuning request) --
+-- baking it in here would make it permanently fixed instead. No slack/options
+-- parameter on the structural side -- client and server run the identical
+-- thresholds there (docs/ARCHITECTURE.md §9).
+function SpatialQueries.castClingWall(rootPart: BasePart, filterInstance: Instance): ClingWallHit?
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.FilterDescendantsInstances = { filterInstance }
+
+	local lookVector = rootPart.CFrame.LookVector
+	local flatLook = Vector3.new(lookVector.X, 0, lookVector.Z)
+	if flatLook.Magnitude < 1e-3 then
+		return nil
+	end
+	flatLook = flatLook.Unit
+
+	local castOrigin = CFrame.lookAt(rootPart.Position, rootPart.Position + flatLook)
+	local castDirection = flatLook * MovementConstants.WallClingDistance
+	local result =
+		Workspace:Blockcast(castOrigin, MovementConstants.WallClingCastSize, castDirection, params)
+	if not result then
+		if WALLCLING_DEBUG_LOGGING then
+			print(
+				string.format(
+					"[WallCling] no Blockcast hit (origin=%s dir=%s size=%s)",
+					tostring(castOrigin.Position),
+					tostring(castDirection),
+					tostring(MovementConstants.WallClingCastSize)
+				)
+			)
+		end
+		return nil
+	end
+
+	local instance = result.Instance
+	if not instance:IsA("BasePart") or not instance.CanCollide or not instance.Anchored then
+		if WALLCLING_DEBUG_LOGGING then
+			print(
+				string.format(
+					"[WallCling] rejected hit %s: IsBasePart=%s CanCollide=%s Anchored=%s",
+					instance:GetFullName(),
+					tostring(instance:IsA("BasePart")),
+					tostring(instance:IsA("BasePart") and instance.CanCollide),
+					tostring(instance:IsA("BasePart") and instance.Anchored)
+				)
+			)
+		end
+		return nil
+	end
+	-- A shapecast that starts inside geometry can return a hit at distance 0
+	-- with a zero normal -- guards against that degenerate case rather than
+	-- feeding a zero vector into the verticality check below.
+	if result.Normal.Magnitude < 1e-3 then
+		if WALLCLING_DEBUG_LOGGING then
+			print(string.format("[WallCling] rejected %s: zero normal", instance.Name))
+		end
+		return nil
+	end
+	if math.abs(result.Normal.Y) > MovementConstants.WallClingMaxNormalY then
+		if WALLCLING_DEBUG_LOGGING then
+			print(
+				string.format(
+					"[WallCling] rejected %s: normal.Y=%.3f (need <= %.3f)",
+					instance.Name,
+					result.Normal.Y,
+					MovementConstants.WallClingMaxNormalY
+				)
+			)
+		end
+		return nil
+	end
+
+	if WALLCLING_DEBUG_LOGGING then
+		print(string.format("[WallCling] ACCEPTED %s (structural gates passed)", instance.Name))
+	end
+
+	return {
+		instance = instance,
+		position = result.Position,
+		normal = result.Normal,
+		distance = result.Distance,
+	}
 end
 
 return SpatialQueries

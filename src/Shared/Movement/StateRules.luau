@@ -4,6 +4,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local MovementStates = require(ReplicatedStorage.Shared.FSM.MovementStates)
 local MovementTypes = require(ReplicatedStorage.Shared.Types.MovementTypes)
 local TraversalMath = require(ReplicatedStorage.Shared.Movement.TraversalMath)
+local SpatialQueries = require(ReplicatedStorage.Shared.Movement.SpatialQueries)
 
 type MovementState = MovementStates.MovementState
 type MovementContext = MovementTypes.MovementContext
@@ -66,6 +67,7 @@ local Transitions: { [MovementState]: { MovementState } } = {
 		MovementStates.DoubleJump,
 		MovementStates.HardLanding,
 		MovementStates.WallRun,
+		MovementStates.WallCling,
 	},
 	[MovementStates.CrouchIdle] = {
 		MovementStates.Idle,
@@ -154,6 +156,50 @@ local Transitions: { [MovementState]: { MovementState } } = {
 	-- already the entire reachability question this edge answers.
 	[MovementStates.WallLeap] = {
 		MovementStates.Airborne,
+	},
+
+	-- WallCling (docs/WallClimbingPlan.md §4): reachable only from Airborne
+	-- (see the Airborne table above), can hand off to WallBoost or drop/time
+	-- out/lose-the-wall straight back to Airborne. Never a direct edge back
+	-- into WallCling from WallBoost -- a re-cling always requires a fresh
+	-- Space press through Airborne (CanEnter[WallCling]'s own lockout check),
+	-- same "topology says WHERE, CanEnter says WHEN" split every other state
+	-- here already follows. The grounded targets alongside Airborne/WallBoost
+	-- cover the mid-cling-landing case -- same reason WallRun's own table
+	-- carries them (`mirrorPassiveTransitions`'s landing branch calls
+	-- `LandingResolution.Resolve`, which returns a GROUNDED state directly,
+	-- never `Airborne` -- omitting these left the server's mirror unable to
+	-- ever leave WallCling on a real landing, found 2026-09-19: the mirror
+	-- stayed stuck in WallCling indefinitely once grounded, since `context.
+	-- grounded` short-circuits the duration/wall-lost fallback every
+	-- Heartbeat and the landing transition itself kept silently failing).
+	[MovementStates.WallCling] = {
+		MovementStates.Airborne,
+		MovementStates.WallBoost,
+		MovementStates.Idle,
+		MovementStates.Walk,
+		MovementStates.Run,
+		MovementStates.Sprint,
+		MovementStates.CrouchIdle,
+		MovementStates.CrouchWalk,
+		MovementStates.HardLanding,
+	},
+
+	-- WallBoost (docs/WallClimbingPlan.md §4): usually a single edge back to
+	-- Airborne after its own short `WallBoostStateDuration` window -- reachable
+	-- only from WallCling (see the WallCling table above). Same grounded-target
+	-- set as WallCling just above, for the identical mid-boost-landing reason
+	-- (a boost launched near the ground, or one that immediately clears a low
+	-- ledge, can land before its own duration window even elapses).
+	[MovementStates.WallBoost] = {
+		MovementStates.Airborne,
+		MovementStates.Idle,
+		MovementStates.Walk,
+		MovementStates.Run,
+		MovementStates.Sprint,
+		MovementStates.CrouchIdle,
+		MovementStates.CrouchWalk,
+		MovementStates.HardLanding,
 	},
 }
 
@@ -277,6 +323,51 @@ local CanEnter: { [MovementState]: (context: MovementContext) -> boolean } = {
 		local tangent = TraversalMath.WallRunTangent(wallQuery.normal, context.horizontalVelocity)
 		return context.moveIntent.direction.Unit:Dot(tangent)
 			>= context.constants.WallRunEntryDotThreshold
+	end,
+
+	-- WallCling (docs/WallClimbingPlan.md §9): airborne, off any active
+	-- re-grab lockout, a real head-on wall this frame, and not the wall this
+	-- life/session just leapt from. `wallClingQuery` is populated by the
+	-- caller BEFORE this runs (SpatialQueries.castClingWall, same
+	-- "computed by the caller" treatment `wallRunQuery` already gets) --
+	-- that cast only enforces STRUCTURAL legality (Anchored/CanCollide,
+	-- verticality); the facing-angle check happens HERE, against the live
+	-- tunable `constants.WallClingMaxFacingAngleDegrees`, the same
+	-- cast-finds-it/CanEnter-judges-it split `wallRunQuery`/`CanEnter[WallRun]`
+	-- already established. No combat-FSM gate here (unlike the plan's own
+	-- assumption 2) -- this codebase has no Stagger/PostureBreak/Defeated FSM
+	-- state yet to check against.
+	[MovementStates.WallCling] = function(context: MovementContext): boolean
+		if context.grounded then
+			return false
+		end
+		if
+			context.wallClingLockoutUntil
+			and os.clock() < (context.wallClingLockoutUntil :: number)
+		then
+			return false
+		end
+		local wallQuery = context.wallClingQuery
+		if not wallQuery then
+			return false
+		end
+		if context.lastWallLeapWall and wallQuery.instance == context.lastWallLeapWall then
+			return false
+		end
+		if not context.facingDirection then
+			return false
+		end
+		local facingAngle =
+			SpatialQueries.facingAngleToWallDegrees(context.facingDirection, wallQuery.normal)
+		return facingAngle <= context.constants.WallClingMaxFacingAngleDegrees
+	end,
+
+	-- WallBoost (docs/WallClimbingPlan.md §9): reachable only from WallCling
+	-- (topology above) and only once per cling -- "currently WallCling" needs
+	-- no re-check here, same principle SlideJump's own CanEnter already
+	-- relies on for its topology-gated "currently Slide."
+	[MovementStates.WallBoost] = function(context: MovementContext): boolean
+		return not context.wallClingBoostUsed
 	end,
 }
 

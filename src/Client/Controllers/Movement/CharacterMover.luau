@@ -39,6 +39,7 @@ export type CharacterMover = {
 		castRadius: number?,
 		castDistance: number?
 	) -> SpatialQueries.WallRunQueryResult?,
+	QueryClingWall: (self: CharacterMover) -> SpatialQueries.ClingWallHit?,
 	Destroy: (self: CharacterMover) -> (),
 }
 
@@ -282,11 +283,23 @@ end
 -- without touching any Humanoid property -- CrouchIdle/CrouchWalk call this
 -- on Enter/Exit, exactly the narrow on/off switch they need without reaching
 -- into ContextActionService themselves.
+--
+-- The input sink alone isn't enough (HardLanding jump-spam bug): a state
+-- entered on the Heartbeat AFTER touchdown (HardLanding) arrives one physics
+-- step too late -- a Space spammed mid-fall has already queued
+-- `Humanoid.Jump`, which fires Landed -> Jumping on the very next step no
+-- matter what the input layer sinks from then on. Disabling the `Jumping`
+-- HumanoidState (client-authoritative for the owning client) and clearing
+-- the queued flag closes that gap at the physics level; clearing it again on
+-- unblock drops any press buffered during the lock instead of auto-jumping
+-- the instant it ends (a still-held Space re-asserts it next frame anyway).
 function CharacterMover:SetJumpBlocked(blocked: boolean)
 	if blocked == self._jumpBlocked then
 		return
 	end
 	self._jumpBlocked = blocked
+	self._humanoid:SetStateEnabled(Enum.HumanoidStateType.Jumping, not blocked)
+	self._humanoid.Jump = false
 	if blocked then
 		ContextActionService:BindAction(JUMP_BLOCK_ACTION_NAME, function()
 			return Enum.ContextActionResult.Sink
@@ -348,9 +361,20 @@ function CharacterMover:QueryWallRun(
 	)
 end
 
+-- WallCling's own forward probe (docs/WallClimbingPlan.md §7) -- same
+-- delegation shape as QueryGround/QueryWallRun above, just to
+-- SpatialQueries.castClingWall.
+function CharacterMover:QueryClingWall(): SpatialQueries.ClingWallHit?
+	local rootPart = self._humanoid.RootPart
+	if not rootPart then
+		return nil
+	end
+	return SpatialQueries.castClingWall(rootPart, self._humanoid.Parent :: Instance)
+end
+
 function CharacterMover:Destroy()
 	if self._jumpBlocked then
-		ContextActionService:UnbindAction(JUMP_BLOCK_ACTION_NAME)
+		self:SetJumpBlocked(false)
 	end
 	self._trove:Destroy()
 end

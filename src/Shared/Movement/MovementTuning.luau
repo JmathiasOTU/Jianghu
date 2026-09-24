@@ -48,6 +48,15 @@ export type TunableConstantName =
 	| "WallLeapBurstForce"
 	| "WallLeapPushForce"
 	| "WallLeapUpwardForce"
+	| "WallClingMaxDuration"
+	| "WallClingMaxFacingAngleDegrees"
+	| "WallClingDropInputThreshold"
+	| "WallClingTimeoutLockout"
+	| "WallClingDropLockout"
+	| "WallClingPostBoostCooldown"
+	| "WallBoostUpwardForce"
+	| "WallBoostSeparationSpeed"
+	| "WallBoostStateDuration"
 
 -- A named-field record (not a `{ [TunableConstantName]: number }` indexer
 -- type) specifically so consumers get plain dot-access
@@ -95,6 +104,15 @@ export type EffectiveMovementConstants = {
 	WallLeapBurstForce: number,
 	WallLeapPushForce: number,
 	WallLeapUpwardForce: number,
+	WallClingMaxDuration: number,
+	WallClingMaxFacingAngleDegrees: number,
+	WallClingDropInputThreshold: number,
+	WallClingTimeoutLockout: number,
+	WallClingDropLockout: number,
+	WallClingPostBoostCooldown: number,
+	WallBoostUpwardForce: number,
+	WallBoostSeparationSpeed: number,
+	WallBoostStateDuration: number,
 }
 
 -- Iteration order for the overlay's Tuning tab and for anything else that
@@ -137,6 +155,15 @@ local TUNABLE_NAMES: { TunableConstantName } = {
 	"WallLeapBurstForce",
 	"WallLeapPushForce",
 	"WallLeapUpwardForce",
+	"WallClingMaxDuration",
+	"WallClingMaxFacingAngleDegrees",
+	"WallClingDropInputThreshold",
+	"WallClingTimeoutLockout",
+	"WallClingDropLockout",
+	"WallClingPostBoostCooldown",
+	"WallBoostUpwardForce",
+	"WallBoostSeparationSpeed",
+	"WallBoostStateDuration",
 }
 
 -- Sanity bounds for RequestSetTuning (Server/Services/MovementTuningService.luau)
@@ -193,6 +220,19 @@ local VALID_RANGES: { [TunableConstantName]: { min: number, max: number } } = {
 	WallLeapBurstForce = { min = 0, max = 200 },
 	WallLeapPushForce = { min = 0, max = 200 },
 	WallLeapUpwardForce = { min = 0, max = 200 },
+	WallClingMaxDuration = { min = 0.1, max = 30 },
+	WallClingMaxFacingAngleDegrees = { min = 0, max = 89 },
+	WallClingDropInputThreshold = { min = -1, max = 1 },
+	WallClingTimeoutLockout = { min = 0, max = 10 },
+	WallClingDropLockout = { min = 0, max = 10 },
+	WallClingPostBoostCooldown = { min = 0, max = 10 },
+	WallBoostUpwardForce = { min = 0, max = 200 },
+	WallBoostSeparationSpeed = { min = 0, max = 200 },
+	-- Bounded well above the default ~0.12s window (mirrors
+	-- MediumLandingDurationSeconds's own "wide enough to experiment, never
+	-- zero or absurd" reasoning) -- lower bound isn't 0, so the window can
+	-- always at least register on a real Heartbeat.
+	WallBoostStateDuration = { min = 0.02, max = 5 },
 }
 
 local MovementTuning = {}
@@ -240,6 +280,15 @@ function MovementTuning.Defaults(): EffectiveMovementConstants
 		WallLeapBurstForce = MovementConstants.WallLeapBurstForce,
 		WallLeapPushForce = MovementConstants.WallLeapPushForce,
 		WallLeapUpwardForce = MovementConstants.WallLeapUpwardForce,
+		WallClingMaxDuration = MovementConstants.WallClingMaxDuration,
+		WallClingMaxFacingAngleDegrees = MovementConstants.WallClingMaxFacingAngleDegrees,
+		WallClingDropInputThreshold = MovementConstants.WallClingDropInputThreshold,
+		WallClingTimeoutLockout = MovementConstants.WallClingTimeoutLockout,
+		WallClingDropLockout = MovementConstants.WallClingDropLockout,
+		WallClingPostBoostCooldown = MovementConstants.WallClingPostBoostCooldown,
+		WallBoostUpwardForce = MovementConstants.WallBoostUpwardForce,
+		WallBoostSeparationSpeed = MovementConstants.WallBoostSeparationSpeed,
+		WallBoostStateDuration = MovementConstants.WallBoostStateDuration,
 	}
 end
 

@@ -75,6 +75,15 @@ local function toTuningStatePayload(constants: EffectiveMovementConstants)
 		wallLeapBurstForce = constants.WallLeapBurstForce,
 		wallLeapPushForce = constants.WallLeapPushForce,
 		wallLeapUpwardForce = constants.WallLeapUpwardForce,
+		wallClingMaxDuration = constants.WallClingMaxDuration,
+		wallClingMaxFacingAngleDegrees = constants.WallClingMaxFacingAngleDegrees,
+		wallClingDropInputThreshold = constants.WallClingDropInputThreshold,
+		wallClingTimeoutLockout = constants.WallClingTimeoutLockout,
+		wallClingDropLockout = constants.WallClingDropLockout,
+		wallClingPostBoostCooldown = constants.WallClingPostBoostCooldown,
+		wallBoostUpwardForce = constants.WallBoostUpwardForce,
+		wallBoostSeparationSpeed = constants.WallBoostSeparationSpeed,
+		wallBoostStateDuration = constants.WallBoostStateDuration,
 	}
 end
 

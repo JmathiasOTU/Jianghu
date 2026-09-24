@@ -56,7 +56,7 @@ event RequestMovementTransition = {
 -- -- Dash was deliberately skipped (docs/MOVEMENT.md), wall running/climbing
 -- was removed for a from-scratch redo, and Vault is added to this enum only
 -- once its own phase lands, never all speculatively up front.
-type ClaimableTraversalMove = enum { "DoubleJump", "WallRun", "WallLeap" }
+type ClaimableTraversalMove = enum { "DoubleJump", "WallRun", "WallLeap", "WallCling", "WallBoost" }
 
 event ClaimTraversalMove = {
 	from: Client,
@@ -86,6 +86,8 @@ type DebugMovementState = enum {
 	"HardLanding",
 	"WallRun",
 	"WallLeap",
+	"WallCling",
+	"WallBoost",
 }
 
 -- One recent speed-sanity correction (Shared/Util/ViolationTracker.luau's
@@ -171,6 +173,15 @@ type TunableConstantName = enum {
 	"WallLeapBurstForce",
 	"WallLeapPushForce",
 	"WallLeapUpwardForce",
+	"WallClingMaxDuration",
+	"WallClingMaxFacingAngleDegrees",
+	"WallClingDropInputThreshold",
+	"WallClingTimeoutLockout",
+	"WallClingDropLockout",
+	"WallClingPostBoostCooldown",
+	"WallBoostUpwardForce",
+	"WallBoostSeparationSpeed",
+	"WallBoostStateDuration",
 }
 
 event RequestSetTuning = {
@@ -234,6 +245,15 @@ event TuningState = {
 		wallLeapBurstForce: f32,
 		wallLeapPushForce: f32,
 		wallLeapUpwardForce: f32,
+		wallClingMaxDuration: f32,
+		wallClingMaxFacingAngleDegrees: f32,
+		wallClingDropInputThreshold: f32,
+		wallClingTimeoutLockout: f32,
+		wallClingDropLockout: f32,
+		wallClingPostBoostCooldown: f32,
+		wallBoostUpwardForce: f32,
+		wallBoostSeparationSpeed: f32,
+		wallBoostStateDuration: f32,
 	},
 }
 

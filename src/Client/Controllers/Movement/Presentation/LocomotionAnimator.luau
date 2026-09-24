@@ -249,6 +249,21 @@ function LocomotionAnimator.new(
 		loadTrack(animator, ANIMATIONS_ROOT, "WallLeapLeft", self._trove, false)
 	self._tracks.WallLeapRight =
 		loadTrack(animator, ANIMATIONS_ROOT, "WallLeapRight", self._trove, false)
+	-- WallCling/WallBoost (docs/WallClimbingPlan.md §10, animation wiring
+	-- 2026-09-20): unlike WallRun/WallLeap, neither is handed/directional
+	-- (cling is head-on, boost is a straight vertical launch), so both are a
+	-- single clip, same treatment as Idle/Run/Slide/Jump/DoubleJump. WallCling
+	-- is a real sustained hold (looped, like WallRun); WallBoost is a one-shot
+	-- impulse (not looped, like Jump/DoubleJump) that persists for a real
+	-- ~0.12s (WallBoostStateDuration) rather than a same-tick reentrant
+	-- transition, so per-state resolution below observes it directly on a
+	-- real rendered frame -- no `_transientHold` bridge needed, same reasoning
+	-- HardLanding already gets. Reuses the pre-existing "WallLatch" asset slot
+	-- (renamed to WallCling) -- Wall Run & Leap Mechanic Guideline.md
+	-- confirms it was reserved for this exact mechanic under its original
+	-- name and deliberately left alone when WallRun/WallLeap shipped.
+	self._tracks.WallCling = loadTrack(animator, ANIMATIONS_ROOT, "WallCling", self._trove, true)
+	self._tracks.WallBoost = loadTrack(animator, ANIMATIONS_ROOT, "WallBoost", self._trove, false)
 
 	-- Belt-and-suspenders against anything else that plays a track on this
 	-- Animator (playtest bug 2026-09-18: "basic Roblox animations fighting
@@ -460,6 +475,10 @@ function LocomotionAnimator:_update()
 			else nil
 	elseif state == MovementStates.HardLanding then
 		key = "LandHard"
+	elseif state == MovementStates.WallCling then
+		key = "WallCling"
+	elseif state == MovementStates.WallBoost then
+		key = "WallBoost"
 	end
 	-- Walk with no move direction this frame: key stays nil, fading out
 	-- whatever was last playing.

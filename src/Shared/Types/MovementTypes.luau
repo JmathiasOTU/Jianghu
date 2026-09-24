@@ -82,6 +82,40 @@ export type MoveIntent = {
 -- other spatial-claim field in this codebase already gets. nil whenever no
 -- wall is currently in range on either side, or while not airborne (both
 -- sides only probe at all while `not grounded`).
+-- `wallClingQuery` (docs/WallClimbingPlan.md §7/§9) is this frame's cling-wall
+-- probe -- same "computed by the caller, never inside StateRules itself"
+-- treatment as `wallRunQuery` right above: each side populates it from its
+-- own `SpatialQueries.castClingWall` call BEFORE building context, so
+-- `CanEnter[WallCling]` stays a pure read. nil whenever no clingable wall is
+-- in range. Only the STRUCTURAL gates (Anchored/CanCollide, verticality) are
+-- folded into `castClingWall` itself -- the facing-angle gate is deliberately
+-- NOT baked in here (unlike an earlier version of this field), so it can be
+-- checked in `CanEnter[WallCling]` against `constants.WallClingMaxFacingAngleDegrees`
+-- instead, the same "cast finds the wall, CanEnter judges legality against a
+-- LIVE tunable" split `wallRunQuery`/`CanEnter[WallRun]` already established.
+-- `facingDirection` (below) is what that check reads.
+-- `facingDirection` (docs/WallClimbingPlan.md §2/§7) is each side's own real
+-- current facing (client: `CharacterMover:GetFacingDirection()`, server: its
+-- own `rootPart.CFrame.LookVector`) -- optional so existing `buildContext`
+-- call sites don't need updating until the server-side probe lands; nil is
+-- treated as "can't verify facing," which fails the check closed rather than
+-- open.
+-- `wallClingLockoutUntil` is this life's/session's own server-owned re-grab
+-- deadline (docs/WallClimbingPlan.md §3.5/§4) -- optional so existing
+-- `buildContext` call sites don't need updating until the state that reads it
+-- actually lands; nil is treated as "no lockout in effect."
+-- `lastWallLeapWall` (docs/WallClimbingPlan.md §2/§9) is the physical
+-- `BasePart` this life/session most recently wall-leapt from, cleared on
+-- landing or on touching a different wall -- there is no pre-existing
+-- "wall leap memory" field to reuse (`WallRunQueryResult` never tracked the
+-- hit instance before this), so this is a new field, not a repurposed one.
+-- `wallClingBoostUsed` (docs/WallClimbingPlan.md §4/§9) is whether the
+-- current cling has already spent its one free boost -- per-cling, not
+-- per-life, set false on every WallCling entry and true the instant WallBoost
+-- is entered, same tracked-not-derived treatment as `doubleJumpUsed`.
+-- Optional (unlike `doubleJumpUsed`) since it only matters once WallCling
+-- actually exists as a reachable state -- nil reads as "not used," matching
+-- `CanEnter[WallBoost]`'s own `not context.wallClingBoostUsed` check.
 -- `qinggong` (§0/§3) is the resource gate Vault (and any future Qinggong
 -- move) reads --
 -- still an open design decision (is this the same Qi pool combat will spend,
@@ -116,6 +150,11 @@ export type MovementContext = {
 	fallHeight: number?,
 	horizontalVelocity: Vector3,
 	wallRunQuery: SpatialQueries.WallRunQueryResult?,
+	wallClingQuery: SpatialQueries.ClingWallHit?,
+	facingDirection: Vector3?,
+	wallClingLockoutUntil: number?,
+	wallClingBoostUsed: boolean?,
+	lastWallLeapWall: BasePart?,
 	qinggong: number,
 	cameraLocked: boolean,
 	constants: MovementTuning.EffectiveMovementConstants,

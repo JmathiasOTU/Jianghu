@@ -28,6 +28,13 @@ local entryNormal: Vector3? = nil
 local entryTangent: Vector3? = nil
 local entryTimestamp: number? = nil
 local entrySide: ("Left" | "Right")? = nil
+-- The physical wall part itself (docs/WallClimbingPlan.md §2/§9), added
+-- alongside WallCling's "don't re-cling to the wall you just leapt from"
+-- gate -- exposed the same GetEntry* way as normal/tangent/side above so
+-- Movement/init.luau's own bookkeeping (not WallLeapState, which never reads
+-- this) can snapshot it into `lastWallLeapWall` at the exact WallRun ->
+-- WallLeap edge.
+local entryInstance: BasePart? = nil
 
 -- Exposed the same way SlideState.GetCurrentSpeed/GetCurrentDirection
 -- already are (docs/MOVEMENT.md §9/§12): a sibling state (WallLeapState)
@@ -53,6 +60,10 @@ end
 
 function WallRunState.GetEntrySide(): ("Left" | "Right")?
 	return entrySide
+end
+
+function WallRunState.GetEntryInstance(): BasePart?
+	return entryInstance
 end
 
 -- Full maxForce on all three axes (unlike DoubleJump's Y-only or Slide's
@@ -102,6 +113,7 @@ function WallRunState.Enter(context: ClientMovementContext)
 	entryTangent = TraversalMath.WallRunTangent(wallQuery.normal, context.horizontalVelocity)
 	entryTimestamp = os.clock()
 	entrySide = wallQuery.side
+	entryInstance = wallQuery.instance
 
 	-- One-time position snap (guideline §3's cling distance) -- corrects
 	-- whatever the entry approach angle/distance was to a flush
@@ -166,6 +178,7 @@ function WallRunState.Exit(context: ClientMovementContext)
 	entryTangent = nil
 	entryTimestamp = nil
 	entrySide = nil
+	entryInstance = nil
 end
 
 return WallRunState

@@ -47,6 +47,18 @@ type MovementState = MovementStates.MovementState
 -- spinning the character mid-run (spinning the camera in Shift Lock, or plain
 -- WASD when unlocked), which both looks wrong and can knock the run off its
 -- locked tangent early.
+-- `wallRunEntryInstance` (docs/WallClimbingPlan.md §2/§9) is WallRunState's
+-- own locked entry wall part, exposed the same GetEntry*-> field way as
+-- `wallRunEntryNormal`/`wallRunEntryTangent` -- read by Movement/init.luau's
+-- own `fsm.changed` bookkeeping (not any state) to snapshot `lastWallLeapWall`
+-- at the exact WallRun -> WallLeap edge, BEFORE WallRunState.Exit nils its own
+-- copy. Client-only, same reasoning as the other wallRunEntry* fields -- the
+-- server tracks its OWN wall-leap-wall bookkeeping independently.
+-- `wallClingNormal` (docs/WallClimbingPlan.md §10.2) is WallClingState's own
+-- locked cling normal, exposed the same GetNormal-> field way -- read by
+-- WallBoostState.Enter to compute the launch impulse, captured into context
+-- BEFORE WallClingState.Exit nils its own copy, same pre-Exit-snapshot
+-- pattern `wallRunEntryInstance` already established for the WallLeap edge.
 export type ClientMovementContext = MovementTypes.MovementContext & {
 	characterMover: CharacterMover.CharacterMover,
 	facingController: FacingController.FacingController,
@@ -55,6 +67,8 @@ export type ClientMovementContext = MovementTypes.MovementContext & {
 	slideDirection: Vector3?,
 	wallRunEntryNormal: Vector3?,
 	wallRunEntryTangent: Vector3?,
+	wallRunEntryInstance: BasePart?,
+	wallClingNormal: Vector3?,
 }
 
 return {}

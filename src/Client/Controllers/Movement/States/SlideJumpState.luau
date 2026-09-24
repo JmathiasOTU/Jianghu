@@ -2,13 +2,14 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local MovementStates = require(ReplicatedStorage.Shared.FSM.MovementStates)
+local MovementConstants = require(ReplicatedStorage.Shared.Constants.MovementConstants)
 local StateRules = require(ReplicatedStorage.Shared.Movement.StateRules)
 
 local ClientMovementContextModule = require(script.Parent.Parent.ClientMovementContext)
 type ClientMovementContext = ClientMovementContextModule.ClientMovementContext
 
 -- SlideJump's own duration is intentionally one frame -- it's not a parallel
--- air-control implementation (docs/MOVEMENT.md §9). Enter applies the boost
+-- air-control implementation (docs/MovementSystem.md §4.2). Enter applies the boost
 -- and immediately hands off to Airborne in the SAME synchronous call (the
 -- `RequestTransition` below fires `fsm.changed` reentrantly, which LemonSignal
 -- runs via `task.spawn` -- effectively synchronous as long as nothing yields,
@@ -22,8 +23,8 @@ local SlideJumpState = {}
 SlideJumpState.CanEnter = StateRules.CanEnter[MovementStates.SlideJump]
 
 -- The boost is clamped to `SprintSpeed * SlideEntrySpeedMultiplier`
--- (docs/MOVEMENT.md §9/§12) -- the SAME ceiling Slide itself now uses
--- (`SlideState.Enter`, TRAVERSAL-ROADMAP.md §8 Phase 3 + the 2026-09-15
+-- (docs/MovementSystem.md §4.2) -- the SAME ceiling Slide itself now uses
+-- (`SlideState.Enter`, docs/MovementSystem.md §4 + the 2026-09-15
 -- entry-speed tuning pass), NOT a bare `SprintSpeed` -- clamping to the old,
 -- unboosted ceiling here would silently undo the entry-speed boost the
 -- instant you jumped out of a fast slide. Rather than left unbounded and
@@ -34,7 +35,7 @@ SlideJumpState.CanEnter = StateRules.CanEnter[MovementStates.SlideJump]
 --
 -- Reads Slide's real velocity DIRECTION (`context.slideDirection`, set by
 -- `SlideState.GetCurrentDirection`) rather than the Humanoid's current
--- `MoveDirection` (TRAVERSAL-ROADMAP.md §8 Phase 3) -- now that Slide itself
+-- `MoveDirection` (docs/MovementSystem.md §4) -- now that Slide itself
 -- drives a real `LinearVelocity` instead of a WalkSpeed magnitude, "the speed
 -- Slide had a moment ago" has a real direction attached, not just a number.
 -- Applied as a single direct impulse (`SetHorizontalVelocity`, NOT
@@ -54,6 +55,10 @@ function SlideJumpState.Enter(context: ClientMovementContext)
 	local direction = context.slideDirection or Vector3.zero
 
 	context.characterMover:SetHorizontalVelocity(direction * boosted)
+	-- The launch height is designed, not whatever the slide happened to leave
+	-- in the Humanoid's jump: the server's vertical ceiling allows exactly
+	-- this (see SlideJumpUpwardSpeed).
+	context.characterMover:SetVerticalVelocity(MovementConstants.SlideJumpUpwardSpeed)
 	context.characterMover:SetSpeed(boosted)
 	context.fsm:RequestTransition(MovementStates.Airborne, context)
 end

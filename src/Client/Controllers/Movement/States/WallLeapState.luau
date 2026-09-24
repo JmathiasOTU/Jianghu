@@ -7,8 +7,8 @@ local TraversalMath = require(ReplicatedStorage.Shared.Movement.TraversalMath)
 local ClientMovementContextModule = require(script.Parent.Parent.ClientMovementContext)
 type ClientMovementContext = ClientMovementContextModule.ClientMovementContext
 
--- Single-frame launch out of WallRun (Wall Run & Leap Mechanic Guideline
--- §4) -- same shape as SlideJumpState's own boost: Enter applies the launch
+-- Single-frame launch out of WallRun (docs/MovementSystem.md §4.5) -- same shape as
+-- SlideJumpState's own boost: Enter applies the launch
 -- impulse and immediately hands off to Airborne in the SAME synchronous call
 -- (RequestTransition fires `fsm.changed` reentrantly, which LemonSignal runs
 -- via `task.spawn` -- effectively synchronous as long as nothing yields,
@@ -40,7 +40,7 @@ local WallLeapState = {}
 -- `slideSpeed`/`slideDirection` already are) only for the degenerate
 -- zero-velocity case, which real play never actually hits. `wallRunEntryNormal`
 -- still comes from that same snapshot -- the push-off direction is the wall's
--- own normal, never a live re-read (guideline §0's "locked at Entry" rule).
+-- own normal, never a live re-read (docs/MovementSystem.md §13's "locked at Entry" rule).
 function WallLeapState.Enter(context: ClientMovementContext)
 	local normal = context.wallRunEntryNormal
 	if not normal then

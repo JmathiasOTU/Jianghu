@@ -7,7 +7,7 @@ local MovementStates = require(ReplicatedStorage.Shared.FSM.MovementStates)
 
 type MovementState = MovementStates.MovementState
 
--- Passability while Crouch/Slide is active (docs/MOVEMENT.md §9) is handled
+-- Passability while Crouch/Slide is active (docs/MovementSystem.md §4.2) is handled
 -- via Roblox CollisionGroups, not R6 rig resizing -- R6 has no supported
 -- scaling API, and hand-editing Motor6D offsets to shrink the rig would fight
 -- docs/ARCHITECTURE.md's "R6 only" stance for no real benefit. Group NAMES are
@@ -36,7 +36,7 @@ local CollisionGroups = {
 local appliedGroup: { [Model]: string } = setmetatable({}, { __mode = "k" }) :: any
 
 -- Which states this passability applies to -- CrouchIdle/CrouchWalk/Slide/
--- SlideJump, exactly the four states item 7 of docs/MOVEMENT.md §9 names.
+-- SlideJump, exactly the four states item 7 of docs/MovementSystem.md §4.2 names.
 -- Kept as a set here (not duplicated per call site) so client and server can
 -- never disagree about which states count, same reasoning as StateRules'
 -- own shared Transitions/CanEnter tables.
@@ -76,7 +76,7 @@ end
 -- server-side (the authoritative copy every other client's view, and the
 -- server's own awareness, is built from), each keyed off that side's OWN
 -- mirrored FSM state -- never a client-reported flag, same trust direction as
--- everything else in this system (docs/MOVEMENT.md §9).
+-- everything else in this system (docs/MovementSystem.md §4.2).
 function CollisionGroups.Apply(character: Model, state: MovementState)
 	local groupName = CollisionGroups.GroupForState(state)
 	if appliedGroup[character] == groupName then

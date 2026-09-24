@@ -11,7 +11,7 @@ local AirborneState = require(script.Parent.AirborneState)
 local ClientMovementContextModule = require(script.Parent.Parent.ClientMovementContext)
 type ClientMovementContext = ClientMovementContextModule.ClientMovementContext
 
--- Locked-tangent skim along a wall (Wall Run & Leap Mechanic Guideline §3) --
+-- Locked-tangent skim along a wall (docs/MovementSystem.md §4.5) --
 -- server-claimed validation (§6) lands separately; this is the client-
 -- predicted physics + FSM wiring only. Tangent/normal are locked at Entry and
 -- never recomputed mid-run (§0's corner-handling decision) -- only the LIVE
@@ -28,7 +28,7 @@ local entryNormal: Vector3? = nil
 local entryTangent: Vector3? = nil
 local entryTimestamp: number? = nil
 local entrySide: ("Left" | "Right")? = nil
--- The physical wall part itself (docs/WallClimbingPlan.md §2/§9), added
+-- The physical wall part itself (docs/MovementSystem.md §4.6/§5), added
 -- alongside WallCling's "don't re-cling to the wall you just leapt from"
 -- gate -- exposed the same GetEntry* way as normal/tangent/side above so
 -- Movement/init.luau's own bookkeeping (not WallLeapState, which never reads
@@ -37,7 +37,7 @@ local entrySide: ("Left" | "Right")? = nil
 local entryInstance: BasePart? = nil
 
 -- Exposed the same way SlideState.GetCurrentSpeed/GetCurrentDirection
--- already are (docs/MOVEMENT.md §9/§12): a sibling state (WallLeapState)
+-- already are (docs/MovementSystem.md §4.2): a sibling state (WallLeapState)
 -- reads these off `context`, never by requiring this module directly --
 -- Movement/init.luau's buildContext is the one place that wires a state's
 -- own internal value onto ClientMovementContext for another state to read.
@@ -72,7 +72,7 @@ end
 local FULL_FORCE = Vector3.new(math.huge, math.huge, math.huge)
 
 -- Locked tangent (constants.WallRunSpeed) + a clamped P-controller cling
--- correction along the LIVE wall normal (guideline §3's "Cling Distance"
+-- correction along the LIVE wall normal (docs/MovementSystem.md §4.5's "Cling Distance"
 -- subsection) -- one SetVelocityOverride call, not a separate constraint.
 local function applyVelocity(
 	context: ClientMovementContext,
@@ -115,7 +115,7 @@ function WallRunState.Enter(context: ClientMovementContext)
 	entrySide = wallQuery.side
 	entryInstance = wallQuery.instance
 
-	-- One-time position snap (guideline §3's cling distance) -- corrects
+	-- One-time position snap (docs/MovementSystem.md §4.5's cling distance) -- corrects
 	-- whatever the entry approach angle/distance was to a flush
 	-- WallRunClingDistance offset, before the first velocity override is even
 	-- applied.
@@ -138,7 +138,7 @@ function WallRunState.Enter(context: ClientMovementContext)
 	applyVelocity(context, wallQuery)
 end
 
--- Sustain check, every tick (guideline §3): wall lost, corner/curve exceeded
+-- Sustain check, every tick (docs/MovementSystem.md §4.5): wall lost, corner/curve exceeded
 -- the locked-tangent budget, or the duration cap -- all three snap off
 -- cleanly into Airborne, no continuous re-steering. A mid-run landing
 -- resolves directly via the same AirborneState.ResolveLandingTarget every

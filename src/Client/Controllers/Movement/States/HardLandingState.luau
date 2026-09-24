@@ -9,7 +9,7 @@ local AirborneState = require(script.Parent.AirborneState)
 local ClientMovementContextModule = require(script.Parent.Parent.ClientMovementContext)
 type ClientMovementContext = ClientMovementContextModule.ClientMovementContext
 
--- Real, timed movement lock (docs/MOVEMENT.md §10 rework) -- entered instead
+-- Real, timed movement lock (docs/MovementSystem.md §4.4 rework) -- entered instead
 -- of the normal landing target when `AirborneState.ResolveLandingTarget`
 -- decides the fall was big enough (`context.fallHeight >=
 -- constants.HardLandingHeightThreshold`). Unlike SlideJump (a one-frame
@@ -40,7 +40,7 @@ end
 -- SetJumpBlocked also stops a locked player from cancelling the lock into a
 -- fresh jump, same mechanism CrouchIdle already uses for "can't jump while
 -- crouched"). Facing/camera control is untouched -- only horizontal
--- locomotion and jumping are locked, same scope docs/MOVEMENT.md §9's own
+-- locomotion and jumping are locked, same scope docs/MovementSystem.md §4.2's own
 -- crouch jump-block already established.
 function HardLandingState.Enter(context: ClientMovementContext)
 	context.characterMover:SetSpeed(0)

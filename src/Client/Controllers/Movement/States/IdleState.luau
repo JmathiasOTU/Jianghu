@@ -15,7 +15,7 @@ function IdleState.Enter(context: ClientMovementContext)
 	context.characterMover:SetSpeed(context.constants.WalkSpeed)
 end
 
--- Crouch is checked before the ordinary Walk check (docs/MOVEMENT.md §9) --
+-- Crouch is checked before the ordinary Walk check (docs/MovementSystem.md §4.2) --
 -- Ctrl takes priority the instant it's held. CrouchWalk is gated behind
 -- CrouchIdle (only reachable from there or from Airborne on landing), so
 -- holding Ctrl always lands in CrouchIdle first, even with W already held --

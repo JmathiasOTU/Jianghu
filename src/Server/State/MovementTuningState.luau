@@ -12,7 +12,7 @@ type EffectiveMovementConstants = MovementTuning.EffectiveMovementConstants
 -- docs/ARCHITECTURE.md §2). MovementTuningService.luau owns writing here (the
 -- only place RequestSetTuning is handled); MovementValidationService.luau only
 -- ever reads, via GetEffective, to build each session's context.constants
--- (docs/MOVEMENT.md §5/§8).
+-- (docs/MovementSystem.md §8/§10).
 --
 -- Per-player, never global: an override here can only ever affect the
 -- overriding developer's own session, exactly like the tuning feature's own

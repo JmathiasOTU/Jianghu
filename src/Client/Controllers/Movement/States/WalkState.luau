@@ -16,9 +16,9 @@ function WalkState.Enter(context: ClientMovementContext)
 end
 
 -- Run is deliberately never attempted here -- it's earned exclusively via
--- InputController's W double-tap detector (see docs/MOVEMENT.md §2), never as a
--- side effect of "input is currently held while walking." Crouch (docs/MOVEMENT.md
--- §9) is checked before the no-input->Idle check, same priority-over-the-
+-- InputController's W double-tap detector (see docs/MovementSystem.md §3), never as a
+-- side effect of "input is currently held while walking." Crouch (docs/MovementSystem.md §4.2) is
+-- checked before the no-input->Idle check, same priority-over-the-
 -- normal-family reasoning as IdleState's own crouch check. CrouchWalk is
 -- gated behind CrouchIdle (see IdleState), so pressing Ctrl while walking
 -- always lands in CrouchIdle first, even with W still held.

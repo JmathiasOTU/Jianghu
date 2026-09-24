@@ -14,7 +14,7 @@ local SlideState = {}
 
 SlideState.CanEnter = StateRules.CanEnter[MovementStates.Slide]
 
--- Only the horizontal axes are ever overridden (TRAVERSAL-ROADMAP.md §2) --
+-- Only the horizontal axes are ever overridden (docs/MovementSystem.md §6) --
 -- vertical stays entirely governed by gravity/the Humanoid's own ground
 -- adherence, same "disjoint axes" pattern DoubleJump's vertical-only force
 -- already established, just the complementary pair.
@@ -31,7 +31,7 @@ local HORIZONTAL_ONLY_FORCE = Vector3.new(math.huge, 0, math.huge)
 local currentSpeed: number? = nil
 -- Seeded from real velocity at Entry (residual momentum inherited correctly,
 -- same reasoning as `currentSpeed` below), then STEERED every tick after that
--- (docs/MOVEMENT.md §12, playtest feedback 2026-09-15 -- supersedes this
+-- (docs/MovementSystem.md §4.2, playtest feedback 2026-09-15 -- supersedes this
 -- state's earlier "committed action, direction locked at entry" design) --
 -- `Update` re-derives it from `CharacterMover:GetFacingDirection()` each
 -- frame, so the slide continuously curves toward wherever you're currently
@@ -51,12 +51,12 @@ function SlideState.Reset()
 end
 
 -- Inherits whatever velocity the character actually had the instant Slide was
--- entered (docs/MOVEMENT.md §9) -- real velocity via
+-- entered (docs/MovementSystem.md §4.2) -- real velocity via
 -- CharacterMover:GetHorizontalVelocity(), not the nominal RunSpeed/SprintSpeed
 -- constant for whichever state Slide came from, so residual-momentum
 -- transients (e.g. sliding right out of a landing) are inherited correctly
 -- rather than guessed at. Scaled by `SlideEntrySpeedMultiplier`
--- (docs/MOVEMENT.md §12, playtest feedback 2026-09-15) -- decay rate alone
+-- (docs/MovementSystem.md §4.2, playtest feedback 2026-09-15) -- decay rate alone
 -- doesn't determine how far a slide carries you, entry speed matters just as
 -- much, and the raw inherited speed (capped by RunSpeed/SprintSpeed) wasn't
 -- enough distance for `SlideDecayRate`'s already-confirmed-correct feel. This
@@ -64,8 +64,8 @@ end
 -- rather than a flat added number, so Sprint-entry slides stay faster than
 -- Run-entry ones.
 --
--- Drives a real `LinearVelocity` override (TRAVERSAL-ROADMAP.md §2/§8 Phase
--- 3) instead of `Humanoid.WalkSpeed` -- WalkSpeed is silenced to 0 for the
+-- Drives a real `LinearVelocity` override (docs/MovementSystem.md §6/§4) instead of
+-- `Humanoid.WalkSpeed` -- WalkSpeed is silenced to 0 for the
 -- duration of the slide so the Humanoid's own ground-movement controller
 -- (which also drives horizontal velocity toward `MoveDirection * WalkSpeed`)
 -- doesn't fight the LinearVelocity constraint over the same two axes; every
@@ -74,7 +74,11 @@ end
 -- than the one frame Slide itself is active.
 function SlideState.Enter(context: ClientMovementContext)
 	local velocity = context.characterMover:GetHorizontalVelocity()
-	currentSpeed = velocity.Magnitude * context.constants.SlideEntrySpeedMultiplier
+	-- Clamped to the same ceiling SlideJump and the server's Slide cap use
+	-- (SprintSpeed * SlideEntrySpeedMultiplier): residual momentum above
+	-- SprintSpeed (a landing, a slope) must not boost the slide past the cap.
+	currentSpeed = math.min(velocity.Magnitude, context.constants.SprintSpeed)
+		* context.constants.SlideEntrySpeedMultiplier
 	currentDirection = if velocity.Magnitude > 0 then velocity.Unit else Vector3.zero
 	raycastAccumulator = 0
 	cachedGroundQuery = context.characterMover:QueryGround()
@@ -86,7 +90,7 @@ function SlideState.Enter(context: ClientMovementContext)
 	)
 end
 
--- Speed decays via LINEAR friction (docs/MOVEMENT.md §9,
+-- Speed decays via LINEAR friction (docs/MovementSystem.md §4.2,
 -- `MovementConstants.SlideDecayRate` -- see that file for why linear over
 -- exponential), shaped every tick using Heartbeat's own `dt` -- already a
 -- proper delta-time float (never `tick()`-based), the same `os.clock()`-class
@@ -105,7 +109,7 @@ end
 -- tick in between, same "expensive read, cheap reuse" shape as any other
 -- throttled sensor in this codebase.
 --
--- Slope amplification (TRAVERSAL-ROADMAP.md §9 mechanic 3a/3b/3c) is an
+-- Slope amplification (docs/MovementSystem.md §4 mechanic 3a/3b/3c) is an
 -- ADDITIVE top-up applied only to the velocity actually output this tick --
 -- it never feeds back into `currentSpeed` itself, so the existing closed-form
 -- "(entrySpeed - CrouchSpeed) / SlideDecayRate" duration stays true
@@ -128,7 +132,7 @@ function SlideState.Update(dt: number, context: ClientMovementContext)
 		cachedGroundQuery = context.characterMover:QueryGround()
 	end
 
-	-- Steering (docs/MOVEMENT.md §12, playtest feedback 2026-09-15): re-reads
+	-- Steering (docs/MovementSystem.md §4.2, playtest feedback 2026-09-15): re-reads
 	-- the rootPart's current facing EVERY tick, not just once at Entry --
 	-- `GetFacingDirection` is a cheap CFrame read (no raycast, no throttling
 	-- needed), and `FacingController`/`Humanoid.AutoRotate` are already
@@ -165,7 +169,7 @@ function SlideState.Update(dt: number, context: ClientMovementContext)
 	)
 
 	-- Automatic hand-off once decay crosses the crouch-speed threshold
-	-- (docs/MOVEMENT.md §9) -- unconditional on `crouchHeld`: if Ctrl was
+	-- (docs/MovementSystem.md §4.2) -- unconditional on `crouchHeld`: if Ctrl was
 	-- already released before decay finished, the resulting CrouchWalk/
 	-- CrouchIdle's OWN Update immediately notices on the very next tick and
 	-- releases into Walk/Idle -- no special-casing needed here for that.

@@ -3,7 +3,7 @@
 -- Server-only shared state, same reasoning as NoclipState.luau alongside it:
 -- DevToolsService.luau owns writing here (the only place
 -- RequestSetDebugOverlayOpen is handled); MovementValidationService.luau only
--- ever reads, via IsOpen, to gate broadcastDebugState (docs/MOVEMENT.md §8) --
+-- ever reads, via IsOpen, to gate broadcastDebugState (docs/MovementSystem.md §10) --
 -- never trusting a client-reported "my panel is open" flag for anything more
 -- than "should I bother sending this session network traffic," which is the
 -- only thing this record is used for; nothing security-relevant reads it.

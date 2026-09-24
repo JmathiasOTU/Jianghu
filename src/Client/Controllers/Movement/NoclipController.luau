@@ -9,7 +9,7 @@ local InputControllerModule = require(script.Parent.InputController)
 type InputController = InputControllerModule.InputController
 
 -- Scouting-tool constant, not a gameplay tunable -- not part of
--- Shared/Movement/MovementTuning.luau's list (docs/MOVEMENT.md §8), since
+-- Shared/Movement/MovementTuning.luau's list (docs/MovementSystem.md §10), since
 -- noclip flight speed isn't a Walk/Run/Sprint tier a legitimate client is ever
 -- validated against.
 local FLY_SPEED = 60
@@ -25,7 +25,7 @@ NoclipController.__index = NoclipController
 -- Collision is disabled server-side (DevToolsService.luau sets CanCollide on
 -- every BasePart, which replicates natively) -- this only owns the actual fly
 -- movement, driven client-side because the player's own character is already
--- network-owned by this client for ordinary movement (docs/MOVEMENT.md §8).
+-- network-owned by this client for ordinary movement (docs/MovementSystem.md §10).
 -- `humanoid.PlatformStand = true` while active hands full control of the
 -- character's position to this controller instead of Roblox's default ground
 -- controller, which would otherwise fight these per-frame CFrame writes.

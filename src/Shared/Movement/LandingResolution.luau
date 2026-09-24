@@ -9,7 +9,7 @@ type MovementContext = MovementTypes.MovementContext
 
 local LandingResolution = {}
 
--- Landing target resolution (resolved 2026-09-13, docs/MOVEMENT.md §2;
+-- Landing target resolution (resolved 2026-09-13, docs/MovementSystem.md §3;
 -- extended 2026-09-14 §9 with the crouch branch; extended again with the
 -- landing-resume fix). Unified here during the 2026-09-15 cleanup pass --
 -- previously hand-duplicated verbatim as `AirborneState.ResolveLandingTarget`
@@ -61,15 +61,13 @@ local LandingResolution = {}
 -- keeps the fix narrow: it only rescues the ambiguous near-perpendicular
 -- readings the lag window actually produces, not a real reversal.
 --
--- Also called for the rare "landed mid-impulse" case (TRAVERSAL-ROADMAP.md
--- §4, Phase 1), where handing off to Airborne first isn't legal
--- (Airborne.CanEnter requires `not grounded`, which already failed by the
--- time this needs to run) -- and reused again by `HardLandingState.Update`
--- (and its own server mirror) to resolve where to go once the lock's own
--- duration elapses -- same "what should I actually be doing right now"
--- question, just asked a beat later.
+-- Also called for the rare "landed mid-impulse" case (docs/MovementSystem.md §5, Phase 1), where
+-- handing off to Airborne first isn't legal (Airborne.CanEnter requires `not grounded`, which
+-- already failed by the time this needs to run) -- and reused again by `HardLandingState.Update`
+-- (and its own server mirror) to resolve where to go once the lock's own duration elapses -- same
+-- "what should I actually be doing right now" question, just asked a beat later.
 --
--- Fall height (docs/MOVEMENT.md §10 rework) is checked FIRST, ahead of
+-- Fall height (docs/MovementSystem.md §4.4 rework) is checked FIRST, ahead of
 -- crouch/input -- a landing big enough to force `HardLanding` overrides
 -- whatever the player was doing or holding on the way down; it isn't just
 -- another grounded-state candidate to weigh against Walk/Crouch. Once

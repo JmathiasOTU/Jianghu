@@ -71,6 +71,88 @@ return function(t)
 		end
 	end)
 
+	-- The descent half of the vertical ceiling (re-audit N-002): an honest
+	-- launch must stay under DescentCeiling(ceiling, apex time) for its whole
+	-- flight, and anything that stops falling must eventually cross it.
+	t.describe("DescentCeiling", function()
+		t.it("holds at the apex height until the apex time", function()
+			t.expect(TraversalMath.DescentCeiling(10, 2, 1, GRAVITY)).toBe(10)
+			t.expect(TraversalMath.DescentCeiling(10, 2, 2, GRAVITY)).toBe(10)
+		end)
+
+		t.it("falls from rest under gravity after the apex time", function()
+			t.expect(TraversalMath.DescentCeiling(10, 2, 2.5, GRAVITY))
+				.toBeCloseTo(10 - GRAVITY * 0.25 / 2)
+		end)
+
+		t.it("is crossed by anything that hovers past the apex", function()
+			local apexY = TraversalMath.BallisticRise(55, GRAVITY)
+			local apexAt = TraversalMath.TimeToApex(55, GRAVITY)
+			-- g * 0.1^2 / 2 ~= 0.98 studs below the apex after 0.1 s.
+			t.expect(TraversalMath.DescentCeiling(apexY, apexAt, apexAt + 0.1, GRAVITY))
+				.toBeAtMost(apexY - 0.9)
+		end)
+
+		-- Jump, WallLeap and WallBoost: one launch, then gravity alone.
+		for _, speed in ipairs({
+			MovementConstants.JumpPower,
+			MovementConstants.WallLeapUpwardForce,
+			MovementConstants.WallBoostUpwardForce,
+		}) do
+			t.it(`bounds a ballistic launch at {speed} studs/s`, function()
+				local apexY = TraversalMath.BallisticRise(speed, GRAVITY)
+				local apexAt = TraversalMath.TimeToApex(speed, GRAVITY)
+				for step = 0, 400 do
+					local time = step / 100
+					local y = speed * time - GRAVITY * time * time / 2
+					t.expect(y)
+						.toBeAtMost(TraversalMath.DescentCeiling(apexY, apexAt, time, GRAVITY) + 1e-9)
+				end
+			end)
+		end
+
+		-- DoubleJump the way the client flies it: the curve re-sampled once a
+		-- frame and held for that frame, released on the first frame at or
+		-- past the duration, then ballistic from the last held velocity.
+		local force = MovementConstants.DoubleJumpForce
+		local duration = MovementConstants.DoubleJumpDecayDurationSeconds
+		local apexY = TraversalMath.DoubleJumpMaxRise(force, duration, GRAVITY)
+		local apexAt = TraversalMath.DoubleJumpTimeToApex(force, duration, GRAVITY)
+
+		local function worstMargin(frameSeconds: number): number
+			local y = 0
+			local elapsed = 0
+			local velocity = force
+			local worst = math.huge
+			local function check(time: number, height: number)
+				worst = math.min(
+					worst,
+					TraversalMath.DescentCeiling(apexY, apexAt, time, GRAVITY) - height
+				)
+			end
+			while true do
+				velocity = TraversalMath.DoubleJumpVerticalVelocity(elapsed, force, duration)
+				y += velocity * frameSeconds
+				elapsed += frameSeconds
+				check(elapsed, y)
+				if elapsed >= duration then
+					break
+				end
+			end
+			for step = 1, 300 do
+				local time = step / 100
+				check(elapsed + time, y + velocity * time - GRAVITY * time * time / 2)
+			end
+			return worst
+		end
+
+		for _, fps in ipairs({ 240, 144, 60, 30, 20 }) do
+			t.it(`bounds DoubleJump's whole flight at {fps} fps`, function()
+				t.expect(worstMargin(1 / fps)).toBeAtLeast(0)
+			end)
+		end
+	end)
+
 	t.describe("WallLeapMaxHorizontalSpeed", function()
 		local runSpeed = MovementConstants.WallRunSpeed
 		local maxCorrection = MovementConstants.WallRunClingMaxCorrectionSpeed

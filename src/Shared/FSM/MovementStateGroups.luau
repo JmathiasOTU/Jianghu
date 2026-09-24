@@ -5,7 +5,7 @@ local MovementStates = require(ReplicatedStorage.Shared.FSM.MovementStates)
 
 type MovementState = MovementStates.MovementState
 
--- Grounded-family states (docs/MOVEMENT.md §10 rework) -- unified here during
+-- Grounded-family states (docs/MovementSystem.md §4.4 rework) -- unified here during
 -- the 2026-09-15 cleanup pass; previously hand-duplicated identically as
 -- `GROUNDED_STATES` in both Client/Controllers/Movement/init.luau and
 -- Server/Services/MovementValidationService.luau. Deliberately a plain set,

@@ -15,7 +15,7 @@ export type FacingController = {
 local FacingController = {}
 FacingController.__index = FacingController
 
--- Purely cosmetic (docs/MOVEMENT.md §4): aligns the root part's facing to the
+-- Purely cosmetic (docs/MovementSystem.md §6): aligns the root part's facing to the
 -- camera/aim direction, but only while the camera is actually locked to the
 -- character (Shift Lock or first-person) -- `UserInputService.MouseBehavior ==
 -- LockCenter` covers both, and is the only reliable signal for this without
@@ -39,7 +39,7 @@ function FacingController.new(humanoid: Humanoid, rootPart: BasePart): FacingCon
 	return self
 end
 
--- WallRun's escape hatch (Wall Run & Leap Mechanic Guideline §3, playtest fix
+-- WallRun's escape hatch (docs/MovementSystem.md §4.5, playtest fix
 -- 2026-09-18): spinning the camera in Shift Lock or holding WASD while
 -- wall-running fought the locked-tangent design -- both the camera-facing
 -- branch below AND `Humanoid.AutoRotate` (which turns to face `MoveDirection`

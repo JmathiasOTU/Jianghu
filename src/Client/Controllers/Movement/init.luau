@@ -73,8 +73,8 @@ local States = {
 }
 
 -- Only Run/Sprint are earned, exploit-relevant transitions that need a server
--- claim naming the target STATE (see docs/MOVEMENT.md §5) -- Idle/Walk/Airborne
--- need no remote. Crouch/Slide (docs/MOVEMENT.md §9) are claimed differently
+-- claim naming the target STATE (see docs/MovementSystem.md §8) -- Idle/Walk/Airborne
+-- need no remote. Crouch/Slide (docs/MovementSystem.md §4.2) are claimed differently
 -- -- see the `input.CrouchChanged` connection below -- so they're deliberately
 -- NOT added here: unlike Run/Sprint, the client never claims "CrouchIdle"/
 -- "CrouchWalk"/"Slide" by name, it only tells the server whether Ctrl is held
@@ -86,13 +86,13 @@ local NETWORK_CLAIM_NAMES: { [MovementState]: "Run" | "Sprint" } = {
 }
 
 -- Symbol -> plain string name for the F4 debug overlay's DebugSnapshot
--- (docs/MOVEMENT.md) and the server's `MovementDebugState` broadcast -- see
+-- (docs/MovementSystem.md) and the server's `MovementDebugState` broadcast -- see
 -- Shared/FSM/MovementStateNames.luau (unified there during the 2026-09-15
 -- cleanup pass; this used to be a second, hand-duplicated copy of the
 -- server's own DEBUG_STATE_NAMES).
 local DEBUG_STATE_NAMES = MovementStateNames.DebugNames
 
--- Grounded-family states (TRAVERSAL-ROADMAP.md §4) -- landing into any of
+-- Grounded-family states (docs/MovementSystem.md §5) -- landing into any of
 -- these is what resets `doubleJumpUsed` back to available, mirrored 1:1 by
 -- MovementValidationService's own PlayerSession. See
 -- Shared/FSM/MovementStateGroups.luau (unified there during the 2026-09-15
@@ -102,7 +102,7 @@ local DEBUG_STATE_NAMES = MovementStateNames.DebugNames
 local GROUNDED_STATES = MovementStateGroups.Grounded
 
 -- How often the current Run/Sprint claim is re-sent while held, not just on the
--- transition edge (found 2026-09-13, docs/MOVEMENT.md §5: real playtest logs
+-- transition edge (found 2026-09-13, docs/MovementSystem.md §8: real playtest logs
 -- showed the server mirror stuck at Run while the player was genuinely sprinting
 -- the whole time). The claim fires once on `fsm.changed`, fire-and-forget with no
 -- ack -- if that single packet is ever rejected (e.g. the dwell reads a hair under
@@ -117,8 +117,8 @@ local GROUNDED_STATES = MovementStateGroups.Grounded
 -- there.
 local CLAIM_RESYNC_INTERVAL_SECONDS = 1
 
--- Temporary capture switch for testing QueryWallRun in isolation (Wall Run &
--- Leap Mechanic Guideline §1, Part 1) -- off by default, same
+-- Temporary capture switch for testing QueryWallRun in isolation (docs/MovementSystem.md §4.5, Part
+-- 1) -- off by default, same
 -- flip-on-for-a-playtest pattern as MovementValidationService's
 -- SPEED_SANITY_DEBUG_LOGGING. Prints only on a hit/miss/side CHANGE, not every
 -- probe, so it's readable while walking the character along a wall in Studio.
@@ -204,8 +204,8 @@ local function setupCharacter(
 	)
 
 	-- Presentation: purely cosmetic, never touched by states or the FSM (they only
-	-- read it) -- docs/MOVEMENT.md §3/§4 -- except WallRunState's own
-	-- `SetLockDirection` escape hatch (guideline §3, playtest fix 2026-09-18),
+	-- read it) -- docs/MovementSystem.md §2/§6 -- except WallRunState's own
+	-- `SetLockDirection` escape hatch (docs/MovementSystem.md §4.5, playtest fix 2026-09-18),
 	-- reached via `buildContext`'s `facingController` field below like every
 	-- other client-only accessor.
 	local facingController = lifeTrove:Add(FacingController.new(humanoid, rootPart))
@@ -221,7 +221,7 @@ local function setupCharacter(
 		)
 	)
 
-	-- Live tuning (docs/MOVEMENT.md §8): pushes the server's effective-constants
+	-- Live tuning (docs/MovementSystem.md §10): pushes the server's effective-constants
 	-- broadcast into TuningSnapshot and re-applies JumpPower immediately, since
 	-- unlike WalkSpeed/RunSpeed/SprintSpeed (only ever set on a state's own
 	-- Enter), JumpPower has no per-frame/per-transition write site of its own to
@@ -240,7 +240,7 @@ local function setupCharacter(
 		end
 	end))
 
-	-- Noclip/fly (docs/MOVEMENT.md §8): the server is the sole authority on
+	-- Noclip/fly (docs/MovementSystem.md §10): the server is the sole authority on
 	-- whether this session is noclipping (Server/State/NoclipState.luau) --
 	-- this callback is what lets the local NoclipController actually start/stop
 	-- driving the character once the server confirms the toggle, never a
@@ -252,7 +252,7 @@ local function setupCharacter(
 	end))
 
 	-- Per-life flag, not derivable from Humanoid replication
-	-- (TRAVERSAL-ROADMAP.md §4) -- same "owned by the FSM lifecycle, not any
+	-- (docs/MovementSystem.md §5) -- same "owned by the FSM lifecycle, not any
 	-- one state module" treatment as `noclipActive`/the claim-resync
 	-- timestamps below, since both DoubleJump (consumes it) and the landing
 	-- edge (resets it) need to touch it without requiring each other.
@@ -284,7 +284,7 @@ local function setupCharacter(
 	-- dwell timer that `fsm.current == Airborne` has no way to satisfy.
 	local preAirborneLocomotion: MovementState? = nil
 
-	-- HardLanding fall-height tracking (docs/MOVEMENT.md §10 rework): the peak
+	-- HardLanding fall-height tracking (docs/MovementSystem.md §4.4 rework): the peak
 	-- `rootPart.Position.Y` reached since this life last left the ground, nil
 	-- while grounded (no excursion in progress). Grown every Heartbeat below
 	-- (grow-only -- never reset there, to avoid a same-frame race against the
@@ -296,17 +296,16 @@ local function setupCharacter(
 	-- ResolveLandingTarget` to decide whether a landing forces `HardLanding`.
 	local peakHeight: number? = nil
 
-	-- WallRun's own throttled side-cast (Wall Run & Leap Mechanic Guideline
-	-- §1): only probed while airborne, cleared immediately on grounding,
-	-- re-fired via a dt-accumulator rather than every Heartbeat
-	-- (ARCHITECTURE.md §6). `wallRunQueryLastLogged` only feeds the debug
-	-- print below, never gameplay.
+	-- WallRun's own throttled side-cast (docs/MovementSystem.md §4.5): only probed while airborne,
+	-- cleared immediately on grounding, re-fired via a dt-accumulator rather than every Heartbeat
+	-- (ARCHITECTURE.md §6). `wallRunQueryLastLogged` only feeds the debug print below, never
+	-- gameplay.
 	local wallRunQuery: SpatialQueries.WallRunQueryResult? = nil
 	local wallRunQueryAccumulatedDt = 0
 	local wallRunQueryLastLogged: SpatialQueries.WallRunQueryResult? = nil
 	local wallRunCanEnterLastLogged = false
 
-	-- WallCling's own probe (docs/WallClimbingPlan.md §7): forced-fresh only
+	-- WallCling's own probe (docs/MovementSystem.md §4.6): forced-fresh only
 	-- at the JumpRequested instant (see that connection below), NOT refreshed
 	-- continuously every Heartbeat like `wallRunQuery` -- the cling gesture is
 	-- a single key press plus a facing check, not a sustained directional
@@ -315,7 +314,7 @@ local function setupCharacter(
 	-- `characterMover:QueryClingWall()` directly instead of reading this.
 	local wallClingQuery: SpatialQueries.ClingWallHit? = nil
 
-	-- Wall-leap memory (docs/WallClimbingPlan.md §2/§9): the physical wall
+	-- Wall-leap memory (docs/MovementSystem.md §4.6/§5): the physical wall
 	-- part this life most recently wall-leapt from, nil otherwise -- set on
 	-- the WallRun -> WallLeap edge below (off `context.wallRunEntryInstance`,
 	-- captured BEFORE WallRunState.Exit nils its own copy), cleared the
@@ -342,9 +341,10 @@ local function setupCharacter(
 			facingDirection = characterMover:GetFacingDirection(),
 			wallClingLockoutUntil = WallClingState.GetLockoutUntil(),
 			wallClingBoostUsed = WallClingState.GetBoostUsed(),
+			wallClingElapsed = WallClingState.GetElapsed(),
 			wallClingNormal = WallClingState.GetNormal(),
 			lastWallLeapWall = lastWallLeapWall,
-			-- Still an open design decision (TRAVERSAL-ROADMAP.md §0/§3) --
+			-- Still an open design decision (docs/MovementSystem.md §13/§2) --
 			-- "always available" until a real Qinggong/stamina resource
 			-- exists, same placeholder both sides use.
 			qinggong = math.huge,
@@ -412,7 +412,7 @@ local function setupCharacter(
 
 	lifeTrove:Connect(fsm.changed, function(next: MovementState, previous: MovementState)
 		-- ONE shared context for both calls (bug found alongside
-		-- TRAVERSAL-ROADMAP.md §8 Phase 3) -- building a SECOND, fresh context
+		-- docs/MovementSystem.md §4) -- building a SECOND, fresh context
 		-- for Enter after Exit already ran silently broke any "outgoing
 		-- state's own value, read via context" hand-off (e.g. `slideSpeed`/
 		-- `slideDirection`, ClientMovementContext.luau): SlideState.Exit
@@ -427,7 +427,7 @@ local function setupCharacter(
 		local context = buildContext()
 		States[previous].Exit(context)
 
-		-- F4 debug overlay state history (docs/MOVEMENT.md §8): recorded
+		-- F4 debug overlay state history (docs/MovementSystem.md §10): recorded
 		-- BEFORE `Enter` below, not after (fixed 2026-09-18, external audit
 		-- finding) -- `WallLeapState`/`SlideJumpState`'s own `Enter` calls
 		-- `RequestTransition` synchronously, reentrantly firing THIS SAME
@@ -443,7 +443,7 @@ local function setupCharacter(
 
 		States[next].Enter(context)
 
-		-- Passability (docs/MOVEMENT.md §9): switched on every transition, not
+		-- Passability (docs/MovementSystem.md §4.2): switched on every transition, not
 		-- gated on "did the group actually change" -- cheap enough, and
 		-- CollisionGroups.Apply itself just re-derives the same group name for
 		-- non-crouch states, so a redundant write here is harmless. Reads
@@ -457,13 +457,13 @@ local function setupCharacter(
 			fireClaim(claimName)
 		end
 
-		-- DoubleJump bookkeeping (TRAVERSAL-ROADMAP.md §4): consumed the
+		-- DoubleJump bookkeeping (docs/MovementSystem.md §5): consumed the
 		-- instant it's entered, reset the instant the character actually
 		-- lands -- checked as two separate branches (not "next == DoubleJump
 		-- else GROUNDED_STATES[next]") since landing can happen directly from
 		-- Airborne without ever touching DoubleJump this life.
 		--
-		-- WallRun/WallLeap claims (Wall Run & Leap Mechanic Guideline §6):
+		-- WallRun/WallLeap claims (docs/MovementSystem.md §8.4):
 		-- fired the same fire-and-forget way DoubleJump's already is, AFTER
 		-- `States[next].Enter` above has already applied this life's own
 		-- client-predicted physics -- the server's own `onClaimTraversalMove`
@@ -478,7 +478,7 @@ local function setupCharacter(
 			Network.ClaimTraversalMove.Fire("WallRun")
 		elseif next == MovementStates.WallLeap then
 			Network.ClaimTraversalMove.Fire("WallLeap")
-			-- Wall-leap memory (docs/WallClimbingPlan.md §2/§9): snapshot off
+			-- Wall-leap memory (docs/MovementSystem.md §4.6/§5): snapshot off
 			-- `context.wallRunEntryInstance`, captured by `buildContext()`
 			-- above BEFORE `States[WallRun].Exit(context)` ran and nilled
 			-- WallRunState's own copy -- reading `WallRunState.
@@ -490,7 +490,7 @@ local function setupCharacter(
 			Network.ClaimTraversalMove.Fire("WallBoost")
 		elseif GROUNDED_STATES[next] then
 			doubleJumpUsed = false
-			-- Cleared on landing (docs/WallClimbingPlan.md assumption 5) --
+			-- Cleared on landing (docs/MovementSystem.md §4.6 assumption 5) --
 			-- touching a DIFFERENT wall needs no separate clear, since
 			-- `CanEnter[WallCling]`'s own check is instance equality against
 			-- whatever wall is actually being clung to right now.
@@ -523,7 +523,7 @@ local function setupCharacter(
 			preAirborneLocomotion = nil
 		end
 
-		-- HardLanding fall-height bookkeeping (docs/MOVEMENT.md §10 rework):
+		-- HardLanding fall-height bookkeeping (docs/MovementSystem.md §4.4 rework):
 		-- seeded on the real takeoff edge -- `next == Airborne` covers every
 		-- grounded-state jump-off AND Slide -> SlideJump -> Airborne (`previous`
 		-- there is SlideJump); excluded when `previous` is DoubleJump, WallRun,
@@ -533,7 +533,7 @@ local function setupCharacter(
 		-- exactly like the DoubleJump hop already correctly treated it --
 		-- WallCling/WallBoost need the identical exclusion: clinging or
 		-- boosting partway down a long fall is still the same excursion, not
-		-- a fresh one, docs/WallClimbingPlan.md §12).
+		-- a fresh one, docs/MovementSystem.md §4.6).
 		-- Cleared the instant a landing actually resolves, same edge as
 		-- `preAirborneLocomotion` just above.
 		if next == MovementStates.Airborne then
@@ -555,7 +555,7 @@ local function setupCharacter(
 		fsm:RequestTransition(MovementStates.Run, buildContext())
 	end)
 
-	-- WallBoost (docs/WallClimbingPlan.md §2/§10.1 step 5): routed through
+	-- WallBoost (docs/MovementSystem.md §4.6 step 5): routed through
 	-- WallClingState.RequestBoostTransition, not a raw fsm:RequestTransition,
 	-- so the `Boosted` exit reason is correctly tagged for
 	-- WallClingPostBoostCooldown -- same "external input event -> plain
@@ -566,21 +566,18 @@ local function setupCharacter(
 		WallClingState.RequestBoostTransition(buildContext())
 	end)
 
-	-- Unified jump-action priority handler (Wall Run & Leap Mechanic Guideline
-	-- §2/§5): WallRun is attempted BEFORE DoubleJump on the same press -- the
-	-- stricter, more deliberate gesture wins when both are legal, same
-	-- priority idiom the pre-revert design used for WallClimb vs. WallRun.
-	-- Falls through to today's unchanged DoubleJump attempt when
-	-- CanEnter[WallRun] fails (no wall, wrong angle, too slow) -- a player
-	-- with no wall nearby sees no behavior change. Fires on EVERY jump-action
-	-- request regardless of grounded state (see InputController.JumpRequested's
-	-- own doc comment for why that has to be the signal); no explicit
-	-- "currently Airborne"/"currently WallRun" guard needed for the DoubleJump
-	-- branch, same reasoning as SlideJump's own CanEnter comment -- topology
-	-- alone already makes it a no-op unless legally reachable.
+	-- Unified jump-action priority handler (docs/MovementSystem.md §4.5/§5): WallRun is attempted
+	-- BEFORE DoubleJump on the same press -- the stricter, more deliberate gesture wins when both
+	-- are legal, same priority idiom the pre-revert design used for WallClimb vs. WallRun. Falls
+	-- through to today's unchanged DoubleJump attempt when CanEnter[WallRun] fails (no wall, wrong
+	-- angle, too slow) -- a player with no wall nearby sees no behavior change. Fires on EVERY
+	-- jump-action request regardless of grounded state (see InputController.JumpRequested's own doc
+	-- comment for why that has to be the signal); no explicit "currently Airborne"/"currently
+	-- WallRun" guard needed for the DoubleJump branch, same reasoning as SlideJump's own CanEnter
+	-- comment -- topology alone already makes it a no-op unless legally reachable.
 	--
 	-- A third press while already wall-running fires WallLeap directly
-	-- (guideline §4) -- a plain RequestTransition, same as every other edge;
+	-- (docs/MovementSystem.md §4.5) -- a plain RequestTransition, same as every other edge;
 	-- no CanEnter[WallLeap] exists so topology alone gates it (see
 	-- StateRules.luau's own comment on that edge). WallLeapState.Enter does
 	-- the actual launch-impulse work and immediately hands off to Airborne in
@@ -616,7 +613,7 @@ local function setupCharacter(
 		if fsm:RequestTransition(MovementStates.WallRun, context) then
 			return
 		end
-		-- WallCling (docs/WallClimbingPlan.md §2/§3): tried before the
+		-- WallCling (docs/MovementSystem.md §4.6): tried before the
 		-- DoubleJump fallback so a valid clingable wall always wins over
 		-- spending the midair jump (assumption 1) -- the double jump is never
 		-- consumed unless THIS attempt itself fails. Head-on facing
@@ -638,7 +635,7 @@ local function setupCharacter(
 		fsm:RequestTransition(MovementStates.DoubleJump, context)
 	end)
 
-	-- Crouch/Slide claim (docs/MOVEMENT.md §9): unlike Run/Sprint's claims
+	-- Crouch/Slide claim (docs/MovementSystem.md §4.2): unlike Run/Sprint's claims
 	-- (which name the target FSM state), this only ever tells the server
 	-- whether Ctrl is held -- fired on the raw key edge, not on any FSM
 	-- transition, specifically so a Ctrl-press mid-air (anticipating a
@@ -655,7 +652,7 @@ local function setupCharacter(
 	end)
 
 	lifeTrove:Connect(RunService.Heartbeat, function(dt: number)
-		-- Grow-only, deliberately BEFORE `Update` below (docs/MOVEMENT.md §10
+		-- Grow-only, deliberately BEFORE `Update` below (docs/MovementSystem.md §4.4
 		-- rework): on the exact landing Heartbeat, `characterMover:IsGrounded()`
 		-- has already flipped true by the time this runs, same instant
 		-- `AirborneState.Update` reads `context.grounded` to make its landing
@@ -676,7 +673,7 @@ local function setupCharacter(
 			end
 		end
 
-		-- WallRun side-cast throttle (Wall Run & Leap Mechanic Guideline §1):
+		-- WallRun side-cast throttle (docs/MovementSystem.md §4.5):
 		-- only while airborne, cleared the instant grounded, re-fired on its
 		-- own dt-accumulator cadence rather than raw per-tick.
 		if characterMover:IsGrounded() then
@@ -705,10 +702,9 @@ local function setupCharacter(
 			end
 		end
 
-		-- CanEnter[WallRun] observability (Wall Run & Leap Mechanic Guideline
-		-- §2, Part 2) -- evaluated directly here rather than through
-		-- fsm:RequestTransition, since there's no Transitions edge into WallRun
-		-- yet (that's §5's job); this only confirms the four-gate predicate
+		-- CanEnter[WallRun] observability (docs/MovementSystem.md §4.5, Part 2) -- evaluated
+		-- directly here rather than through fsm:RequestTransition, since there's no Transitions
+		-- edge into WallRun yet (that's §5's job); this only confirms the four-gate predicate
 		-- itself is reading real context correctly, no state change happens.
 		if WALLRUN_DEBUG_LOGGING then
 			local debugContext = buildContext()
@@ -763,7 +759,7 @@ local function setupCharacter(
 		end
 		syncCameraLock()
 
-		-- F4 debug overlay (docs/MOVEMENT.md) -- published every Heartbeat
+		-- F4 debug overlay (docs/MovementSystem.md) -- published every Heartbeat
 		-- regardless of whether the overlay is even open, same as how the FSM's own
 		-- context is rebuilt unconditionally; cheap enough (a few field reads, no
 		-- allocation-heavy work) not to bother gating on overlay visibility.

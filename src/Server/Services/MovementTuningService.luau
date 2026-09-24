@@ -38,7 +38,7 @@ local function broadcast(player: Player)
 	)
 end
 
--- Dev-gated via DevToolsService.RegisterDevOnly (docs/MOVEMENT.md §8) -- the
+-- Dev-gated via DevToolsService.RegisterDevOnly (docs/MovementSystem.md §10) -- the
 -- second handler ever routed through it, after RequestDevTeleport's own
 -- migration proved it works. `value == nil` clears the override; a real value
 -- is bounds-checked (MovementTuning.IsValidValue) before being stored, same

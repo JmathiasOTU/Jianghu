@@ -4,7 +4,7 @@
 -- alongside it: DevToolsService.luau owns writing here (the only place
 -- RequestSetNoclip is handled); MovementValidationService.luau only ever
 -- reads, via IsActive, to exempt a noclipping session from
--- enforceSpeedSanity (docs/MOVEMENT.md §8) -- never trusting a
+-- enforceSpeedSanity (docs/MovementSystem.md §10) -- never trusting a
 -- client-reported "I'm noclipping" flag for that exemption, only this
 -- server-authorized record of who DevToolsService itself granted it to.
 local NoclipState = {}

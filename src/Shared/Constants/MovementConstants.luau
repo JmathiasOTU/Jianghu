@@ -2,7 +2,7 @@
 
 -- Speed/jump tiers below are a starting point ("Fast & fluid" preset, chosen
 -- 2026-09-13), not a final tuning pass -- retune after playtesting in Studio. See
--- docs/MOVEMENT.md §7 and commit a31e6d9 on why these aren't guessed placeholders.
+-- docs/MovementSystem.md §2 and commit a31e6d9 on why these aren't guessed placeholders.
 local MovementConstants = {
 	RunDoubleTapWindowSeconds = 0.3,
 	SprintThresholdSeconds = 3,
@@ -13,7 +13,7 @@ local MovementConstants = {
 	JumpPower = 55,
 
 	-- MovementValidationService's server-side speed/delta-position sanity check
-	-- (docs/MOVEMENT.md §5, Step 4): sampled over this interval rather than every
+	-- (docs/MovementSystem.md §8, Step 4): sampled over this interval rather than every
 	-- Heartbeat, to smooth over normal CFrame-replication jitter from the
 	-- network-owning client.
 	SpeedCheckIntervalSeconds = 0.5,
@@ -25,7 +25,7 @@ local MovementConstants = {
 	-- (audit M-017) -- a validation tolerance is measured, never dialled.
 	SpeedToleranceMultiplier = 1.3,
 
-	-- Crouch/Slide (docs/MOVEMENT.md §9, Phase 1 slice 2) -- starting-point
+	-- Crouch/Slide (docs/MovementSystem.md §4.2, Phase 1 slice 2) -- starting-point
 	-- values chosen the same way the original speed tiers were ("Fast & fluid,"
 	-- not yet playtested), not measured/tuned. All three flow through the live-
 	-- tuning layer (Shared/Movement/MovementTuning.luau) like every other value
@@ -44,7 +44,7 @@ local MovementConstants = {
 	-- instead of a clean closed-form answer.
 	SlideDecayRate = 20,
 	-- Multiplies whatever REAL horizontal speed you had the instant Slide was
-	-- entered (docs/MOVEMENT.md §12/playtest feedback 2026-09-15): decay rate
+	-- entered (docs/MovementSystem.md §4.2/playtest feedback 2026-09-15): decay rate
 	-- alone controls how fast a slide slows down, but distance covered is a
 	-- function of BOTH decay rate and entry speed
 	-- (distance = (entrySpeed - CrouchSpeed)^2 / (2 * SlideDecayRate)) -- a
@@ -62,11 +62,21 @@ local MovementConstants = {
 	-- Tuning tab) alongside SlideDecayRate until the ratio feels right.
 	SlideEntrySpeedMultiplier = 1.25,
 	-- Added to whatever speed Slide had decayed to at the moment of the jump
-	-- (docs/MOVEMENT.md §9), then clamped to SprintSpeed -- SlideJump reuses
-	-- the existing SprintSpeed ceiling rather than a new cap constant (same
-	-- ceiling Slide/Airborne already share), so the boost can never itself be
-	-- the reason a legitimate player gets rubber-banded.
+	-- (docs/MovementSystem.md §4.2), then clamped to Slide's own ceiling
+	-- (SprintSpeed * SlideEntrySpeedMultiplier). That's above the Airborne
+	-- cap, so the server gives the whole flight that ceiling as an allowance
+	-- (MovementValidationService `airborneAllowedSpeed`); without it, the
+	-- boost itself got legitimate players rubber-banded (2026-09-24).
 	SlideJumpBoostAmount = 50,
+	-- SlideJump's upward launch speed, set explicitly by SlideJumpState and
+	-- used by the server's vertical ceiling (~10.1 studs of rise at default
+	-- gravity vs. a normal jump's ~7.7). Before it existed, slide jumps
+	-- launched at 61.9-63.7 studs/s from a side effect of the slide (measured
+	-- 2026-09-24 with JUMP_LAUNCH_CAPTURE, vs. 56-58 for standing/running
+	-- jumps) that the server didn't know about; the designer chose to keep that
+	-- height on purpose (2026-09-24). Not live-tunable: a new tunable needs its
+	-- own Studio-built overlay row.
+	SlideJumpUpwardSpeed = 63,
 
 	-- How forward-biased Sprint's continuation input must be to still count as
 	-- "sprinting forward" rather than a backpedal/pure-strafe demotion, expressed
@@ -83,7 +93,7 @@ local MovementConstants = {
 	SprintForwardDeadzone = 0.5,
 
 	-- LocomotionAnimator's discrete switch-with-crossfade between whichever
-	-- track is currently selected and the next (docs/MOVEMENT.md §4 -- "not a
+	-- track is currently selected and the next (docs/MovementSystem.md §6 -- "not a
 	-- weighted multi-track blend tree") -- how long that crossfade takes,
 	-- passed to both `AnimationTrack:Play`/`:Stop`. Moved here from a
 	-- module-local constant in LocomotionAnimator.luau (2026-09-15 cleanup
@@ -93,8 +103,8 @@ local MovementConstants = {
 	-- once real animations exist.
 	AnimationFadeTimeSeconds = 0.15,
 
-	-- Landing/falling animation (Traversal Roadmap §8 Phase 0, docs/MOVEMENT.md
-	-- §10) -- original design, no reference source. How long the one-shot
+	-- Landing/falling animation (docs/MovementSystem.md §4, docs/MovementSystem.md §4.4) --
+	-- original design, no reference source. How long the one-shot
 	-- light `Land` clip is allowed to win over the landed-state's own
 	-- animation key before falling through to normal per-state resolution --
 	-- the FSM has already transitioned to Idle/Walk/etc. by the time landing
@@ -104,7 +114,7 @@ local MovementConstants = {
 	-- already picks `LandHard` for as long as the lock lasts.
 	LandingAnimationHoldSeconds = 0.19,
 
-	-- HardLanding (real FSM state, docs/MOVEMENT.md §10 rework) -- the fall
+	-- HardLanding (real FSM state, docs/MovementSystem.md §4.4 rework) -- the fall
 	-- height (studs, peak height reached since last leaving the ground minus
 	-- landing height -- NOT vertical speed; a height threshold is what "would
 	-- take fall damage at this height" actually means, and is what a designer
@@ -140,7 +150,7 @@ local MovementConstants = {
 	MediumLandingDurationSeconds = 0.55,
 	MediumLandingSpeedMultiplier = 0.7,
 
-	-- DoubleJump (TRAVERSAL-ROADMAP.md §5/§8 Phase 1) -- starting-point values,
+	-- DoubleJump (docs/MovementSystem.md §11/§4) -- starting-point values,
 	-- not yet playtested, chosen the same "Fast & fluid" way as the original
 	-- speed/jump tiers. Initial upward velocity applied on entry; decays
 	-- toward roughly half of itself (Shared/Movement/TraversalMath.luau) over
@@ -155,7 +165,7 @@ local MovementConstants = {
 	-- depends on it.
 	DoubleJumpDecayFloorFraction = 0.5,
 
-	-- Slide slope amplification (TRAVERSAL-ROADMAP.md §5/§8 Phase 3, mechanic
+	-- Slide slope amplification (docs/MovementSystem.md §11/§4, mechanic
 	-- 3a/3b/3c) -- ported from the reference's slope math, NOT its whole decay
 	-- curve: `SlideDecayRate` above stays exactly the existing linear
 	-- dt-integrated decay, this only adds an extra top-up on top of it when
@@ -173,7 +183,7 @@ local MovementConstants = {
 	-- Max EXTRA speed (studs/s) slope amplification can add, reached at
 	-- SlideMaxWalkableSlopeDegrees. The reference used 45 directly for this
 	-- same kind of magnitude -- deliberately tuned down here (per
-	-- TRAVERSAL-ROADMAP.md §5's own "tune down" flag): 45 studs/s stacked on a
+	-- docs/MovementSystem.md §11's own "tune down" flag): 45 studs/s stacked on a
 	-- 40 SprintSpeed base would more than double slide speed on a gentle 8°
 	-- slope. Starting-point value, not measured -- retune after playtesting.
 	SlideSlopeAmplificationCap = 12,
@@ -215,8 +225,13 @@ local MovementConstants = {
 	-- Roblox terrain's fixed voxel resolution (Terrain:ReadVoxels requires it).
 	-- An engine fact, not a tunable.
 	TerrainVoxelSize = 4,
+	-- CollectionService tag level authors put on a ladder (the rung parts or
+	-- the model holding them) so the server accepts Humanoid climbing on it.
+	-- TrussParts count without it. Anything else can't be climbed (re-audit
+	-- N-004): the Climbing label comes from the client.
+	ClimbableTag = "Climbable",
 
-	-- WallRun side-cast (Wall Run & Leap Mechanic Guideline §1/§7).
+	-- WallRun side-cast (docs/MovementSystem.md §4.5/§11).
 	-- Shapecast sphere radius for QueryWallRun.
 	WallRunSideCastRadius = 1.5,
 	-- Structural cast reach, not live-tunable -- same exclusion as
@@ -266,22 +281,23 @@ local MovementConstants = {
 	-- gesture "come true" against wall geometry the player has since moved
 	-- well past.
 	WallRunClaimBufferSeconds = 0.25,
-	-- CanEnter[WallRun]'s momentum gate (guideline §2) -- no wall run from a
+	-- CanEnter[WallRun]'s momentum gate (docs/MovementSystem.md §4.5) -- no wall run from a
 	-- standstill jump.
 	WallRunMinEntrySpeed = 10,
-	-- CanEnter[WallRun]'s alignment gate (guideline §2), a dot-product
-	-- threshold against the signed wall tangent -- same "comfortably admits
+	-- CanEnter[WallRun]'s alignment gate (docs/MovementSystem.md §4.5), a dot-product
+	-- threshold against the signed wall tangent, applied to both move input and
+	-- facing (no backwards or sideways wall runs) -- same "comfortably admits
 	-- real WASD angles" idiom as SprintForwardDeadzone.
 	WallRunEntryDotThreshold = 0.5,
-	-- Locked horizontal speed while running (guideline §3) -- kept at/under
+	-- Locked horizontal speed while running (docs/MovementSystem.md §4.5) -- kept at/under
 	-- SprintSpeed on purpose so the still-pending server validation (§6) can't
 	-- false-positive against Airborne's own speed-sanity ceiling in the
-	-- meantime (docs/MOVEMENT.md §5).
+	-- meantime (docs/MovementSystem.md §8).
 	WallRunSpeed = 35,
 	-- Controlled vertical sink while running -- the "gravity-defying" tuning
 	-- knob, not zero (a hover) and not full gravity.
 	WallRunSinkSpeed = 6,
-	-- Target perpendicular distance from the wall surface (guideline §3's
+	-- Target perpendicular distance from the wall surface (docs/MovementSystem.md §4.5's
 	-- cling snap/hold) -- roughly an R6 torso-width offset.
 	WallRunClingDistance = 2,
 	-- P-controller gain for the continuous hold correction.
@@ -295,7 +311,7 @@ local MovementConstants = {
 	-- Safety duration cap -- Qinggong drain is meant to own the real duration
 	-- once that resource exists (still math.huge/always-available for now).
 	WallRunMaxDurationSeconds = 3,
-	-- WallLeap launch vector (guideline §4, redesigned 2026-09-18): flat
+	-- WallLeap launch vector (docs/MovementSystem.md §4.5, redesigned 2026-09-18): flat
 	-- momentum burst added on top of whatever horizontal speed you actually
 	-- have at leap time, along that same direction -- a kick, not a
 	-- retention-scaled curve.
@@ -306,15 +322,15 @@ local MovementConstants = {
 	-- impulse like DoubleJump's.
 	WallLeapUpwardForce = 100,
 
-	-- WallCling/WallBoost (docs/WallClimbingPlan.md) -- static cling, then a
+	-- WallCling/WallBoost (docs/MovementSystem.md §4.6) -- static cling, then a
 	-- single free upward boost. Starting-point values, not measured -- retune
 	-- in Studio once the mechanic is playtested (same "Fast & fluid, not yet
 	-- tuned" status as the original speed/jump tiers).
 	--
 	-- Hard time cap on a single cling -- no Qi drain in v1 (locked design).
 	WallClingMaxDuration = 2.5,
-	-- Blockcast sweep distance (guideline: any near-vertical wall, no tag/
-	-- attribute required).
+	-- Blockcast sweep distance (docs/MovementSystem.md §4.6: any near-vertical
+	-- wall, no tag/attribute required).
 	WallClingDistance = 3,
 	-- Sized for R6: HumanoidRootPart sits ~3 studs above the feet, so a
 	-- 4-stud-tall box centered on it spans ~1-5 studs above the feet -- a real
@@ -353,7 +369,7 @@ local MovementConstants = {
 	-- audit, 2026-09-19) -- structural/anti-cheat plumbing, same category as
 	-- WallClingDistance/WallClingCastSize above, not a feel dial. The server
 	-- has no signal that a Drop happened other than its OWN castClingWall
-	-- probe going nil (docs/WallClimbingPlan.md §6.4) -- a real geometry
+	-- probe going nil (docs/MovementSystem.md §7) -- a real geometry
 	-- fact for Timeout/WallLost, but not for a voluntary release: with no
 	-- push, a player who tapped the drop input once and let go of everything
 	-- could keep falling straight past the same wall, still within the
@@ -373,8 +389,13 @@ local MovementConstants = {
 	-- while rising -- set to 0 if it feels wrong in playtest.
 	WallBoostSeparationSpeed = 12,
 	-- Short window, not a control lock -- gives the animation time to play and
-	-- defines the window the server mirrors (docs/WallClimbingPlan.md §10.2).
+	-- defines the window the server mirrors (docs/MovementSystem.md §4.6).
 	WallBoostStateDuration = 0.6,
+	-- How long a cling must last before F can boost out of it (designer
+	-- request 2026-09-24): latching on and boosting on the same beat skipped the
+	-- cling entirely. Checked by the shared `CanEnter[WallBoost]`, timed on each
+	-- side from that side's own cling entry.
+	WallBoostMinClingSeconds = 0.6,
 }
 
 return MovementConstants

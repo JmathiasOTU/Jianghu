@@ -6,7 +6,7 @@ local MovementTuning = require(ReplicatedStorage.Shared.Movement.MovementTuning)
 type EffectiveMovementConstants = MovementTuning.EffectiveMovementConstants
 
 -- Client-side mirror of Server/State/MovementTuningState.luau's per-session
--- effective constants (docs/MOVEMENT.md §8), same poll-style published-state
+-- effective constants (docs/MovementSystem.md §10), same poll-style published-state
 -- pattern as DebugSnapshot.luau alongside it: Movement/init.luau writes here
 -- (via Set, fed by the TuningState network callback), every consumer that
 -- needs a live-tunable number -- the state modules, CharacterMover,

@@ -7,7 +7,7 @@ local StateRules = require(ReplicatedStorage.Shared.Movement.StateRules)
 local ClientMovementContextModule = require(script.Parent.Parent.ClientMovementContext)
 type ClientMovementContext = ClientMovementContextModule.ClientMovementContext
 
--- Mirrors IdleState exactly (docs/MOVEMENT.md §9) -- same split against its
+-- Mirrors IdleState exactly (docs/MovementSystem.md §4.2) -- same split against its
 -- Walk-equivalent, same reasoning, just at CrouchSpeed instead of WalkSpeed.
 local CrouchIdleState = {}
 
@@ -18,7 +18,7 @@ function CrouchIdleState.Enter(context: ClientMovementContext)
 	context.characterMover:SetJumpBlocked(true)
 end
 
--- "Can't jump while crouched" (docs/MOVEMENT.md §9) blocks the jump INPUT
+-- "Can't jump while crouched" (docs/MovementSystem.md §4.2) blocks the jump INPUT
 -- (via CharacterMover:SetJumpBlocked, set on Enter/cleared on Exit) -- it does
 -- NOT make Airborne unreachable from here. A crouched player walking off a
 -- ledge is involuntary ground loss, not the jump action, and must still fall

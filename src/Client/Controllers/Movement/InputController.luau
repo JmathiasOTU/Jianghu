@@ -13,13 +13,13 @@ type MoveIntent = MovementTypes.MoveIntent
 
 export type InputController = {
 	RunRequested: LemonSignal.Signal<()>,
-	-- Fires the toggled crouch state (docs/MOVEMENT.md §9) -- `true`/`false`
+	-- Fires the toggled crouch state (docs/MovementSystem.md §4.2) -- `true`/`false`
 	-- each time Ctrl is PRESSED, alternating; release does nothing. Distinct
 	-- from `RunRequested`'s "()" shape since Crouch's claim needs to know
 	-- which state it just toggled INTO, not just that Ctrl was pressed.
 	CrouchChanged: LemonSignal.Signal<boolean>,
 	-- Fires once per PHYSICAL press of the jump key, grounded or not
-	-- (TRAVERSAL-ROADMAP.md §4, Phase 1) -- deliberately NOT
+	-- (docs/MovementSystem.md §5, Phase 1) -- deliberately NOT
 	-- `Humanoid.Jumping`/`GetState()`: Roblox's own ground controller only
 	-- ever re-enters the `Jumping` state from a grounded takeoff, so a second
 	-- press while already airborne produces no Humanoid state change at all
@@ -36,7 +36,7 @@ export type InputController = {
 	-- the double jump with no separate second press. Tracking the key edge
 	-- ourselves fires exactly once per physical press-release cycle.
 	JumpRequested: LemonSignal.Signal<()>,
-	-- WallBoost's own input (docs/WallClimbingPlan.md §2/§10.1 step 5): fires
+	-- WallBoost's own input (docs/MovementSystem.md §4.6 step 5): fires
 	-- once per physical F press. A plain InputBegan edge is enough here --
 	-- unlike Space's own JumpRequested, there's no `UserInputService`-level
 	-- engine quirk to guard against (JumpRequested's own doc comment explains
@@ -80,7 +80,7 @@ end
 -- Run/Sprint/Crouch/Slide/wall moves/Boost are keyboard-only until this layer
 -- grows action-based bindings.
 --
--- Raw input -> Intent, per docs/MOVEMENT.md §1. Owns the W double-tap-to-Run
+-- Raw input -> Intent, per docs/MovementSystem.md §2. Owns the W double-tap-to-Run
 -- detector (the only discrete gesture in Phase 1's input set) and resolves the held
 -- WASD axes into a camera-relative world-space direction every frame; the FSM/state
 -- layer never touches UserInputService directly.

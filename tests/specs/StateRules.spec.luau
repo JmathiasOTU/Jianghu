@@ -43,6 +43,7 @@ return function(t)
 			},
 			horizontalVelocity = Vector3.new(0, 0, 30),
 			moveIntent = Fixtures.moveIntent({ direction = Vector3.new(0, 0, 1), forward = true }),
+			facingDirection = Vector3.new(0, 0, 1),
 		}
 
 		t.it("accepts a fast run along a fresh wall", function()
@@ -59,6 +60,20 @@ return function(t)
 			local overrides = table.clone(alongWall)
 			overrides.lastWallLeapWall = Fixtures.wall("B")
 			t.expect(canEnter(MovementStates.WallRun, overrides)).toBeTruthy()
+		end)
+
+		t.it("rejects backpedalling along the wall (facing away from the run)", function()
+			local overrides = table.clone(alongWall)
+			overrides.facingDirection = Vector3.new(0, 0, -1)
+			overrides.moveIntent =
+				Fixtures.moveIntent({ direction = Vector3.new(0, 0, 1), backward = true })
+			t.expect(canEnter(MovementStates.WallRun, overrides)).toBeFalsy()
+		end)
+
+		t.it("rejects strafing along the wall (facing the wall)", function()
+			local overrides = table.clone(alongWall)
+			overrides.facingDirection = Vector3.new(-1, 0, 0)
+			t.expect(canEnter(MovementStates.WallRun, overrides)).toBeFalsy()
 		end)
 
 		t.it("rejects a standstill", function()
@@ -117,6 +132,29 @@ return function(t)
 			t.expect(canEnter(MovementStates.DoubleJump, {
 				grounded = false,
 				doubleJumpUsed = true,
+			})).toBeFalsy()
+		end)
+	end)
+
+	t.describe("CanEnter[WallBoost]", function()
+		local minCling = Fixtures.context().constants.WallBoostMinClingSeconds
+
+		t.it("waits out the minimum cling time", function()
+			t.expect(canEnter(MovementStates.WallBoost, { wallClingElapsed = 0 })).toBeFalsy()
+			t.expect(canEnter(MovementStates.WallBoost, { wallClingElapsed = minCling - 0.01 }))
+				.toBeFalsy()
+			t.expect(canEnter(MovementStates.WallBoost, { wallClingElapsed = minCling }))
+				.toBeTruthy()
+		end)
+
+		t.it("needs an active cling", function()
+			t.expect(canEnter(MovementStates.WallBoost, {})).toBeFalsy()
+		end)
+
+		t.it("is once per cling", function()
+			t.expect(canEnter(MovementStates.WallBoost, {
+				wallClingElapsed = minCling,
+				wallClingBoostUsed = true,
 			})).toBeFalsy()
 		end)
 	end)

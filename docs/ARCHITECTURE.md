@@ -2,6 +2,8 @@
 
 This document is the standing set of design rules for Jianghu. It applies to every system in this repository — movement, combat, UI wiring, and persistence alike. Pull requests that violate these rules should be rejected in review regardless of whether the feature "works."
 
+Sections 1–14 are the rules; code comments cite them as `ARCHITECTURE §N`, so their numbers don't change. §15 covers the stack, layout and workflow. How the movement system itself works is in [`MovementSystem.md`](MovementSystem.md).
+
 ## 1. Project Identity
 
 - **Rig standard:** R6 only, exclusively, to guarantee identical hitbox fairness across all players. No code should branch on or accommodate R15 or custom rigs.
@@ -95,3 +97,30 @@ Consequences for movement (audit M-034):
 - **Server validation is unaffected.** The server always has the full world, so its own ground, wall, climbable and water probes are never missing geometry.
 - **Client prediction only errs on the safe side.** A wall or floor that hasn't streamed in yet can't be found by the client's `QueryWallRun`/`QueryClingWall`/`QueryGround`, so the client under-predicts (no wall run or cling there yet). It never claims something the server will reject. Traversal level geometry should sit inside the streaming radius of wherever players approach it from.
 - **Never make a gameplay decision client-side from the absence of a part.** "I don't see a wall, so there isn't one" is only a prediction.
+
+## 15. Stack, Layout and Workflow
+
+Jianghu is a Roblox parry-combat/movement RPG. Read this file and [`CONTRIBUTING.md`](../CONTRIBUTING.md) in full before making changes.
+
+**Stack:** Rojo + Luau (`--!strict`) + Wally. Signals: LemonSignal. Cleanup: Trove. Networking: Zap (`network.zap` → generated `network.luau`). Persistence: ProfileStore. Lint/format: Selene + StyLua. Tests: Lune. R6 only. Tool versions are pinned in `aftman.toml`.
+
+**Layout:**
+- `src/Client/Controllers/` — client controllers. `Movement/` is the FSM-driven movement system: one file per state under `States/`, with `init.luau` as the per-life orchestrator.
+- `src/Server/Services/` — server services. `MovementValidationService.luau` mirrors each player's movement FSM independently and never trusts a client-claimed state or value.
+- `src/Server/State/`, `src/Server/Events/` — per-player server records; server-to-server signals.
+- `src/Shared/` — Constants, FSM primitives, types, and pure movement math/geometry (`StateRules`, `TraversalMath`, `SpatialQueries`), called identically by client and server.
+- `Assets/` — Studio-authored instance trees (animations, UI) synced by Rojo.
+- `tests/` — Lune specs for the pure shared modules.
+- `docs/` — this file and `MovementSystem.md`.
+
+**Before starting a task:** skim `src/Shared/Types/MovementTypes.luau` (the shared context shape) and the relevant state files. Existing comments often record *why* a decision was made and whether a constant is still unmeasured; read them before "fixing" something flagged as intentional. How that fits §7's one-line comment rule is an open question (see `MovementSystem.md` §14).
+
+**Before pushing** (CI runs the same checks):
+
+```bash
+zap network.zap                    # after any network.zap change
+selene src
+stylua --check src tests --glob '!src/**/Network/network.luau'
+lune run tests/run
+rojo build default.project.json --output build.rbxl
+```

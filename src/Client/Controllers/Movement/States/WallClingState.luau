@@ -12,7 +12,7 @@ local ClientMovementContextModule = require(script.Parent.Parent.ClientMovementC
 type ClientMovementContext = ClientMovementContextModule.ClientMovementContext
 type WallClingExitReason = WallClingExitReasons.WallClingExitReason
 
--- Static cling, no steered climbing (docs/WallClimbingPlan.md §10.1): zero
+-- Static cling, no steered climbing (docs/MovementSystem.md §4.6): zero
 -- velocity via a full-force SetVelocityOverride (cancels gravity too, unlike
 -- WallRun's controlled sink), jump blocked, facing snapped to the wall --
 -- held until a hard time cap, a deliberate drop, the wall disappearing, or a
@@ -32,7 +32,7 @@ local boostUsed = false
 -- Persists PAST Exit, deliberately -- this is what gates the NEXT
 -- Airborne -> WallCling attempt (StateRules.CanEnter[WallCling]'s own
 -- lockout check), unlike every other module-local above which Exit nils out.
--- Server-owned; this is prediction only (docs/WallClimbingPlan.md §3.5).
+-- Server-owned; this is prediction only (docs/MovementSystem.md §4.6).
 local lockoutUntil: number? = nil
 -- Set immediately before every RequestTransition call below, read (and
 -- cleared) by Exit -- Exit itself has no other way to learn WHY it's being
@@ -56,6 +56,12 @@ function WallClingState.GetBoostUsed(): boolean
 	return boostUsed
 end
 
+-- Seconds since this cling began, nil when not clinging (gates the boost,
+-- `WallBoostMinClingSeconds`).
+function WallClingState.GetElapsed(): number?
+	return if enteredAt then os.clock() - enteredAt else nil
+end
+
 function WallClingState.GetLockoutUntil(): number?
 	return lockoutUntil
 end
@@ -77,7 +83,7 @@ local function requestExit(
 	return context.fsm:RequestTransition(target, context)
 end
 
--- WallBoost's own entry point (docs/WallClimbingPlan.md §10.1 step 5) --
+-- WallBoost's own entry point (docs/MovementSystem.md §4.6 step 5) --
 -- called from Movement/init.luau's `input.BoostRequested` connection (an
 -- external input event, same "plain RequestTransition" shape as
 -- `input.RunRequested`), NOT polled from this state's own Update. Routed
@@ -110,9 +116,9 @@ function WallClingState.Enter(context: ClientMovementContext)
 	boostUsed = false
 
 	context.characterMover:SetJumpBlocked(true)
-	-- Omitting `maxForce` drives all three axes at full strength (docs/
-	-- WallClimbingPlan.md §5's WallClingSpeedCeiling = 0 -- no horizontal
-	-- drift, and no falling either, unlike WallRun's controlled sink).
+	-- Omitting `maxForce` drives all three axes at full strength (docs/MovementSystem.md §8.2's
+	-- WallClingSpeedCeiling = 0 -- no horizontal drift, and no falling either, unlike WallRun's
+	-- controlled sink).
 	context.characterMover:SetVelocityOverride(Vector3.zero)
 
 	-- Face into the wall (-normal), flattened -- the raw hit normal can carry
@@ -125,7 +131,7 @@ function WallClingState.Enter(context: ClientMovementContext)
 	end
 end
 
--- Sustain checks, every tick (docs/WallClimbingPlan.md §10.1): timeout, drop
+-- Sustain checks, every tick (docs/MovementSystem.md §4.6): timeout, drop
 -- input, then the throttled wall-still-there recheck -- velocity is NOT
 -- re-applied here (unlike WallRun's continuous cling correction): a single
 -- Enter-time SetVelocityOverride to a constant Vector3.zero holds on its own
@@ -138,12 +144,11 @@ function WallClingState.Update(dt: number, context: ClientMovementContext)
 		return
 	end
 
-	-- Grounded check while clinging near the floor (docs/WallClimbingPlan.md
-	-- §12, edge case 12) -- checked FIRST, same priority every other
-	-- airborne-family state's own Update gives it (AirborneState/WallRunState
-	-- both check `context.grounded` before anything else). `Interrupted`, not
-	-- `WallLost` -- the wall didn't disappear, an external condition
-	-- (touching ground) ended the cling -- either way applies no lockout.
+	-- Grounded check while clinging near the floor (docs/MovementSystem.md §4.6, edge case 12) --
+	-- checked FIRST, same priority every other airborne-family state's own Update gives it
+	-- (AirborneState/WallRunState both check `context.grounded` before anything else).
+	-- `Interrupted`, not `WallLost` -- the wall didn't disappear, an external condition (touching
+	-- ground) ended the cling -- either way applies no lockout.
 	if context.grounded then
 		requestExit(
 			context,
@@ -185,10 +190,9 @@ function WallClingState.Exit(context: ClientMovementContext)
 	local reason = pendingExitReason
 	pendingExitReason = nil
 
-	-- Only Timeout/Dropped/Boosted apply a re-grab lockout (docs/
-	-- WallClimbingPlan.md §4's exit-reason table) -- WallLost/Interrupted (and
-	-- an Enter that bailed out early with no wall) apply none, leaving
-	-- whatever lockout is already in effect untouched.
+	-- Only Timeout/Dropped/Boosted apply a re-grab lockout (docs/MovementSystem.md §4.6's
+	-- exit-reason table) -- WallLost/Interrupted (and an Enter that bailed out early with no wall)
+	-- apply none, leaving whatever lockout is already in effect untouched.
 	if reason == WallClingExitReasons.Timeout then
 		lockoutUntil = os.clock() + context.constants.WallClingTimeoutLockout
 	elseif reason == WallClingExitReasons.Dropped then

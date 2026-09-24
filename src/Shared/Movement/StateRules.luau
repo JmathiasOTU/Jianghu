@@ -5,6 +5,7 @@ local MovementStates = require(ReplicatedStorage.Shared.FSM.MovementStates)
 local MovementTypes = require(ReplicatedStorage.Shared.Types.MovementTypes)
 local TraversalMath = require(ReplicatedStorage.Shared.Movement.TraversalMath)
 local SpatialQueries = require(ReplicatedStorage.Shared.Movement.SpatialQueries)
+local MovementConstants = require(ReplicatedStorage.Shared.Constants.MovementConstants)
 
 type MovementState = MovementStates.MovementState
 type MovementContext = MovementTypes.MovementContext
@@ -17,7 +18,7 @@ end
 -- not "is it legal right now" -- that's CanEnter below. Shared client/server so both
 -- FSM mirrors are built from the identical graph.
 --
--- Crouch/Slide additions (docs/MOVEMENT.md §9): CrouchIdle is reachable
+-- Crouch/Slide additions (docs/MovementSystem.md §4.2): CrouchIdle is reachable
 -- directly from BOTH Idle and Walk (and from Airborne, on landing), but
 -- CrouchWalk is gated behind CrouchIdle -- pressing Ctrl always lands you in
 -- CrouchIdle first, and CrouchWalk is only earned from there (or from
@@ -92,7 +93,7 @@ local Transitions: { [MovementState]: { MovementState } } = {
 	-- DoubleJump hands back to Airborne once its impulse ends -- the character
 	-- is still airborne, just with new vertical velocity, same as SlideJump's
 	-- own single edge back out. The grounded targets alongside it cover the
-	-- rarer "landed mid-impulse" case (TRAVERSAL-ROADMAP.md §4): Airborne's
+	-- rarer "landed mid-impulse" case (docs/MovementSystem.md §5): Airborne's
 	-- own CanEnter requires `not grounded`, which has already failed by the
 	-- time that case is detected, so DoubleJumpState resolves the landing
 	-- target directly (AirborneState.ResolveLandingTarget) instead of
@@ -108,7 +109,7 @@ local Transitions: { [MovementState]: { MovementState } } = {
 		MovementStates.HardLanding,
 	},
 
-	-- HardLanding (docs/MOVEMENT.md §10 rework): a real, timed lock state
+	-- HardLanding (docs/MovementSystem.md §4.4 rework): a real, timed lock state
 	-- entered instead of the normal landing target when the fall was big
 	-- enough (see `AirborneState.ResolveLandingTarget`'s `fallHeight` check).
 	-- Resolves back out to whichever grounded state the held input actually
@@ -128,14 +129,14 @@ local Transitions: { [MovementState]: { MovementState } } = {
 		MovementStates.Airborne,
 	},
 
-	-- WallRun (Wall Run & Leap Mechanic Guideline §5): the grounded targets
+	-- WallRun (docs/MovementSystem.md §5): the grounded targets
 	-- alongside Airborne cover the mid-run-landing case, same reason
 	-- DoubleJump's own table carries grounded targets alongside its primary
-	-- exit. CrouchIdle/CrouchWalk are included even though the guideline's own
-	-- §5 snippet omits them -- LandingResolution.Resolve can land a crouched
+	-- exit. CrouchIdle/CrouchWalk are included even though the original wall-run
+	-- design omitted them -- LandingResolution.Resolve can land a crouched
 	-- player into either one, and leaving them out would strand the FSM in
 	-- WallRun the instant that resolution ran (the exact "Sprint dead end"
-	-- shape docs/MOVEMENT.md §2 already had to fix once). HardLanding for the
+	-- shape docs/MovementSystem.md §3 already had to fix once). HardLanding for the
 	-- same reason (audit M-005): a wall run entered partway down a >= threshold
 	-- fall resolves its landing to HardLanding.
 	[MovementStates.WallRun] = {
@@ -150,7 +151,7 @@ local Transitions: { [MovementState]: { MovementState } } = {
 		MovementStates.WallLeap,
 	},
 
-	-- WallLeap (guideline §4): single edge back to Airborne, taken
+	-- WallLeap (docs/MovementSystem.md §4.5): single edge back to Airborne, taken
 	-- synchronously in the same frame WallRun -> WallLeap is -- same
 	-- one-tick-lifetime shape SlideJump's own table already established. No
 	-- CanEnter[WallLeap] predicate exists (topology alone gates it, per
@@ -161,7 +162,7 @@ local Transitions: { [MovementState]: { MovementState } } = {
 		MovementStates.Airborne,
 	},
 
-	-- WallCling (docs/WallClimbingPlan.md §4): reachable only from Airborne
+	-- WallCling (docs/MovementSystem.md §4.6): reachable only from Airborne
 	-- (see the Airborne table above), can hand off to WallBoost or drop/time
 	-- out/lose-the-wall straight back to Airborne. Never a direct edge back
 	-- into WallCling from WallBoost -- a re-cling always requires a fresh
@@ -188,7 +189,7 @@ local Transitions: { [MovementState]: { MovementState } } = {
 		MovementStates.HardLanding,
 	},
 
-	-- WallBoost (docs/WallClimbingPlan.md §4): usually a single edge back to
+	-- WallBoost (docs/MovementSystem.md §4.6): usually a single edge back to
 	-- Airborne after its own short `WallBoostStateDuration` window -- reachable
 	-- only from WallCling (see the WallCling table above). Same grounded-target
 	-- set as WallCling just above, for the identical mid-boost-landing reason
@@ -207,10 +208,10 @@ local Transitions: { [MovementState]: { MovementState } } = {
 }
 
 -- CanEnter: is this transition legal RIGHT NOW, given live context. Shared
--- client/server per docs/MOVEMENT.md §1 so a hacked client can't diverge from what
+-- client/server per docs/MovementSystem.md §2 so a hacked client can't diverge from what
 -- the server will accept.
 --
--- Crouch/Slide additions (docs/MOVEMENT.md §9): none of these re-check
+-- Crouch/Slide additions (docs/MovementSystem.md §4.2): none of these re-check
 -- "coming from the right state" (e.g. Slide re-checking "currently Run or
 -- Sprint") -- that's topology's job above, same principle Sprint's own
 -- CanEnter already relies on (it never re-checks "currently Run" either).
@@ -264,7 +265,7 @@ local CanEnter: { [MovementState]: (context: MovementContext) -> boolean } = {
 	end,
 
 	-- No dwell condition, unlike Sprint -- immediate the instant Ctrl is held
-	-- while grounded (docs/MOVEMENT.md §9). "Currently Run or Sprint" needs no
+	-- while grounded (docs/MovementSystem.md §4.2). "Currently Run or Sprint" needs no
 	-- explicit check: Slide is only topologically reachable from those two.
 	[MovementStates.Slide] = function(context: MovementContext): boolean
 		return context.grounded and context.crouchHeld
@@ -283,7 +284,7 @@ local CanEnter: { [MovementState]: (context: MovementContext) -> boolean } = {
 	end,
 
 	-- Reachable only from Airborne (topology above), needs the one midair jump
-	-- not yet spent this life (TRAVERSAL-ROADMAP.md §4) -- `doubleJumpUsed` is
+	-- not yet spent this life (docs/MovementSystem.md §5) -- `doubleJumpUsed` is
 	-- reset the instant the character actually lands (see
 	-- Client/Controllers/Movement/init.luau and
 	-- Server/Services/MovementValidationService.luau, both of which reset it
@@ -295,20 +296,19 @@ local CanEnter: { [MovementState]: (context: MovementContext) -> boolean } = {
 		return not context.grounded and not context.doubleJumpUsed
 	end,
 
-	-- Same shape as Idle's own predicate (docs/MOVEMENT.md §10 rework) --
+	-- Same shape as Idle's own predicate (docs/MovementSystem.md §4.4 rework) --
 	-- "was this landing big enough" is `ResolveLandingTarget`'s decision, not
 	-- CanEnter's; this only ever needs to confirm the landing is real.
 	[MovementStates.HardLanding] = function(context: MovementContext): boolean
 		return context.grounded
 	end,
 
-	-- Four gates, all required together (Wall Run & Leap Mechanic Guideline
-	-- §2): airborne, a real wall this frame, real momentum (no standstill wall
-	-- run), and moving ALONG the wall's tangent rather than into/away from it.
-	-- `wallRunQuery`/`horizontalVelocity` are both populated by the caller
-	-- BEFORE this runs (see their own MovementTypes.luau doc comments) --
-	-- never derived in here, same "CanEnter stays a pure read of context"
-	-- principle every other predicate above already follows.
+	-- Five gates, all required together (docs/MovementSystem.md §4.5): airborne, a real wall this
+	-- frame, real momentum (no standstill wall run), moving ALONG the wall's tangent rather
+	-- than into/away from it, and facing along it too. `wallRunQuery`/`horizontalVelocity` are both populated by the caller
+	-- BEFORE this runs (see their own MovementTypes.luau doc comments) -- never derived in here,
+	-- same "CanEnter stays a pure read of context" principle every other predicate above already
+	-- follows.
 	[MovementStates.WallRun] = function(context: MovementContext): boolean
 		if context.grounded then
 			return false
@@ -330,11 +330,25 @@ local CanEnter: { [MovementState]: (context: MovementContext) -> boolean } = {
 			return false
 		end
 		local tangent = TraversalMath.WallRunTangent(wallQuery.normal, context.horizontalVelocity)
-		return context.moveIntent.direction.Unit:Dot(tangent)
-			>= context.constants.WallRunEntryDotThreshold
+		local threshold = context.constants.WallRunEntryDotThreshold
+		if context.moveIntent.direction.Unit:Dot(tangent) < threshold then
+			return false
+		end
+		-- Facing the way you run, not just moving that way (2026-09-24 playtest):
+		-- in Shift Lock, backpedalling along a wall satisfied every gate above
+		-- and wall-ran backwards.
+		local facing = context.facingDirection
+		if not facing then
+			return false
+		end
+		local flatFacing = Vector3.new(facing.X, 0, facing.Z)
+		if flatFacing.Magnitude < MovementConstants.DirectionEpsilon then
+			return false
+		end
+		return flatFacing.Unit:Dot(tangent) >= threshold
 	end,
 
-	-- WallCling (docs/WallClimbingPlan.md §9): airborne, off any active
+	-- WallCling (docs/MovementSystem.md §5): airborne, off any active
 	-- re-grab lockout, a real head-on wall this frame, and not the wall this
 	-- life/session just leapt from. `wallClingQuery` is populated by the
 	-- caller BEFORE this runs (SpatialQueries.castClingWall, same
@@ -371,12 +385,16 @@ local CanEnter: { [MovementState]: (context: MovementContext) -> boolean } = {
 		return facingAngle <= context.constants.WallClingMaxFacingAngleDegrees
 	end,
 
-	-- WallBoost (docs/WallClimbingPlan.md §9): reachable only from WallCling
+	-- WallBoost (docs/MovementSystem.md §5): reachable only from WallCling
 	-- (topology above) and only once per cling -- "currently WallCling" needs
 	-- no re-check here, same principle SlideJump's own CanEnter already
 	-- relies on for its topology-gated "currently Slide."
 	[MovementStates.WallBoost] = function(context: MovementContext): boolean
-		return not context.wallClingBoostUsed
+		if context.wallClingBoostUsed then
+			return false
+		end
+		local elapsed = context.wallClingElapsed
+		return elapsed ~= nil and elapsed >= context.constants.WallBoostMinClingSeconds
 	end,
 }
 

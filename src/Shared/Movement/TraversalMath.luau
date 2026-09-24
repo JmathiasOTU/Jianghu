@@ -1,6 +1,6 @@
 --!strict
 
--- Pure functions, one per traversal move (TRAVERSAL-ROADMAP.md §3/§9) --
+-- Pure functions, one per traversal move (docs/MovementSystem.md §2/§4) --
 -- client prediction and server resimulation both call these directly rather
 -- than each keeping their own copy of the formula, which is the whole point
 -- of the "full trajectory resimulation" decision (§0/§7): resimulation only
@@ -18,7 +18,7 @@ local UP = Vector3.new(0, 1, 0)
 local EPSILON = MovementConstants.DirectionEpsilon
 local DOUBLE_JUMP_FLOOR = MovementConstants.DoubleJumpDecayFloorFraction
 
--- WallBoost's launch vector (docs/WallClimbingPlan.md §8) -- an instant,
+-- WallBoost's launch vector (docs/MovementSystem.md §4.6) -- an instant,
 -- flat impulse: a small separation push away from the wall (so the character
 -- doesn't snag on wall friction while rising) plus a fixed upward force.
 -- Takes raw numeric params (`upwardForce`/`separationSpeed`), matching this
@@ -37,7 +37,7 @@ function TraversalMath.WallBoostVelocity(
 	return Vector3.new(separation.X, upwardForce, separation.Z)
 end
 
--- How tall a gap one boost clears (docs/WallClimbingPlan.md §8) -- for level
+-- How tall a gap one boost clears (docs/MovementSystem.md §4.6) -- for level
 -- designers and tests, not consulted by any runtime enforcement path.
 function TraversalMath.WallBoostPeakHeight(upwardForce: number, gravity: number): number
 	return upwardForce ^ 2 / (2 * gravity)
@@ -65,6 +65,48 @@ end
 function TraversalMath.BallisticRise(verticalSpeed: number, gravity: number): number
 	local speed = math.max(verticalSpeed, 0)
 	return speed * speed / (2 * gravity)
+end
+
+-- Seconds from a vertical launch at `verticalSpeed` until gravity stops it
+-- (re-audit N-002): the latest moment a one-shot launch can still be rising.
+function TraversalMath.TimeToApex(verticalSpeed: number, gravity: number): number
+	return math.max(verticalSpeed, 0) / gravity
+end
+
+-- Highest Y a free-falling body can be at `now` (re-audit N-001/N-002): it
+-- can't be above `apexY`, and once `apexAt` has passed nothing is holding it
+-- up, so it's at best falling from `apexY` from rest. Every built-in launch
+-- replaces vertical velocity, so a later launch moves both inputs rather than
+-- adding to this curve.
+function TraversalMath.DescentCeiling(
+	apexY: number,
+	apexAt: number,
+	now: number,
+	gravity: number
+): number
+	local falling = now - apexAt
+	if falling <= 0 then
+		return apexY
+	end
+	return apexY - gravity * falling * falling / 2
+end
+
+-- Latest moment DoubleJump can still be rising (re-audit N-002), paired with
+-- `DoubleJumpMaxRise` as the apex. The held phase lasts `decayDuration` plus
+-- up to one client frame (Update notices the end a frame late), then releases
+-- into a ballistic arc at the curve's last sampled value. Bounding that
+-- release by the curve's own maximum, `force`, instead of its end value
+-- absorbs the late frame: the difference covers a frame of up to
+-- (1 - floor) * force / g, less the extra release speed that late frame buys
+-- (about 0.1 s, i.e. clients at 10 fps or better at shipped tuning; the specs
+-- check 20-240 fps). The bound only holds if this time is not early: the
+-- descent check can't make up a late apex with extra height.
+function TraversalMath.DoubleJumpTimeToApex(
+	force: number,
+	decayDuration: number,
+	gravity: number
+): number
+	return decayDuration + TraversalMath.TimeToApex(force, gravity)
 end
 
 -- Upper bound on DoubleJump's total rise (audit M-001). The override holds
@@ -104,10 +146,10 @@ function TraversalMath.WallLeapMaxHorizontalSpeed(
 	)
 end
 
--- Slide slope angle off the ground normal (mechanic 3a, TRAVERSAL-ROADMAP.md
--- §9): 0 on flat ground, increasing as the surface tilts toward vertical.
--- Shared by client prediction and server resimulation, both fed off the SAME
--- `SpatialQueries.QueryGround` normal -- never two independently-read copies.
+-- Slide slope angle off the ground normal (mechanic 3a, docs/MovementSystem.md §4): 0 on flat
+-- ground, increasing as the surface tilts toward vertical. Shared by client prediction and server
+-- resimulation, both fed off the SAME `SpatialQueries.QueryGround` normal -- never two
+-- independently-read copies.
 function TraversalMath.SlopeAngleRadians(groundNormal: Vector3): number
 	return math.acos(math.clamp(groundNormal:Dot(UP), -1, 1))
 end
@@ -131,8 +173,8 @@ end
 -- steep-enough slope -- this is an ADDITIVE top-up applied only to the
 -- velocity actually output this tick, never fed back into the decaying base
 -- itself, so the existing closed-form "(entrySpeed - CrouchSpeed) /
--- SlideDecayRate" duration stays true regardless of terrain (docs/MOVEMENT.md
--- §9's own decay design, preserved per TRAVERSAL-ROADMAP.md §9 mechanic 3's
+-- SlideDecayRate" duration stays true regardless of terrain (docs/MovementSystem.md §4.2's own
+-- decay design, preserved per docs/MovementSystem.md §4 mechanic 3's
 -- note that only the slope math is ported, not the reference's whole decay
 -- curve).
 --
@@ -166,7 +208,7 @@ function TraversalMath.SlideSlopeAmplification(
 	return amplificationCap * ratio
 end
 
--- WallRun tangent direction (Wall Run & Leap Mechanic Guideline §2): rotate
+-- WallRun tangent direction (docs/MovementSystem.md §4.5): rotate
 -- the wall normal 90 degrees around world up, then pick whichever of the two
 -- resulting directions agrees with current momentum -- a wall run always
 -- CONTINUES the direction you were already moving, never reverses you onto
@@ -188,7 +230,7 @@ function TraversalMath.WallRunTangent(normal: Vector3, horizontalVelocity: Vecto
 	return tangent
 end
 
--- Angle between two directions, in degrees (guideline §3's corner/curve
+-- Angle between two directions, in degrees (docs/MovementSystem.md §4.5's corner/curve
 -- snap-off check: live wall normal vs. the locked entry normal). Zero
 -- vectors clamp Dot to the nearest valid range rather than producing NaN.
 function TraversalMath.AngleBetween(a: Vector3, b: Vector3): number
@@ -198,7 +240,7 @@ function TraversalMath.AngleBetween(a: Vector3, b: Vector3): number
 	return math.deg(math.acos(math.clamp(a.Unit:Dot(b.Unit), -1, 1)))
 end
 
--- WallLeap launch vector (guideline §4, redesigned 2026-09-18 from a
+-- WallLeap launch vector (docs/MovementSystem.md §4.5, redesigned 2026-09-18 from a
 -- retention-scaled forward component to a flat additive burst -- the
 -- original "forward = tangent * max(entrySpeed, minSpeed) * forwardRetention"
 -- shaped a fixed curve out of the run's own entry speed; this instead keeps

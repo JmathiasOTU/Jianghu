@@ -4,7 +4,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local MovementConstants = require(ReplicatedStorage.Shared.Constants.MovementConstants)
 
 -- Live-tunable subset of MovementConstants (F4 overlay "Tuning" tab,
--- docs/MOVEMENT.md) -- deliberately not every constant in that file (e.g.
+-- docs/MovementSystem.md) -- deliberately not every constant in that file (e.g.
 -- SpeedCheckIntervalSeconds stays fixed), only the ones worth live-adjusting
 -- while playtesting movement feel. Field names intentionally match
 -- MovementConstants' own PascalCase keys 1:1 so a value can be read/written
@@ -56,6 +56,7 @@ export type TunableConstantName =
 	| "WallBoostUpwardForce"
 	| "WallBoostSeparationSpeed"
 	| "WallBoostStateDuration"
+	| "WallBoostMinClingSeconds"
 
 -- A named-field record (not a `{ [TunableConstantName]: number }` indexer
 -- type) specifically so consumers get plain dot-access
@@ -111,6 +112,7 @@ export type EffectiveMovementConstants = {
 	WallBoostUpwardForce: number,
 	WallBoostSeparationSpeed: number,
 	WallBoostStateDuration: number,
+	WallBoostMinClingSeconds: number,
 }
 
 -- Iteration order for the overlay's Tuning tab and for anything else that
@@ -161,6 +163,7 @@ local TUNABLE_NAMES: { TunableConstantName } = {
 	"WallBoostUpwardForce",
 	"WallBoostSeparationSpeed",
 	"WallBoostStateDuration",
+	"WallBoostMinClingSeconds",
 }
 
 -- Sanity bounds for RequestSetTuning (Server/Services/MovementTuningService.luau)
@@ -229,6 +232,7 @@ local VALID_RANGES: { [TunableConstantName]: { min: number, max: number } } = {
 	-- zero or absurd" reasoning) -- lower bound isn't 0, so the window can
 	-- always at least register on a real Heartbeat.
 	WallBoostStateDuration = { min = 0.02, max = 5 },
+	WallBoostMinClingSeconds = { min = 0, max = 5 },
 }
 
 local MovementTuning = {}

@@ -47,7 +47,7 @@ local CharacterMover = {}
 CharacterMover.__index = CharacterMover
 
 -- Narrow physics interface: states never touch the Humanoid directly (see
--- docs/MOVEMENT.md §4). Roblox's default character-control scripts already turn
+-- docs/MovementSystem.md §6). Roblox's default character-control scripts already turn
 -- WASD/Space into Humanoid:Move()/jumps -- this only owns the speed tier and
 -- grounded-state read the FSM needs. RequestJump/Disable from the original design
 -- are deliberately not here yet: nothing in Phase 1 needs to trigger a jump or
@@ -55,12 +55,12 @@ CharacterMover.__index = CharacterMover
 -- a future forced-launch or stun), not speculatively now.
 --
 -- `jumpPower` is passed in rather than read from MovementConstants directly
--- (docs/MOVEMENT.md §8, live tuning) -- the caller (Movement/init.luau) sources
+-- (docs/MovementSystem.md §10, live tuning) -- the caller (Movement/init.luau) sources
 -- it from TuningSnapshot, this session's effective value, and re-pushes any
 -- later change via SetJumpPower.
 
 -- Backing constraint for SetVelocityOverride/ClearVelocityOverride
--- (TRAVERSAL-ROADMAP.md §2/§11, Phase 1's DoubleJump) -- created ONCE per
+-- (docs/MovementSystem.md §6/§2, Phase 1's DoubleJump) -- created ONCE per
 -- character life here, Trove-owned, left parented-but-inert (zero
 -- MaxAxesForce) between uses, never re-instanced per move. This is the
 -- structural fix over the reference controller, which does
@@ -94,7 +94,7 @@ function CharacterMover.new(humanoid: Humanoid, jumpPower: number): CharacterMov
 
 	-- AutoRotate is NOT forced off here -- FacingController now owns it, toggling
 	-- per-frame based on whether the camera is actually locked to the character
-	-- (Shift Lock/first-person) vs. free-orbiting (docs/MOVEMENT.md §4, fixed
+	-- (Shift Lock/first-person) vs. free-orbiting (docs/MovementSystem.md §6, fixed
 	-- 2026-09-13). Forcing it off unconditionally broke normal camera orbiting.
 	humanoid.UseJumpPower = true
 	humanoid.JumpPower = jumpPower
@@ -142,8 +142,8 @@ function CharacterMover:ApplyLandingSlow(multiplier: number, duration: number)
 	self:_applySpeed()
 end
 
--- Real flattened horizontal velocity vector (docs/MOVEMENT.md §9, extended
--- TRAVERSAL-ROADMAP.md §8 Phase 3), not `humanoid.WalkSpeed` (the TARGET the
+-- Real flattened horizontal velocity vector (docs/MovementSystem.md §4.2, extended
+-- docs/MovementSystem.md §4), not `humanoid.WalkSpeed` (the TARGET the
 -- ground controller is driving toward, not what it's actually reached yet).
 -- Slide's own Enter reads this to inherit both "whatever speed you had at
 -- entry" (the magnitude, via GetSpeed below) AND "whatever direction you were
@@ -167,7 +167,7 @@ function CharacterMover:GetSpeed(): number
 	return self:GetHorizontalVelocity().Magnitude
 end
 
--- Real flattened `rootPart.CFrame.LookVector` (docs/MOVEMENT.md §4/§12,
+-- Real flattened `rootPart.CFrame.LookVector` (docs/MovementSystem.md §6/§4.2,
 -- playtest feedback 2026-09-15) -- NOT a separate camera/input read of its
 -- own, deliberately: `FacingController` already keeps the rootPart's actual
 -- facing pointed at the camera's look direction every `RenderStepped` while
@@ -186,7 +186,7 @@ function CharacterMover:GetFacingDirection(): Vector3
 end
 
 -- A single direct, one-shot physical write to `AssemblyLinearVelocity`'s
--- horizontal axes (docs/MOVEMENT.md's Y-component equivalent already reads
+-- horizontal axes (docs/MovementSystem.md's Y-component equivalent already reads
 -- this same property elsewhere) -- NOT constraint-backed like
 -- SetVelocityOverride, deliberately: this is for SlideJump's boosted launch
 -- impulse, which fires once inside `SlideJumpState.Enter` the SAME frame it
@@ -205,11 +205,9 @@ function CharacterMover:SetHorizontalVelocity(velocity: Vector3)
 	rootPart.AssemblyLinearVelocity = Vector3.new(velocity.X, current.Y, velocity.Z)
 end
 
--- WallRun's cling-snap needs the character's real current position to
--- compute how far off the wall it is (Wall Run & Leap Mechanic Guideline
--- §3) -- same narrow-accessor treatment as GetHorizontalVelocity/
--- GetVerticalVelocity above, so states still never touch the RootPart
--- directly.
+-- WallRun's cling-snap needs the character's real current position to compute how far off the wall
+-- it is (docs/MovementSystem.md §4.5) -- same narrow-accessor treatment as GetHorizontalVelocity/
+-- GetVerticalVelocity above, so states still never touch the RootPart directly.
 function CharacterMover:GetPosition(): Vector3
 	local rootPart = self._humanoid.RootPart
 	if not rootPart then
@@ -218,7 +216,7 @@ function CharacterMover:GetPosition(): Vector3
 	return rootPart.Position
 end
 
--- WallRun's one-time Enter-time cling snap (guideline §3) -- a direct,
+-- WallRun's one-time Enter-time cling snap (docs/MovementSystem.md §4.5) -- a direct,
 -- one-shot position write via PivotTo (moves the whole Model, not a bare
 -- rootPart.CFrame write, so Motor6D-welded limbs never desync), same
 -- category of move as the existing dev-teleport handler, just a couple of
@@ -232,7 +230,7 @@ function CharacterMover:NudgeIntoWall(offset: Vector3)
 end
 
 -- Vertical-axis complement to SetHorizontalVelocity above (WallLeap's launch,
--- guideline §4) -- same direct one-shot write, deliberately NOT constraint-
+-- docs/MovementSystem.md §4.5) -- same direct one-shot write, deliberately NOT constraint-
 -- backed: WallLeapState's Enter transitions synchronously into Airborne in
 -- the same call (no real frame for Exit to ever clear a constraint), the
 -- identical reasoning SlideJumpState's own boost already established.
@@ -253,7 +251,7 @@ function CharacterMover:IsGrounded(): boolean
 	return GROUNDED_STATES[self._humanoid:GetState()] == true
 end
 
--- SlideJump's real entry gate (docs/MOVEMENT.md §9): by the time this reads
+-- SlideJump's real entry gate (docs/MovementSystem.md §4.2): by the time this reads
 -- true, `IsGrounded` has already flipped false too -- both read off the same
 -- single `Humanoid:GetState()`, which is only ever one state at a time -- so
 -- this is what actually distinguishes "jumped out of a Slide" from "slid off
@@ -262,7 +260,7 @@ function CharacterMover:IsJumping(): boolean
 	return self._humanoid:GetState() == Enum.HumanoidStateType.Jumping
 end
 
--- Real instant-in-time vertical speed (docs/MOVEMENT.md §10), mirroring
+-- Real instant-in-time vertical speed (docs/MovementSystem.md §4.4), mirroring
 -- `GetSpeed`'s own doc comment exactly -- just the `Y` component instead of
 -- the flattened `X`/`Z`. Landing-severity classification (Land vs LandHard)
 -- reads this the instant Airborne exits, not a nominal constant.
@@ -274,7 +272,7 @@ function CharacterMover:GetVerticalVelocity(): number
 	return rootPart.AssemblyLinearVelocity.Y
 end
 
--- "Can't jump while crouched" (docs/MOVEMENT.md §9) blocks the jump INPUT
+-- "Can't jump while crouched" (docs/MovementSystem.md §4.2) blocks the jump INPUT
 -- itself, not JumpPower/UseJumpPower -- those stay untouched so a real
 -- SlideJump boost (which drives off WalkSpeed carrying into a normal jump,
 -- see SlideJumpState) is unaffected. `ContextActionService:BindAction` on
@@ -310,7 +308,7 @@ function CharacterMover:SetJumpBlocked(blocked: boolean)
 end
 
 -- Drives the rootPart toward `velocity` along whichever axes `maxForce`
--- actually allows (TRAVERSAL-ROADMAP.md §2) -- an axis with zero max force is
+-- actually allows (docs/MovementSystem.md §6) -- an axis with zero max force is
 -- left entirely to the Humanoid's own WalkSpeed-driven movement, so e.g.
 -- DoubleJump's `Vector3.new(0, maxForce.Y, 0)` only ever touches vertical
 -- velocity. Omitting `maxForce` drives all three axes at full strength, for a
@@ -321,7 +319,7 @@ function CharacterMover:SetVelocityOverride(velocity: Vector3, maxForce: Vector3
 	self._linearVelocity.MaxAxesForce = maxForce or Vector3.new(math.huge, math.huge, math.huge)
 end
 
--- Leaves the constraint parented but inert (docs/MOVEMENT.md §11) -- zero
+-- Leaves the constraint parented but inert (docs/MovementSystem.md §4.3) -- zero
 -- MaxAxesForce means it applies no force at all until the next
 -- SetVelocityOverride, never destroyed/recreated between moves.
 function CharacterMover:ClearVelocityOverride()
@@ -329,11 +327,11 @@ function CharacterMover:ClearVelocityOverride()
 	self._linearVelocity.VectorVelocity = Vector3.zero
 end
 
--- Slide's own ground-normal probe (TRAVERSAL-ROADMAP.md §8 Phase 3, mechanic
+-- Slide's own ground-normal probe (docs/MovementSystem.md §4, mechanic
 -- 3a) -- delegates straight to `Shared/Movement/SpatialQueries.QueryGround`,
 -- the SAME pure function server-side resimulation calls, seeded from this
 -- CharacterMover's own rootPart/character so states never need direct
--- rootPart access themselves (docs/MOVEMENT.md §4's "states never touch the
+-- rootPart access themselves (docs/MovementSystem.md §6's "states never touch the
 -- Humanoid directly" boundary, extended to the RootPart it owns).
 function CharacterMover:QueryGround(castDistance: number?): SpatialQueries.GroundQueryResult?
 	local rootPart = self._humanoid.RootPart
@@ -343,7 +341,7 @@ function CharacterMover:QueryGround(castDistance: number?): SpatialQueries.Groun
 	return SpatialQueries.QueryGround(rootPart, self._humanoid.Parent :: Instance, castDistance)
 end
 
--- WallRun's own side-cast probe (Wall Run & Leap Mechanic Guideline §1) --
+-- WallRun's own side-cast probe (docs/MovementSystem.md §4.5) --
 -- same delegation shape as QueryGround above, just to SpatialQueries.QueryWallRun.
 function CharacterMover:QueryWallRun(
 	castRadius: number?,
@@ -361,7 +359,7 @@ function CharacterMover:QueryWallRun(
 	)
 end
 
--- WallCling's own forward probe (docs/WallClimbingPlan.md §7) -- same
+-- WallCling's own forward probe (docs/MovementSystem.md §4.6) -- same
 -- delegation shape as QueryGround/QueryWallRun above, just to
 -- SpatialQueries.castClingWall.
 function CharacterMover:QueryClingWall(): SpatialQueries.ClingWallHit?

@@ -17,7 +17,7 @@ type MovementState = MovementStates.MovementState
 type MovementContext = MovementTypes.MovementContext
 
 -- Short, not indefinite: these Animation instances always exist once
--- Assets/Animations/Movement.model.json is synced (docs/MOVEMENT.md §4), so this
+-- Assets/Animations/Movement.model.json is synced (docs/MovementSystem.md §6), so this
 -- only ever actually waits if that tree is missing or a name drifted out of sync
 -- with DIRECTION_NAMES below -- it should never block a real, up-to-date sync.
 local ANIMATION_LOOKUP_TIMEOUT_SECONDS = 1
@@ -49,7 +49,7 @@ LocomotionAnimator.__index = LocomotionAnimator
 
 -- Facing-relative angle from `facing` to `moveDirection`, bucketed into one of the
 -- 8 directions named above. 0deg (Forward) means moving the way you're facing;
--- positive angles go clockwise (docs/MOVEMENT.md §1: input direction relative to
+-- positive angles go clockwise (docs/MovementSystem.md §2: input direction relative to
 -- facing selects the animation, not world-space direction).
 local function resolveDirectionBucket(facing: Vector3, moveDirection: Vector3): string
 	local flatFacing = Vector3.new(facing.X, 0, facing.Z)
@@ -82,11 +82,11 @@ local function resolveDirectionBucket(facing: Vector3, moveDirection: Vector3): 
 end
 
 -- Looks up a real, Rojo-synced Animation instance under `container` rather than
--- building a throwaway one at runtime (docs/MOVEMENT.md §4) -- keeps AnimationIds
+-- building a throwaway one at runtime (docs/MovementSystem.md §6) -- keeps AnimationIds
 -- version-controlled and editable in Studio instead of hardcoded strings. A missing
 -- child (timeout) or one nobody's authored yet (blank AnimationId) are both treated
 -- as "not ready" and skipped, exactly like the old nil-string check did.
--- `looped` (docs/MOVEMENT.md §10) -- every original Step 3 slot was a
+-- `looped` (docs/MovementSystem.md §4.4) -- every original Step 3 slot was a
 -- continuous locomotion loop, so `Looped` was unconditionally forced true
 -- here (`AnimationTrack.Looped` defaults to false, which would play once and
 -- freeze). Jump/Land/LandHard are one-shots and need that default false
@@ -140,7 +140,7 @@ end
 
 -- Picks/blends among Idle/Run/Sprint's single clip or Walk's 8 directional anims
 -- from (facing-relative input angle, current state); reads the FSM and
--- InputController, never writes to either (docs/MOVEMENT.md §1/§3). Only Walk is
+-- InputController, never writes to either (docs/MovementSystem.md §2). Only Walk is
 -- directional -- Run has one clip regardless of facing-relative angle, same as
 -- Sprint. "Blends" here means a simple crossfade between whichever single track is
 -- currently selected and the next -- not a weighted multi-track blend space.
@@ -165,17 +165,14 @@ function LocomotionAnimator.new(
 	self._getWallRunSide = getWallRunSide
 	self._getLastLandingWasMedium = getLastLandingWasMedium
 	self._currentKey = nil :: string?
-	-- Which side WallRun was last locked to (Wall Run & Leap Mechanic
-	-- Guideline §1/§3, animation wiring 2026-09-18) -- captured the instant
-	-- WallRun is entered (`fsm.changed` below), not read live every frame,
-	-- because `WallRunState`'s own module-scope entry snapshot is already
-	-- nulled by `WallRunState.Exit` before this animator ever gets a chance
-	-- to observe `previous == WallLeap` (WallLeap's own transition is
-	-- reentrant -- see WallLeapState's own doc comment -- so by the time ANY
-	-- `fsm.changed` handler here runs for it, WallRun has already fully
-	-- exited). Reused for WallLeap's one-shot hold below, since a leap's
-	-- side is definitionally whichever side the WallRun it launched from was
-	-- on.
+	-- Which side WallRun was last locked to (docs/MovementSystem.md §4.5, animation wiring
+	-- 2026-09-18) -- captured the instant WallRun is entered (`fsm.changed` below), not read live
+	-- every frame, because `WallRunState`'s own module-scope entry snapshot is already nulled by
+	-- `WallRunState.Exit` before this animator ever gets a chance to observe `previous == WallLeap`
+	-- (WallLeap's own transition is reentrant -- see WallLeapState's own doc comment -- so by the
+	-- time ANY `fsm.changed` handler here runs for it, WallRun has already fully exited). Reused
+	-- for WallLeap's one-shot hold below, since a leap's side is definitionally whichever side the
+	-- WallRun it launched from was on.
 	self._lastWallRunSide = nil :: ("Left" | "Right")?
 	-- One-shot-on-exit hold, shared by every synchronous-frame/instant-cue
 	-- state (Land, SlideJump): when set, `_update` plays `.key`
@@ -211,7 +208,7 @@ function LocomotionAnimator.new(
 	self._tracks.Idle = loadTrack(animator, ANIMATIONS_ROOT, "Idle", self._trove, true)
 	self._tracks.Run = loadTrack(animator, ANIMATIONS_ROOT, "Run", self._trove, true)
 	self._tracks.Sprint = loadTrack(animator, ANIMATIONS_ROOT, "Sprint", self._trove, true)
-	-- CrouchIdle/CrouchWalk/Slide (docs/MOVEMENT.md §9): single non-directional
+	-- CrouchIdle/CrouchWalk/Slide (docs/MovementSystem.md §4.2): single non-directional
 	-- clips, same as Idle/Run/Sprint above -- read from ANIMATIONS_ROOT, not
 	-- WALK_FOLDER, even though they were first authored as stray children of the
 	-- Walk folder (moved out in Assets/Animations/Movement.model.json alongside
@@ -224,7 +221,7 @@ function LocomotionAnimator.new(
 		self._tracks["Walk_" .. direction] =
 			loadTrack(animator, WALK_FOLDER, direction, self._trove, true)
 	end
-	-- Landing/falling (Traversal Roadmap §8 Phase 0, docs/MOVEMENT.md §10):
+	-- Landing/falling (docs/MovementSystem.md §4, docs/MovementSystem.md §4.4):
 	-- Jump/Fall read every frame while Airborne (below); Land/LandHard are
 	-- one-shots played on the Airborne->grounded edge. Fall stays looped (a
 	-- fall can last arbitrarily long); Jump/Land/LandHard do not.
@@ -234,11 +231,11 @@ function LocomotionAnimator.new(
 	self._tracks.Land = loadTrack(animator, ANIMATIONS_ROOT, "Land", self._trove, false)
 	self._tracks.LandMedium = loadTrack(animator, ANIMATIONS_ROOT, "LandMedium", self._trove, false)
 	self._tracks.LandHard = loadTrack(animator, ANIMATIONS_ROOT, "LandHard", self._trove, false)
-	-- DoubleJump (TRAVERSAL-ROADMAP.md Phase 1): a one-shot, not looped -- the
+	-- DoubleJump (docs/MovementSystem.md §4.3): a one-shot, not looped -- the
 	-- impulse itself is a short, fixed-duration decay (DoubleJumpDecayDurationSeconds),
 	-- same treatment as Jump rather than the indefinite Fall loop.
 	self._tracks.DoubleJump = loadTrack(animator, ANIMATIONS_ROOT, "DoubleJump", self._trove, false)
-	-- WallRun/WallLeap (Wall Run & Leap Mechanic Guideline, animation wiring
+	-- WallRun/WallLeap (docs/MovementSystem.md §4.5, animation wiring
 	-- 2026-09-18): WallRun is a sustained hold, looped like Run/Sprint/Slide;
 	-- WallLeap is a single launch impulse, one-shot like Jump/DoubleJump.
 	-- Side-specific (Left/Right), same reasoning Walk's 8 directional clips
@@ -253,7 +250,7 @@ function LocomotionAnimator.new(
 		loadTrack(animator, ANIMATIONS_ROOT, "WallLeapLeft", self._trove, false)
 	self._tracks.WallLeapRight =
 		loadTrack(animator, ANIMATIONS_ROOT, "WallLeapRight", self._trove, false)
-	-- WallCling/WallBoost (docs/WallClimbingPlan.md §10, animation wiring
+	-- WallCling/WallBoost (docs/MovementSystem.md §4.6, animation wiring
 	-- 2026-09-20): unlike WallRun/WallLeap, neither is handed/directional
 	-- (cling is head-on, boost is a straight vertical launch), so both are a
 	-- single clip, same treatment as Idle/Run/Slide/Jump/DoubleJump. WallCling
@@ -263,7 +260,7 @@ function LocomotionAnimator.new(
 	-- transition, so per-state resolution below observes it directly on a
 	-- real rendered frame -- no `_transientHold` bridge needed, same reasoning
 	-- HardLanding already gets. Reuses the pre-existing "WallLatch" asset slot
-	-- (renamed to WallCling) -- Wall Run & Leap Mechanic Guideline.md
+	-- (renamed to WallCling) -- docs/MovementSystem.md §4.5
 	-- confirms it was reserved for this exact mechanic under its original
 	-- name and deliberately left alone when WallRun/WallLeap shipped.
 	self._tracks.WallCling = loadTrack(animator, ANIMATIONS_ROOT, "WallCling", self._trove, true)
@@ -295,8 +292,8 @@ function LocomotionAnimator.new(
 		end
 	end)
 
-	-- Landing detection (docs/MOVEMENT.md §10; corrected TRAVERSAL-ROADMAP.md
-	-- Phase 1; simplified again once HardLanding became a real FSM state): an
+	-- Landing detection (docs/MovementSystem.md §4.4; corrected docs/MovementSystem.md §4.3;
+	-- simplified again once HardLanding became a real FSM state): an
 	-- edge out of an airborne-family state (Airborne or DoubleJump) is only a
 	-- LANDING if it actually arrives grounded -- checking `previous` alone
 	-- stopped being sufficient the moment `DoubleJump` became a real Airborne
@@ -439,7 +436,7 @@ function LocomotionAnimator:_update()
 		local moveIntent = self._inputController:GetMoveIntent()
 		if moveIntent.direction.Magnitude > 0 then
 			-- Bucketing only matters while the camera is locked to the character
-			-- (docs/MOVEMENT.md §4) -- unlocked, AutoRotate swings facing toward
+			-- (docs/MovementSystem.md §6) -- unlocked, AutoRotate swings facing toward
 			-- movement direction gradually rather than snapping, and during that
 			-- swing the angle sweeps through several buckets in quick succession,
 			-- each one stopping/crossfading a new track (stutter, fixed
@@ -454,7 +451,7 @@ function LocomotionAnimator:_update()
 			key = "Walk_" .. bucket
 		end
 	elseif state == MovementStates.Airborne then
-		-- Rising vs falling (docs/MOVEMENT.md §10): `Humanoid:GetState()`
+		-- Rising vs falling (docs/MovementSystem.md §4.4): `Humanoid:GetState()`
 		-- already distinguishes `Jumping` (ascent) from `Freefall` (descent) --
 		-- the same read `CharacterMover:IsJumping()` uses for SlideJump's entry
 		-- gate. Anything else (e.g. the single tick `Landed` reports before the
@@ -472,7 +469,7 @@ function LocomotionAnimator:_update()
 	elseif state == MovementStates.WallRun then
 		-- `_lastWallRunSide`, not a live re-query -- see its own doc comment;
 		-- side is locked at Entry and never changes mid-hold by design
-		-- anyway (guideline §0), so there's nothing "live" to gain here.
+		-- anyway (docs/MovementSystem.md §13), so there's nothing "live" to gain here.
 		key = if self._lastWallRunSide == "Left"
 			then "WallRunLeft"
 			elseif self._lastWallRunSide == "Right" then "WallRunRight"
@@ -496,7 +493,7 @@ function LocomotionAnimator:_playKey(key: string?)
 	end
 	self._currentKey = key
 
-	-- Live-tunable (docs/MOVEMENT.md §8, moved off a module-local constant in
+	-- Live-tunable (docs/MovementSystem.md §10, moved off a module-local constant in
 	-- the 2026-09-15 cleanup pass, same TuningSnapshot pipeline
 	-- LandingAnimationHoldSeconds already uses) -- read fresh per call rather
 	-- than cached, so a Studio Tuning-tab change takes effect on the very next

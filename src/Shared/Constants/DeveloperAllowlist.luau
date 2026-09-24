@@ -14,7 +14,7 @@ local DeveloperAllowlist = {}
 -- Shared between client and server so the two can never drift: the client uses
 -- this to decide whether to even activate the debug overlay, the server uses the
 -- exact same check as the actual security boundary for RequestDevTeleport (see
--- docs/MOVEMENT.md §5) -- client-side gating alone is never sufficient, but
+-- docs/MovementSystem.md §8) -- client-side gating alone is never sufficient, but
 -- reusing this one function means both sides agree on what "developer" means.
 -- `RunService:IsStudio()` covers Studio/Team Test play without needing every
 -- teammate's UserId added by hand; the allowlist covers verifying this on a real

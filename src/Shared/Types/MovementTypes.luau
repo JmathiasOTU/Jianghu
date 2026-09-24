@@ -8,7 +8,7 @@ local SpatialQueries = require(ReplicatedStorage.Shared.Movement.SpatialQueries)
 -- `forward`/`backward`/`strafeLeft`/`strafeRight` are the raw WASD axis holds, kept
 -- alongside the resolved `direction` because Sprint's continuation rule cares about
 -- the raw forward key specifically (tolerates forward-diagonal, drops on backpedal
--- or pure strafe) -- see docs/MOVEMENT.md §2. `direction` is the camera-relative,
+-- or pure strafe) -- see docs/MovementSystem.md §3. `direction` is the camera-relative,
 -- world-space vector actually driving movement.
 export type MoveIntent = {
 	direction: Vector3,
@@ -20,13 +20,13 @@ export type MoveIntent = {
 
 -- `constants` is this session's EFFECTIVE movement tuning (live per-session
 -- overrides merged over MovementConstants, or MovementConstants unmodified --
--- see Shared/Movement/MovementTuning.luau, docs/MOVEMENT.md §8). Added here,
+-- see Shared/Movement/MovementTuning.luau, docs/MovementSystem.md §10). Added here,
 -- not read directly off MovementConstants, so Shared/Movement/StateRules.luau's
 -- CanEnter predicates (e.g. Sprint's dwell check) stay pure functions of
 -- `context` alone -- both client and server build `constants` from the exact
 -- same source (their own session's tuning state) before calling into
 -- StateRules, so this can never itself become a client/server divergence.
--- `jumping` (docs/MOVEMENT.md §9, Crouch/Slide slice) is the Humanoid's own
+-- `jumping` (docs/MovementSystem.md §4.2, Crouch/Slide slice) is the Humanoid's own
 -- `Jumping` state, read the same way `grounded` already is -- both sides
 -- derive it from the same already-replicated `Humanoid:GetState()`, so it's a
 -- shared context field rather than something only one side computes.
@@ -37,10 +37,10 @@ export type MoveIntent = {
 -- from anything Roblox already replicates (unlike `moveIntent`/`grounded`/
 -- `jumping`, all read off `Humanoid`) -- the server only has it because the
 -- client explicitly tells it (`RequestMovementTransition`'s "CrouchDown"/
--- "CrouchUp" claims, docs/MOVEMENT.md §9), stored per-session
+-- "CrouchUp" claims, docs/MovementSystem.md §4.2), stored per-session
 -- (`PlayerSession.crouchHeld`) rather than derived fresh each frame the way
 -- everything else in this type is.
--- `doubleJumpUsed` (TRAVERSAL-ROADMAP.md §4, Phase 1) is the one other signal
+-- `doubleJumpUsed` (docs/MovementSystem.md §5, Phase 1) is the one other signal
 -- in this type that isn't derivable fresh from Humanoid replication each
 -- frame -- like `crouchHeld`, it has to be tracked as per-life state by
 -- whoever owns the FSM lifecycle (`Movement/init.luau` client-side,
@@ -68,21 +68,21 @@ export type MoveIntent = {
 -- ResolveLandingTarget` (and its server mirror) reads this against
 -- `constants.HardLandingHeightThreshold` to decide whether a landing forces
 -- the `HardLanding` lock instead of resolving normally.
--- `horizontalVelocity` (Wall Run & Leap Mechanic Guideline §2) is the real
+-- `horizontalVelocity` (docs/MovementSystem.md §4.5) is the real
 -- flattened AssemblyLinearVelocity, read fresh by each side from its own
 -- trusted source (client: CharacterMover:GetHorizontalVelocity, server: its
 -- own rootPart read) -- never derived from moveIntent, which is INPUT, not
 -- actual physical velocity. CanEnter[WallRun]'s speed gate and
 -- TraversalMath.WallRunTangent's momentum-agreement sign both need the real
 -- vector, not the intent.
--- `wallRunQuery` (Wall Run & Leap Mechanic Guideline §1) is this frame's
+-- `wallRunQuery` (docs/MovementSystem.md §4.5) is this frame's
 -- throttled side-cast result -- populated by each side from its own probe
 -- (SpatialQueries.QueryWallRun) BEFORE calling into StateRules, same
 -- "computed by the caller, never inside StateRules itself" treatment every
 -- other spatial-claim field in this codebase already gets. nil whenever no
 -- wall is currently in range on either side, or while not airborne (both
 -- sides only probe at all while `not grounded`).
--- `wallClingQuery` (docs/WallClimbingPlan.md §7/§9) is this frame's cling-wall
+-- `wallClingQuery` (docs/MovementSystem.md §4.6/§5) is this frame's cling-wall
 -- probe -- same "computed by the caller, never inside StateRules itself"
 -- treatment as `wallRunQuery` right above: each side populates it from its
 -- own `SpatialQueries.castClingWall` call BEFORE building context, so
@@ -94,28 +94,31 @@ export type MoveIntent = {
 -- instead, the same "cast finds the wall, CanEnter judges legality against a
 -- LIVE tunable" split `wallRunQuery`/`CanEnter[WallRun]` already established.
 -- `facingDirection` (below) is what that check reads.
--- `facingDirection` (docs/WallClimbingPlan.md §2/§7) is each side's own real
+-- `facingDirection` (docs/MovementSystem.md §4.6) is each side's own real
 -- current facing (client: `CharacterMover:GetFacingDirection()`, server: its
 -- own `rootPart.CFrame.LookVector`) -- optional so existing `buildContext`
 -- call sites don't need updating until the server-side probe lands; nil is
 -- treated as "can't verify facing," which fails the check closed rather than
 -- open.
 -- `wallClingLockoutUntil` is this life's/session's own server-owned re-grab
--- deadline (docs/WallClimbingPlan.md §3.5/§4) -- optional so existing
+-- deadline (docs/MovementSystem.md §4.6) -- optional so existing
 -- `buildContext` call sites don't need updating until the state that reads it
 -- actually lands; nil is treated as "no lockout in effect."
--- `lastWallLeapWall` (docs/WallClimbingPlan.md §2/§9) is the physical
+-- `lastWallLeapWall` (docs/MovementSystem.md §4.6/§5) is the physical
 -- `BasePart` this life/session most recently wall-leapt from, cleared on
 -- landing or on touching a different wall -- there is no pre-existing
 -- "wall leap memory" field to reuse (`WallRunQueryResult` never tracked the
 -- hit instance before this), so this is a new field, not a repurposed one.
--- `wallClingBoostUsed` (docs/WallClimbingPlan.md §4/§9) is whether the
+-- `wallClingBoostUsed` (docs/MovementSystem.md §4.6/§5) is whether the
 -- current cling has already spent its one free boost -- per-cling, not
 -- per-life, set false on every WallCling entry and true the instant WallBoost
 -- is entered, same tracked-not-derived treatment as `doubleJumpUsed`.
 -- Optional (unlike `doubleJumpUsed`) since it only matters once WallCling
 -- actually exists as a reachable state -- nil reads as "not used," matching
 -- `CanEnter[WallBoost]`'s own `not context.wallClingBoostUsed` check.
+-- `wallClingElapsed` is how long the current cling has lasted, from each
+-- side's own cling entry (nil when not clinging); `CanEnter[WallBoost]`
+-- requires `WallBoostMinClingSeconds` of it (docs/MovementSystem.md §4.6).
 -- `qinggong` (§0/§3) is the resource gate Vault (and any future Qinggong
 -- move) reads --
 -- still an open design decision (is this the same Qi pool combat will spend,
@@ -154,6 +157,7 @@ export type MovementContext = {
 	facingDirection: Vector3?,
 	wallClingLockoutUntil: number?,
 	wallClingBoostUsed: boolean?,
+	wallClingElapsed: number?,
 	lastWallLeapWall: BasePart?,
 	qinggong: number,
 	cameraLocked: boolean,

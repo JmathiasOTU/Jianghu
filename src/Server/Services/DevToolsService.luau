@@ -45,7 +45,7 @@ local function isFiniteVector(position: vector): boolean
 end
 
 -- The one, single-source-of-truth developer gate every dev-only remote in this
--- codebase routes through (docs/MOVEMENT.md §8) -- extracted 2026-09-14 BEFORE
+-- codebase routes through (docs/MovementSystem.md §10) -- extracted 2026-09-14 BEFORE
 -- any remote past RequestDevTeleport was added, specifically so the
 -- `DeveloperAllowlist.IsDeveloper` check can never be forgotten on a later
 -- remote (live tuning, noclip, ...): it's now structurally impossible to reach
@@ -64,7 +64,7 @@ function DevToolsService.RegisterDevOnly<Args...>(
 	end
 end
 
--- Migrated onto RegisterDevOnly first (docs/MOVEMENT.md §8), as the proof it
+-- Migrated onto RegisterDevOnly first (docs/MovementSystem.md §10), as the proof it
 -- behaves identically to the inline check it replaces, before any other
 -- handler adopts it.
 local onRequestDevTeleport = DevToolsService.RegisterDevOnly(
@@ -103,7 +103,7 @@ local onRequestDevTeleport = DevToolsService.RegisterDevOnly(
 	end
 )
 
--- Noclip/fly scouting tool (docs/MOVEMENT.md §8). Collision is disabled here,
+-- Noclip/fly scouting tool (docs/MovementSystem.md §10). Collision is disabled here,
 -- server-side, on every BasePart of the character -- the actual fly movement
 -- is driven client-side (Client/Controllers/Movement/NoclipController.luau)
 -- since the player's own character is already network-owned by that client for
@@ -155,11 +155,10 @@ local onRequestSetNoclip = DevToolsService.RegisterDevOnly(
 	end
 )
 
--- F4 overlay open/close (docs/MOVEMENT.md §10, `TRAVERSAL-ROADMAP.md` Phase
--- 0 cleanup). `DebugOverlayState` is what `MovementValidationService.
--- broadcastDebugState` gates its per-Heartbeat broadcast on -- without this,
--- that broadcast runs unconditionally for every connected developer
--- regardless of whether their panel is even visible.
+-- F4 overlay open/close (docs/MovementSystem.md §4.4, `docs/MovementSystem.md` §4.4 cleanup).
+-- `DebugOverlayState` is what `MovementValidationService. broadcastDebugState` gates its
+-- per-Heartbeat broadcast on -- without this, that broadcast runs unconditionally for every
+-- connected developer regardless of whether their panel is even visible.
 local onRequestSetDebugOverlayOpen = DevToolsService.RegisterDevOnly(
 	function(player: Player, isOpen: boolean)
 		local limiter = debugOverlayOpenRateLimiters[player]

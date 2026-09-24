@@ -1,6 +1,6 @@
 --!strict
 
--- Minimal per-key violation counter/timestamp log (docs/MOVEMENT.md §5) -- not a
+-- Minimal per-key violation counter/timestamp log (docs/MovementSystem.md §8) -- not a
 -- punishment system, just a record so a validation service has something to check
 -- (and later act on) instead of silently correcting forever with no trace. Generic
 -- on purpose: doesn't know anything about movement, players, or what "a violation"
@@ -9,7 +9,7 @@
 
 -- One individual violation's detail data -- generic on purpose, same as the
 -- rest of this module: the caller decides what a "detail" means (for
--- MovementValidationService.enforceSpeedSanity, docs/MOVEMENT.md §5/§8, it's
+-- MovementValidationService.enforceSpeedSanity, docs/MovementSystem.md §8/§10, it's
 -- flatDelta/maxDistance/elapsed, the same numbers SPEED_SANITY_DEBUG_LOGGING
 -- already printed).
 export type ViolationDetail = { [string]: number }
@@ -23,7 +23,7 @@ export type Violation = {
 }
 
 -- Bounded per-key history length -- "a few recent entries," not a full
--- lifetime log (docs/MOVEMENT.md §8): `count` above already covers the
+-- lifetime log (docs/MovementSystem.md §10): `count` above already covers the
 -- lifetime total, this is only ever for a debug overlay's scrollback.
 local HISTORY_LIMIT = 5
 

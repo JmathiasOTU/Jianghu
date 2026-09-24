@@ -15,13 +15,13 @@ function SprintState.Enter(context: ClientMovementContext)
 	context.characterMover:SetSpeed(context.constants.SprintSpeed)
 end
 
--- Sprint vs. strafing (resolved 2026-09-13, docs/MOVEMENT.md §2): tolerates
+-- Sprint vs. strafing (resolved 2026-09-13, docs/MovementSystem.md §3): tolerates
 -- forward-diagonal input, drops back to Run on backpedal or pure strafe. Checked
 -- separately from "no input at all" -> Idle (bug fixed 2026-09-13): Run.CanEnter
 -- requires nonzero move input, so releasing every key and attempting
 -- Sprint -> Run directly would fail CanEnter and leave the FSM stuck in Sprint --
 -- attempting Idle first, before checking `forward`, avoids that dead end.
--- Crouch (docs/MOVEMENT.md §9) is checked before the no-input/backpedal
+-- Crouch (docs/MovementSystem.md §4.2) is checked before the no-input/backpedal
 -- checks -- pressing Ctrl while Sprinting slides immediately, same priority-
 -- over-the-normal-family reasoning as everywhere else this check appears.
 function SprintState.Update(_dt: number, context: ClientMovementContext)

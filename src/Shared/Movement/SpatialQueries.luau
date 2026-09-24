@@ -15,7 +15,7 @@ local MovementConstants = require(ReplicatedStorage.Shared.Constants.MovementCon
 -- pattern shows up.
 local WALLCLING_DEBUG_LOGGING = false
 
--- Pure geometry reads (TRAVERSAL-ROADMAP.md §3) -- called identically by
+-- Pure geometry reads (docs/MovementSystem.md §2) -- called identically by
 -- client prediction (via `CharacterMover:QueryGround`) and server
 -- resimulation (`MovementValidationService`), so both sides can only ever
 -- agree or disagree about the SAME raycast, never two independently
@@ -48,7 +48,7 @@ export type WallRunQueryResult = {
 	position: Vector3,
 	normal: Vector3,
 	side: "Left" | "Right",
-	-- The hit part itself (docs/WallClimbingPlan.md §2/§9) -- added alongside
+	-- The hit part itself (docs/MovementSystem.md §4.6/§5) -- added alongside
 	-- WallCling so a wall-leap's launch wall can be remembered (the "cling
 	-- back onto the wall you just leapt from" block). Existing WallRun/WallLeap
 	-- callers only ever read position/normal/side, so this is purely additive.
@@ -88,8 +88,19 @@ function SpatialQueries.QueryGround(
 end
 
 export type SupportHit = {
+	-- What the character is standing on, so the server can decide whether
+	-- that floor's velocity is trustworthy (re-audit N-003).
+	floor: BasePart,
 	floorVelocity: Vector3,
 }
+
+-- The rig's own yaw, without pitch/roll, at the root (re-audit N-005): the
+-- leg footprint turns with the character, so standing on a ledge edge reads
+-- the same whichever way the player faces.
+local function footprintOrigin(rootPart: BasePart): CFrame
+	local _, yaw, _ = rootPart.CFrame:ToEulerAnglesYXZ()
+	return CFrame.new(rootPart.Position) * CFrame.fromEulerAnglesYXZ(0, yaw, 0)
+end
 
 -- Server-side "is this character actually standing on something" check
 -- (audit M-004): the Humanoid state label is written by the network-owning
@@ -97,32 +108,67 @@ export type SupportHit = {
 -- own. Sweeps the R6 leg footprint straight down from the root; only
 -- collidable, non-water geometry counts, so a CanCollide=false trigger volume
 -- can't be "stood on". Also returns the floor's own velocity at the contact
--- point (audit M-014): a character standing on a moving platform, a vehicle
--- seat or another player is carried at that speed on top of its own.
+-- point (audit M-014); whether to believe it is the caller's call (N-003).
 function SpatialQueries.QuerySupport(rootPart: BasePart, filterInstance: Instance): SupportHit?
 	local params = excluding(supportParams, filterInstance)
 
-	local origin = CFrame.new(rootPart.Position)
 	local direction = Vector3.new(0, -MovementConstants.GroundQueryCastDistance, 0)
-	local result =
-		Workspace:Blockcast(origin, MovementConstants.GroundSupportFootprint, direction, params)
+	local result = Workspace:Blockcast(
+		footprintOrigin(rootPart),
+		MovementConstants.GroundSupportFootprint,
+		direction,
+		params
+	)
 	if not result then
 		return nil
 	end
 	local floor = result.Instance
+	if not floor:IsA("BasePart") then
+		return nil
+	end
 	return {
-		floorVelocity = if floor:IsA("BasePart")
-			then floor:GetVelocityAtPosition(result.Position)
-			else Vector3.zero,
+		floor = floor,
+		floorVelocity = floor:GetVelocityAtPosition(result.Position),
 	}
 end
 
--- Is there something collidable right in front of the torso to climb (ladder
--- rungs, a TrussPart)? The server's check that a Humanoid claiming the
--- Climbing state is really on something climbable (designer answer
--- 2026-09-24: ladders are in scope). Deliberately looser than castClingWall
--- -- rungs can be thin, round or unanchored -- because it only unlocks the
--- climb-rate allowance, never a velocity or a cap raise.
+-- Top surface of whatever collidable geometry lies under the leg footprint
+-- within `distance` below the root, or nil. The vertical ceiling uses it so a
+-- correction never puts the root lower than standing height on that surface.
+function SpatialQueries.QueryFloorBelow(
+	rootPart: BasePart,
+	filterInstance: Instance,
+	distance: number
+): number?
+	local params = excluding(supportParams, filterInstance)
+
+	local result = Workspace:Blockcast(
+		footprintOrigin(rootPart),
+		MovementConstants.GroundSupportFootprint,
+		Vector3.new(0, -distance, 0),
+		params
+	)
+	return if result then result.Position.Y else nil
+end
+
+-- Has the level author marked this part, or a model it's in, as climbable?
+local function isTaggedClimbable(instance: Instance): boolean
+	local current: Instance? = instance
+	while current and current ~= Workspace do
+		if current:HasTag(MovementConstants.ClimbableTag) then
+			return true
+		end
+		current = current.Parent
+	end
+	return false
+end
+
+-- Is there a ladder right in front of the torso? The server's check that a
+-- Humanoid claiming the Climbing state is really on one (designer answer
+-- 2026-09-24: ladders are in scope). Only a TrussPart or geometry tagged
+-- `ClimbableTag` counts (re-audit N-004): the Climbing label is written by
+-- the client, so accepting any wall would let it scale anything at run speed.
+-- Rungs can be thin, round or unanchored, so no anchoring gate here.
 function SpatialQueries.QueryClimbable(rootPart: BasePart, filterInstance: Instance): boolean
 	local params = excluding(supportParams, filterInstance)
 
@@ -134,12 +180,16 @@ function SpatialQueries.QueryClimbable(rootPart: BasePart, filterInstance: Insta
 	flatLook = flatLook.Unit
 
 	local origin = CFrame.lookAt(rootPart.Position, rootPart.Position + flatLook)
-	return Workspace:Blockcast(
+	local result = Workspace:Blockcast(
 		origin,
 		MovementConstants.WallClingCastSize,
 		flatLook * MovementConstants.WallClingDistance,
 		params
-	) ~= nil
+	)
+	if not result then
+		return false
+	end
+	return result.Instance:IsA("TrussPart") or isTaggedClimbable(result.Instance)
 end
 
 -- Is the root inside terrain water? The server's check that a Humanoid
@@ -163,10 +213,10 @@ function SpatialQueries.IsInWater(position: Vector3): boolean
 	return false
 end
 
--- WallRun's own entry/sustain probe (Wall Run & Leap Mechanic Guideline §1) --
+-- WallRun's own entry/sustain probe (docs/MovementSystem.md §4.5) --
 -- a side-cast along the root part's own RightVector, not a forward cast, so a
 -- shallow-angle approach along the wall still hits it (the reverted forward
--- QueryWall never did, see docs/MOVEMENT.md §13). Sphere-shaped so gaps/trim/
+-- QueryWall never did, see docs/MovementSystem.md §4.5). Sphere-shaped so gaps/trim/
 -- rounded geometry still register, unlike a thin raycast. Closer side wins if
 -- both hit (e.g. a narrow alley).
 function SpatialQueries.QueryWallRun(
@@ -223,7 +273,7 @@ function SpatialQueries.QueryWallRun(
 	return rightHit or leftHit
 end
 
--- WallCling's facing-angle gate (docs/WallClimbingPlan.md §2/§7): head-on to
+-- WallCling's facing-angle gate (docs/MovementSystem.md §4.6): head-on to
 -- the wall, not side-on like wall run -- angle between the flattened look
 -- vector and the flattened INWARD wall direction (negated normal), in
 -- degrees. Zero on either flattened vector (looking straight up/down, or a
@@ -243,7 +293,7 @@ function SpatialQueries.facingAngleToWallDegrees(lookVector: Vector3, wallNormal
 	return math.deg(math.acos(cosine))
 end
 
--- WallCling's own entry/sustain probe (docs/WallClimbingPlan.md §7) -- same
+-- WallCling's own entry/sustain probe (docs/MovementSystem.md §4.6) -- same
 -- calling convention as QueryGround/QueryWallRun above: takes the rootPart
 -- and the caller's own filter instance, derives its own RaycastParams and
 -- look direction (`rootPart.CFrame.LookVector`, flattened) rather than
@@ -260,7 +310,7 @@ end
 -- QueryWallRun/CanEnter[WallRun] already established: this cast finds the
 -- wall, `CanEnter[WallCling]` judges whether the approach angle is good
 -- enough against `constants.WallClingMaxFacingAngleDegrees` (a live-tunable
--- gameplay-feel dial, docs/WallClimbingPlan.md's own F4 tuning request) --
+-- gameplay-feel dial, docs/MovementSystem.md §4.6's own F4 tuning request) --
 -- baking it in here would make it permanently fixed instead. No slack/options
 -- parameter on the structural side -- client and server run the identical
 -- thresholds there (docs/ARCHITECTURE.md §9).

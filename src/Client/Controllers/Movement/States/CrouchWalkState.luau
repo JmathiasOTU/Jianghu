@@ -7,7 +7,7 @@ local StateRules = require(ReplicatedStorage.Shared.Movement.StateRules)
 local ClientMovementContextModule = require(script.Parent.Parent.ClientMovementContext)
 type ClientMovementContext = ClientMovementContextModule.ClientMovementContext
 
--- Mirrors WalkState exactly (docs/MOVEMENT.md §9) -- see CrouchIdleState for
+-- Mirrors WalkState exactly (docs/MovementSystem.md §4.2) -- see CrouchIdleState for
 -- the shared crouch-family reasoning (jump-block, ledge-fall-is-not-a-jump).
 local CrouchWalkState = {}
 

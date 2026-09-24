@@ -5,7 +5,7 @@ local Symbol = require(ReplicatedStorage.Packages.Symbol)
 
 export type WallClingExitReason = typeof(Symbol())
 
--- WallCling exit reasons (docs/WallClimbingPlan.md §4) -- Symbols, never raw
+-- WallCling exit reasons (docs/MovementSystem.md §4.6) -- Symbols, never raw
 -- strings (docs/ARCHITECTURE.md §2), so a typo fails to compile rather than
 -- silently tagging a lockout with the wrong reason. Only Timeout/Dropped/
 -- Boosted apply a lockout (see MovementConstants.WallCling{Timeout,Drop}Lockout

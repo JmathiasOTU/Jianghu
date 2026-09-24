@@ -17,13 +17,13 @@ local TuningSnapshot = require(script.Parent.Movement.TuningSnapshot)
 
 type TunableConstantName = MovementTuning.TunableConstantName
 
--- F4, developer-only debug overlay (docs/MOVEMENT.md). The instance tree itself
+-- F4, developer-only debug overlay (docs/MovementSystem.md). The instance tree itself
 -- is hand-built and checked in as Assets/UI/MovementDebugOverlay.model.json
 -- (docs/ARCHITECTURE.md §8: GUIs are hand-built, scripts only WaitForChild into
 -- existing instances) -- this controller never constructs a single UI element,
 -- it only reads live state into pre-existing TextLabels and reacts to
 -- pre-existing buttons. Bounded-history lists (state transitions, network
--- claims, violations, waypoints -- docs/MOVEMENT.md §8) are the same pattern
+-- claims, violations, waypoints -- docs/MovementSystem.md §10) are the same pattern
 -- applied to a list: a fixed-size pool of pre-built rows the controller shows/
 -- hides and re-labels, never a `:Clone()`/`Instance.new()` runtime-built row.
 local DebugOverlayController = {}
@@ -37,7 +37,7 @@ local TEXT_MUTED = Color3.fromRGB(138, 143, 152)
 local ACCENT = Color3.fromRGB(89, 173, 191)
 local BG_DARK = Color3.fromRGB(13, 14, 18)
 
--- Session-only (docs/MOVEMENT.md §8) -- deliberately not ProfileStore-backed,
+-- Session-only (docs/MovementSystem.md §10) -- deliberately not ProfileStore-backed,
 -- same "no reason to touch persistence for this" reasoning as the panel's own
 -- dragged position below. Capped at a fixed number so the row pool in
 -- MovementDebugOverlay.model.json (WaypointsSection.List.Row1..Row8) can stay a
@@ -47,8 +47,8 @@ local WAYPOINT_LIMIT = 8
 
 -- Mirrors network.zap's RequestMovementTransition claim window loosely -- not a
 -- protocol timeout, just "how long before an unreflected claim in the overlay's
--- own log is shown as likely-rejected rather than still-pending" (docs/MOVEMENT.md
--- §8). Comfortably above CLAIM_RESYNC_INTERVAL_SECONDS (Movement/init.luau) so a
+-- own log is shown as likely-rejected rather than still-pending" (docs/MovementSystem.md §10).
+-- Comfortably above CLAIM_RESYNC_INTERVAL_SECONDS (Movement/init.luau) so a
 -- claim that's merely waiting for its next periodic resend isn't flagged early.
 local CLAIM_REFLECT_TIMEOUT_SECONDS = 2
 
@@ -146,7 +146,7 @@ function DebugOverlayController.Init()
 	-- Developer-only, enforced here too (not just server-side) so a normal
 	-- player's client never wires up input handling or shows the corner tab at
 	-- all -- the ACTUAL security boundary is still every dev-only remote's
-	-- server-side check (DevToolsService.RegisterDevOnly, docs/MOVEMENT.md §8),
+	-- server-side check (DevToolsService.RegisterDevOnly, docs/MovementSystem.md §10),
 	-- this is just so the overlay isn't visible clutter for everyone. Same
 	-- `DeveloperAllowlist.IsDeveloper` check as the server, so the two can never
 	-- disagree about who counts as a developer.
@@ -274,8 +274,8 @@ function DebugOverlayController.Init()
 	local trove = Trove.new()
 
 	-- Latest broadcast from MovementValidationService, or nil until the first one
-	-- arrives (docs/MOVEMENT.md: one-way server -> owning-client broadcast).
-	-- `violations` (docs/MOVEMENT.md §8) is ViolationTracker's bounded recent
+	-- arrives (docs/MovementSystem.md: one-way server -> owning-client broadcast).
+	-- `violations` (docs/MovementSystem.md §10) is ViolationTracker's bounded recent
 	-- history, not just `violationCount`'s running total.
 	local serverState: {
 		state: Network.DebugMovementState,
@@ -360,7 +360,7 @@ function DebugOverlayController.Init()
 		isOpen = open
 
 		-- Tells the server whether to bother broadcasting MovementDebugState
-		-- at all (docs/MOVEMENT.md §10, `TRAVERSAL-ROADMAP.md` Phase 0
+		-- at all (docs/MovementSystem.md §4.4, `docs/MovementSystem.md` §4.4
 		-- cleanup) -- every open/close path (F4, corner tab, close button)
 		-- already routes through this one function, so this is the single
 		-- place that needs to fire it.
@@ -420,7 +420,7 @@ function DebugOverlayController.Init()
 		setOpen(false)
 	end)
 
-	-- Draggable panel (docs/MOVEMENT.md §8), position remembered for the session:
+	-- Draggable panel (docs/MovementSystem.md §10), position remembered for the session:
 	-- deliberately just leaves `panel.Position` wherever the drag ends -- nothing
 	-- resets it on close/reopen (`setOpen` above never touches `Position`), so
 	-- "remembered for the session" falls out for free rather than needing its own
@@ -479,7 +479,7 @@ function DebugOverlayController.Init()
 		)
 	end)
 
-	-- Tabs (docs/MOVEMENT.md §8) -----------------------------------------------
+	-- Tabs (docs/MovementSystem.md §10) -----------------------------------------------
 
 	local tabButtons: { [string]: TextButton } =
 		{ Movement = movementTabButton, World = worldTabButton, Tuning = tuningTabButton }
@@ -519,7 +519,7 @@ function DebugOverlayController.Init()
 		serverState = value
 	end))
 
-	-- Network claim log reconciliation (docs/MOVEMENT.md §8): DebugSnapshot's
+	-- Network claim log reconciliation (docs/MovementSystem.md §10): DebugSnapshot's
 	-- claim log starts every entry `reflected = nil` (pending) -- there's no ack
 	-- remote for RequestMovementTransition (deliberately, see network.zap), so
 	-- this is the only signal available for "did the server ever mirror this
@@ -758,7 +758,7 @@ function DebugOverlayController.Init()
 	-- noclip`, populated from Network.NoclipState's own confirmation in
 	-- Movement/init.luau), never a locally-tracked "what did I just click" flag --
 	-- so a dropped/rate-limited request can't leave this button's next click
-	-- guessing wrong about which way to toggle (docs/MOVEMENT.md §8).
+	-- guessing wrong about which way to toggle (docs/MovementSystem.md §10).
 	trove:Connect(noclipToggleButton.MouseButton1Click, function()
 		local currentlyActive = DebugSnapshot.Get().noclip
 		Network.RequestSetNoclip.Fire(not currentlyActive)
@@ -768,7 +768,7 @@ function DebugOverlayController.Init()
 	end)
 
 	-- Waypoints -----------------------------------------------------------------
-	-- Session-only, client-side (docs/MOVEMENT.md §8) -- a plain local list, never
+	-- Session-only, client-side (docs/MovementSystem.md §10) -- a plain local list, never
 	-- ProfileStore-backed. Jumping reuses RequestDevTeleport (the same remote the
 	-- coordinate/pick tools above already use) rather than a new remote.
 	local waypoints: { Waypoint } = {}
@@ -844,7 +844,7 @@ function DebugOverlayController.Init()
 
 	-- Live tuning ---------------------------------------------------------------
 	-- Reads/writes go through RequestSetTuning (network.zap), dev-gated server-side
-	-- via DevToolsService.RegisterDevOnly (docs/MOVEMENT.md §1/§8) -- this
+	-- via DevToolsService.RegisterDevOnly (docs/MovementSystem.md §2/§10) -- this
 	-- controller only ever sends a claim, the server decides whether it's legal
 	-- and bounds-checked (MovementTuning.IsValidValue) before it ever affects this
 	-- session's EffectiveMovementConstants.

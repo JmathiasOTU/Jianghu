@@ -10,7 +10,7 @@ local AirborneState = require(script.Parent.AirborneState)
 local ClientMovementContextModule = require(script.Parent.Parent.ClientMovementContext)
 type ClientMovementContext = ClientMovementContextModule.ClientMovementContext
 
--- Instant impulse out of WallCling (docs/WallClimbingPlan.md §10.2): a single
+-- Instant impulse out of WallCling (docs/MovementSystem.md §4.6): a single
 -- one-shot AssemblyLinearVelocity write (SetHorizontalVelocity/
 -- SetVerticalVelocity, NOT SetVelocityOverride -- WallClingState.Exit already
 -- clears its own zero-velocity constraint before this Enter runs, and a
@@ -48,11 +48,11 @@ function WallBoostState.Enter(context: ClientMovementContext)
 	end
 
 	-- Keeps a queued Space from immediately double-jumping over the impulse
-	-- (docs/WallClimbingPlan.md §10.2) -- unblocked on Exit.
+	-- (docs/MovementSystem.md §4.6) -- unblocked on Exit.
 	context.characterMover:SetJumpBlocked(true)
 end
 
--- Short window, not a control lock (docs/WallClimbingPlan.md §10.2) -- the
+-- Short window, not a control lock (docs/MovementSystem.md §4.6) -- the
 -- impulse was already fully applied in Enter, so Update only watches for the
 -- window to end; it defines the duration the server mirrors (Phase 5).
 function WallBoostState.Update(_dt: number, context: ClientMovementContext)
@@ -60,7 +60,7 @@ function WallBoostState.Update(_dt: number, context: ClientMovementContext)
 		return
 	end
 
-	-- Grounded check (docs/WallClimbingPlan.md §12, edge case 12) -- a boost
+	-- Grounded check (docs/MovementSystem.md §4.6, edge case 12) -- a boost
 	-- launched near the ground, or one that clears a low ledge, can land
 	-- before its own short duration window even elapses. Checked first, same
 	-- priority every other airborne-family state's own Update gives it.

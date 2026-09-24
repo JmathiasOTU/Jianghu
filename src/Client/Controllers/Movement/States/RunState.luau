@@ -27,9 +27,9 @@ function RunState.Enter(context: ClientMovementContext)
 	context.characterMover:SetSpeed(context.constants.RunSpeed)
 end
 
--- "Continuously in Run for N seconds" reads as uninterrupted (docs/MOVEMENT.md §2):
+-- "Continuously in Run for N seconds" reads as uninterrupted (docs/MovementSystem.md §3):
 -- losing the ground or losing input resets the dwell clock via Exit, it never
--- pauses and resumes. Crouch (docs/MOVEMENT.md §9) is checked before the
+-- pauses and resumes. Crouch (docs/MovementSystem.md §4.2) is checked before the
 -- Sprint attempt -- pressing Ctrl while Running slides instead of continuing
 -- to build toward Sprint, exactly the same priority-over-the-normal-family
 -- reasoning as Idle/Walk's own crouch checks, just landing in Slide instead

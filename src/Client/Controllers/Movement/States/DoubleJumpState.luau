@@ -10,7 +10,7 @@ local AirborneState = require(script.Parent.AirborneState)
 local ClientMovementContextModule = require(script.Parent.Parent.ClientMovementContext)
 type ClientMovementContext = ClientMovementContextModule.ClientMovementContext
 
--- Simplest of the five traversal moves (TRAVERSAL-ROADMAP.md §8 Phase 1): a
+-- Simplest of the five traversal moves (docs/MovementSystem.md §4): a
 -- decaying vertical-only LinearVelocity impulse, gated by "already airborne +
 -- air-jump not yet used this life." No raycasting, no continuous input --
 -- `TraversalMath.DoubleJumpVerticalVelocity` is a pure function of elapsed
@@ -30,7 +30,7 @@ function DoubleJumpState.Reset()
 	enteredAt = nil
 end
 
--- `maxForce` only allows the Y axis (TRAVERSAL-ROADMAP.md §2/§11) -- X/Z stay
+-- `maxForce` only allows the Y axis (docs/MovementSystem.md §6/§2) -- X/Z stay
 -- entirely governed by the Humanoid's normal WalkSpeed-driven movement, so
 -- this never fights horizontal air control the way forcing the full vector
 -- would.
@@ -46,8 +46,8 @@ function DoubleJumpState.Enter(context: ClientMovementContext)
 	context.characterMover:SetVelocityOverride(Vector3.new(0, velocity, 0), VERTICAL_ONLY_FORCE)
 end
 
--- Hands back to Airborne once the decay curve finishes (TRAVERSAL-ROADMAP.md
--- §4's correction: every traversal move that can end mid-air must route back
+-- Hands back to Airborne once the decay curve finishes (docs/MovementSystem.md §5's correction:
+-- every traversal move that can end mid-air must route back
 -- through Airborne, or it silently bypasses landing resolution/the Fall
 -- animation). Landing mid-impulse is handled as its OWN branch, not folded
 -- into the same "-> Airborne" call: `Airborne.CanEnter` requires `not

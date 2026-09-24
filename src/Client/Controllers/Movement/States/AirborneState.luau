@@ -19,6 +19,11 @@ AirborneState.CanEnter = StateRules.CanEnter[MovementStates.Airborne]
 -- order.
 local lastLandingWasMedium = false
 
+-- Start-of-life reset (audit M-022), called by Movement/init.luau.
+function AirborneState.Reset()
+	lastLandingWasMedium = false
+end
+
 -- Wraps the shared landing-resolution logic (Shared/Movement/
 -- LandingResolution.luau, unified there during the 2026-09-15 cleanup pass --
 -- this used to be a full copy, hand-duplicated with the server's own

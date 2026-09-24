@@ -17,13 +17,12 @@ local MovementConstants = {
 	-- Heartbeat, to smooth over normal CFrame-replication jitter from the
 	-- network-owning client.
 	SpeedCheckIntervalSeconds = 0.5,
-	-- Grace multiplier on top of the current tier's speed cap for that same
-	-- replication jitter plus latency. Flagged unmeasured in the 2026-09-13
-	-- rubber-banding investigation (docs/MOVEMENT.md §5/§9) -- left unchanged
-	-- rather than guessed upward, since the reported bug turned out to be
-	-- structural (stale FSM-mirror desync + a transition-boundary transient),
-	-- not this number being too tight. Revisit only with real measured data from
-	-- SPEED_SANITY_DEBUG_LOGGING (`MovementValidationService.luau`).
+	-- Grace multiplier on top of the accumulated speed budget for replication
+	-- jitter. STILL UNMEASURED (audit M-007, ARCHITECTURE §9 violation until
+	-- sized): turn on SPEED_RATIO_CAPTURE in MovementValidationService, play
+	-- honestly (ideally with Studio's incoming replication lag), and set this to
+	-- the reported p99.9 ratio, citing the capture here. Not live-tunable
+	-- (audit M-017) -- a validation tolerance is measured, never dialled.
 	SpeedToleranceMultiplier = 1.3,
 
 	-- Crouch/Slide (docs/MOVEMENT.md §9, Phase 1 slice 2) -- starting-point
@@ -149,6 +148,12 @@ local MovementConstants = {
 	-- Airborne (or straight to a grounded state, if it lands mid-impulse).
 	DoubleJumpForce = 50,
 	DoubleJumpDecayDurationSeconds = 0.45,
+	-- Fraction of DoubleJumpForce the impulse has decayed to by the end of
+	-- DoubleJumpDecayDurationSeconds. Shared by the client's impulse and the
+	-- server's vertical ceiling, so it's a constant rather than a literal in
+	-- TraversalMath (audit M-031). Not live-tunable: the server's rise bound
+	-- depends on it.
+	DoubleJumpDecayFloorFraction = 0.5,
 
 	-- Slide slope amplification (TRAVERSAL-ROADMAP.md §5/§8 Phase 3, mechanic
 	-- 3a/3b/3c) -- ported from the reference's slope math, NOT its whole decay
@@ -177,23 +182,13 @@ local MovementConstants = {
 	-- actually re-fires, not every Heartbeat.
 	SlideGroundRaycastThrottleSeconds = 0.1,
 
-	-- Server-only anti-cheat plumbing (MovementValidationService), not a
-	-- gameplay-feel number -- deliberately NOT in MovementTuning's live-tunable
-	-- set, same reasoning as SpeedCheckIntervalSeconds above. The moment a
-	-- ClaimTraversalMove is accepted, the speed-sanity baseline resets and the
-	-- horizontal check is suspended for this long (TRAVERSAL-ROADMAP.md §7.4)
-	-- before resuming against the resimulated position -- otherwise a
-	-- legitimate traversal move's own residual momentum on landing gets
-	-- flagged as a violation the instant it lands.
-	TraversalSpeedSanityGraceSeconds = 0.5,
-
 	-- Presentation-only animation hold fallback shared by every one-shot,
 	-- synchronous-frame state (LocomotionAnimator.luau's `_transientHold`) --
 	-- used only if the real AnimationTrack's Length reads 0 (should never
 	-- happen once a real clip is authored). Not gameplay-authoritative (unlike
 	-- HardLandingDurationSeconds, which the server also enforces), so
 	-- deliberately NOT in MovementTuning's live-tunable set, same reasoning as
-	-- SpeedCheckIntervalSeconds/TraversalSpeedSanityGraceSeconds above.
+	-- SpeedCheckIntervalSeconds above.
 	OneShotAnimationHoldFallbackSeconds = 0.55,
 
 	-- Ground raycast structural reach (Shared/Movement/SpatialQueries.luau,
@@ -202,9 +197,24 @@ local MovementConstants = {
 	-- above it on a standard R6 rig, plus slack for slopes/stairs, without
 	-- reaching so far it hits floors through real gaps. Structural (raycast
 	-- reach), not a gameplay-feel number -- deliberately NOT in MovementTuning's
-	-- live-tunable set, same reasoning as SpeedCheckIntervalSeconds/
-	-- TraversalSpeedSanityGraceSeconds above.
+	-- live-tunable set, same reasoning as SpeedCheckIntervalSeconds above.
+	-- Also the reach of the server's ground-support probe (QuerySupport).
 	GroundQueryCastDistance = 4,
+	-- Below this magnitude a flattened direction/normal is treated as zero
+	-- rather than normalised (looking straight up, a degenerate cast normal).
+	-- A numerical guard, not gameplay tuning.
+	DirectionEpsilon = 1e-3,
+	-- R6 rig geometry: HumanoidRootPart's centre sits 3 studs above the feet
+	-- (2-stud legs + half of the 2-stud torso). A rig fact, not a tolerance.
+	RigRootHeightAboveFeet = 3,
+	-- R6 leg footprint (both legs side by side: 2 wide, 1 deep) swept down by
+	-- QuerySupport, so a player standing on a ledge edge with the root centre
+	-- over the void still reads as supported, matching the Humanoid's own
+	-- floor sensing better than a single centre ray.
+	GroundSupportFootprint = Vector3.new(2, 0.2, 1),
+	-- Roblox terrain's fixed voxel resolution (Terrain:ReadVoxels requires it).
+	-- An engine fact, not a tunable.
+	TerrainVoxelSize = 4,
 
 	-- WallRun side-cast (Wall Run & Leap Mechanic Guideline §1/§7).
 	-- Shapecast sphere radius for QueryWallRun.
@@ -356,8 +366,8 @@ local MovementConstants = {
 	WallClingDropSeparationSpeed = 10,
 
 	-- Instant upward impulse (locked design: free, instant, then back to
-	-- Airborne) -- ~9.8 studs of rise at default gravity (196.2); recompute if
-	-- gravity is customized.
+	-- Airborne) -- ~36.7 studs of rise at default gravity (120^2 / (2 * 196.2),
+	-- see TraversalMath.BallisticRise); recompute if gravity is customized.
 	WallBoostUpwardForce = 120,
 	-- Small push away from the wall so the character doesn't snag on friction
 	-- while rising -- set to 0 if it feels wrong in playtest.

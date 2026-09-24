@@ -98,4 +98,36 @@ function LandingResolution.Resolve(context: MovementContext): MovementStates.Mov
 	return MovementStates.Idle
 end
 
+-- Every state `Resolve` can return, and every airborne-family state whose own
+-- landing branch calls it (both sides). A caller missing an edge to any target
+-- is stuck in place the moment that target resolves (audit M-005: WallRun had
+-- no HardLanding edge), so the invariant is checked once at require time.
+local RESOLVE_TARGETS = {
+	MovementStates.Idle,
+	MovementStates.Walk,
+	MovementStates.Run,
+	MovementStates.Sprint,
+	MovementStates.CrouchIdle,
+	MovementStates.CrouchWalk,
+	MovementStates.HardLanding,
+}
+
+local LANDING_CALLERS = {
+	MovementStates.Airborne,
+	MovementStates.DoubleJump,
+	MovementStates.WallRun,
+	MovementStates.WallCling,
+	MovementStates.WallBoost,
+}
+
+for _, caller in ipairs(LANDING_CALLERS) do
+	local edges = StateRules.Transitions[caller]
+	for _, target in ipairs(RESOLVE_TARGETS) do
+		assert(
+			table.find(edges, target) ~= nil,
+			`StateRules.Transitions[{tostring(caller)}] is missing landing target {tostring(target)}`
+		)
+	end
+end
+
 return LandingResolution

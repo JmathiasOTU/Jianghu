@@ -44,19 +44,42 @@ export type InputController = {
 	BoostRequested: LemonSignal.Signal<()>,
 	GetMoveIntent: (self: InputController) -> MoveIntent,
 	IsCrouchHeld: (self: InputController) -> boolean,
+	ReleaseHeldKeys: (self: InputController) -> (),
+	Reset: (self: InputController) -> (),
 	Destroy: (self: InputController) -> (),
 }
 
 local InputController = {}
 InputController.__index = InputController
 
-local KEY_TO_AXIS: { [Enum.KeyCode]: string } = {
+type Axis = "forward" | "backward" | "strafeLeft" | "strafeRight"
+
+local KEY_TO_AXIS: { [Enum.KeyCode]: Axis } = {
 	[Enum.KeyCode.W] = "forward",
 	[Enum.KeyCode.S] = "backward",
 	[Enum.KeyCode.A] = "strafeLeft",
 	[Enum.KeyCode.D] = "strafeRight",
 }
 
+local function setAxis(self: any, axis: Axis, held: boolean)
+	if axis == "forward" then
+		self._forward = held
+	elseif axis == "backward" then
+		self._backward = held
+	elseif axis == "strafeLeft" then
+		self._strafeLeft = held
+	else
+		self._strafeRight = held
+	end
+end
+
+-- Keyboard only, by design decision (2026-09-24, audit M-013): gamepad and
+-- touch players still move through Roblox's default controls at Walk speed
+-- (the client FSM stays in Idle, which sets the same WalkSpeed the server's
+-- MoveDirection-derived Walk caps at, so nothing desyncs or gets flagged), but
+-- Run/Sprint/Crouch/Slide/wall moves/Boost are keyboard-only until this layer
+-- grows action-based bindings.
+--
 -- Raw input -> Intent, per docs/MOVEMENT.md §1. Owns the W double-tap-to-Run
 -- detector (the only discrete gesture in Phase 1's input set) and resolves the held
 -- WASD axes into a camera-relative world-space direction every frame; the FSM/state
@@ -112,7 +135,7 @@ function InputController.new(): InputController
 			if not axis then
 				return
 			end
-			(self :: any)["_" .. axis] = true
+			setAxis(self, axis, true)
 
 			if input.KeyCode == Enum.KeyCode.W then
 				local now = os.clock()
@@ -145,11 +168,40 @@ function InputController.new(): InputController
 			if not axis then
 				return
 			end
-			(self :: any)["_" .. axis] = false
+			setAxis(self, axis, false)
 		end
 	)
 
+	-- Neither alt-tab nor a TextBox grabbing focus mid-press delivers the
+	-- matching InputEnded (audit M-012), which left WASD latched and
+	-- `_jumpHeld` stuck true -- silently swallowing every later Space press.
+	self._trove:Connect(UserInputService.WindowFocusReleased, function()
+		self:ReleaseHeldKeys()
+	end)
+	self._trove:Connect(UserInputService.TextBoxFocused, function()
+		self:ReleaseHeldKeys()
+	end)
+
 	return self
+end
+
+-- Held keys only -- crouch is a toggle, not a hold, so losing focus leaves it
+-- exactly as the player last set it.
+function InputController:ReleaseHeldKeys()
+	self._forward = false
+	self._backward = false
+	self._strafeLeft = false
+	self._strafeRight = false
+	self._jumpHeld = false
+	self._lastWPressAt = nil
+end
+
+-- Called at the start of every character life: this controller outlives the
+-- character, so without this a crouch toggled on in the previous life leaked
+-- into a fresh server session that starts un-crouched (audit M-012).
+function InputController:Reset()
+	self:ReleaseHeldKeys()
+	self._crouchHeld = false
 end
 
 function InputController:GetMoveIntent(): MoveIntent

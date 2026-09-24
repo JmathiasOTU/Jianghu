@@ -2,6 +2,7 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
+local Trove = require(ReplicatedStorage.Packages.Trove)
 local DeveloperAllowlist = require(ReplicatedStorage.Shared.Constants.DeveloperAllowlist)
 local RateLimiter = require(ReplicatedStorage.Shared.Util.RateLimiter)
 
@@ -27,6 +28,21 @@ local DevToolsService = {}
 local teleportRateLimiters: { [Player]: RateLimiter.RateLimiter } = {}
 local noclipRateLimiters: { [Player]: RateLimiter.RateLimiter } = {}
 local debugOverlayOpenRateLimiters: { [Player]: RateLimiter.RateLimiter } = {}
+-- Per-player connections, destroyed on PlayerRemoving (audit M-023).
+local playerTroves: { [Player]: Trove.Trove } = {}
+-- Each part's own CanCollide from before noclip turned it off, so turning
+-- noclip back off restores it instead of forcing every part (accessory
+-- handles included) to collide (audit M-029). Weak-keyed on the part.
+local canCollideBeforeNoclip: { [BasePart]: boolean } = setmetatable({}, { __mode = "k" }) :: any
+
+local function isFiniteVector(position: vector): boolean
+	for _, component in ipairs({ position.x, position.y, position.z }) do
+		if component ~= component or component == math.huge or component == -math.huge then
+			return false
+		end
+	end
+	return true
+end
 
 -- The one, single-source-of-truth developer gate every dev-only remote in this
 -- codebase routes through (docs/MOVEMENT.md §8) -- extracted 2026-09-14 BEFORE
@@ -55,6 +71,11 @@ local onRequestDevTeleport = DevToolsService.RegisterDevOnly(
 	function(player: Player, position: vector)
 		local limiter = teleportRateLimiters[player]
 		if not limiter or not limiter:TryAcquire() then
+			return
+		end
+		-- Zap's f32 write_checks don't reject NaN/inf (audit M-029), and a
+		-- NaN CFrame corrupts the character's physics.
+		if not isFiniteVector(position) then
 			return
 		end
 
@@ -103,9 +124,20 @@ local onRequestSetNoclip = DevToolsService.RegisterDevOnly(
 		end
 
 		NoclipState.SetActive(player, enabled)
-		for _, descendant in character:GetDescendants() do
+		for _, descendant in ipairs(character:GetDescendants()) do
 			if descendant:IsA("BasePart") then
-				descendant.CanCollide = not enabled
+				if enabled then
+					if canCollideBeforeNoclip[descendant] == nil then
+						canCollideBeforeNoclip[descendant] = descendant.CanCollide
+					end
+					descendant.CanCollide = false
+				else
+					local original = canCollideBeforeNoclip[descendant]
+					if original ~= nil then
+						descendant.CanCollide = original
+						canCollideBeforeNoclip[descendant] = nil
+					end
+				end
 			end
 		end
 
@@ -143,8 +175,10 @@ local function onPlayerAdded(player: Player)
 	teleportRateLimiters[player] = RateLimiter.new(TELEPORT_CLAIMS_PER_SECOND, 1)
 	noclipRateLimiters[player] = RateLimiter.new(NOCLIP_CLAIMS_PER_SECOND, 1)
 	debugOverlayOpenRateLimiters[player] = RateLimiter.new(DEBUG_OVERLAY_OPEN_CLAIMS_PER_SECOND, 1)
+	local playerTrove = Trove.new()
+	playerTroves[player] = playerTrove
 
-	player.CharacterAdded:Connect(function()
+	playerTrove:Connect(player.CharacterAdded, function()
 		-- A fresh character never inherits noclip from the previous life --
 		-- its BaseParts start at their normal CanCollide values already, this
 		-- just keeps the server-authorized record in sync with that.
@@ -158,12 +192,17 @@ local function onPlayerRemoving(player: Player)
 	debugOverlayOpenRateLimiters[player] = nil
 	NoclipState.Clear(player)
 	DebugOverlayState.Clear(player)
+	local playerTrove = playerTroves[player]
+	if playerTrove then
+		playerTroves[player] = nil
+		playerTrove:Destroy()
+	end
 end
 
 function DevToolsService.Init()
 	Players.PlayerAdded:Connect(onPlayerAdded)
 	Players.PlayerRemoving:Connect(onPlayerRemoving)
-	for _, player in Players:GetPlayers() do
+	for _, player in ipairs(Players:GetPlayers()) do
 		onPlayerAdded(player)
 	end
 

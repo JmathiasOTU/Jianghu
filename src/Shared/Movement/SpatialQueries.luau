@@ -23,6 +23,22 @@ local WALLCLING_DEBUG_LOGGING = false
 -- its own -- nothing here needs a Trove or a cleanup path.
 local SpatialQueries = {}
 
+-- One reusable RaycastParams per filter shape instead of one per cast (audit
+-- M-021: up to ~1,000 casts/s server-side at 50 airborne players). Safe to
+-- share because every cast here is synchronous and sets its own filter first.
+local excludeParams = RaycastParams.new()
+excludeParams.FilterType = Enum.RaycastFilterType.Exclude
+
+local supportParams = RaycastParams.new()
+supportParams.FilterType = Enum.RaycastFilterType.Exclude
+supportParams.RespectCanCollide = true
+supportParams.IgnoreWater = true
+
+local function excluding(params: RaycastParams, filterInstance: Instance): RaycastParams
+	params.FilterDescendantsInstances = { filterInstance }
+	return params
+end
+
 export type GroundQueryResult = {
 	position: Vector3,
 	normal: Vector3,
@@ -57,9 +73,7 @@ function SpatialQueries.QueryGround(
 	filterInstance: Instance,
 	castDistance: number?
 ): GroundQueryResult?
-	local params = RaycastParams.new()
-	params.FilterType = Enum.RaycastFilterType.Exclude
-	params.FilterDescendantsInstances = { filterInstance }
+	local params = excluding(excludeParams, filterInstance)
 
 	local distance = castDistance or MovementConstants.GroundQueryCastDistance
 	local result = Workspace:Raycast(rootPart.Position, Vector3.new(0, -distance, 0), params)
@@ -71,6 +85,82 @@ function SpatialQueries.QueryGround(
 		position = result.Position,
 		normal = result.Normal,
 	}
+end
+
+export type SupportHit = {
+	floorVelocity: Vector3,
+}
+
+-- Server-side "is this character actually standing on something" check
+-- (audit M-004): the Humanoid state label is written by the network-owning
+-- client, so the server never treats it as proof of ground contact on its
+-- own. Sweeps the R6 leg footprint straight down from the root; only
+-- collidable, non-water geometry counts, so a CanCollide=false trigger volume
+-- can't be "stood on". Also returns the floor's own velocity at the contact
+-- point (audit M-014): a character standing on a moving platform, a vehicle
+-- seat or another player is carried at that speed on top of its own.
+function SpatialQueries.QuerySupport(rootPart: BasePart, filterInstance: Instance): SupportHit?
+	local params = excluding(supportParams, filterInstance)
+
+	local origin = CFrame.new(rootPart.Position)
+	local direction = Vector3.new(0, -MovementConstants.GroundQueryCastDistance, 0)
+	local result =
+		Workspace:Blockcast(origin, MovementConstants.GroundSupportFootprint, direction, params)
+	if not result then
+		return nil
+	end
+	local floor = result.Instance
+	return {
+		floorVelocity = if floor:IsA("BasePart")
+			then floor:GetVelocityAtPosition(result.Position)
+			else Vector3.zero,
+	}
+end
+
+-- Is there something collidable right in front of the torso to climb (ladder
+-- rungs, a TrussPart)? The server's check that a Humanoid claiming the
+-- Climbing state is really on something climbable (designer answer
+-- 2026-09-24: ladders are in scope). Deliberately looser than castClingWall
+-- -- rungs can be thin, round or unanchored -- because it only unlocks the
+-- climb-rate allowance, never a velocity or a cap raise.
+function SpatialQueries.QueryClimbable(rootPart: BasePart, filterInstance: Instance): boolean
+	local params = excluding(supportParams, filterInstance)
+
+	local lookVector = rootPart.CFrame.LookVector
+	local flatLook = Vector3.new(lookVector.X, 0, lookVector.Z)
+	if flatLook.Magnitude < MovementConstants.DirectionEpsilon then
+		return false
+	end
+	flatLook = flatLook.Unit
+
+	local origin = CFrame.lookAt(rootPart.Position, rootPart.Position + flatLook)
+	return Workspace:Blockcast(
+		origin,
+		MovementConstants.WallClingCastSize,
+		flatLook * MovementConstants.WallClingDistance,
+		params
+	) ~= nil
+end
+
+-- Is the root inside terrain water? The server's check that a Humanoid
+-- claiming the Swimming state is really in water (designer answer
+-- 2026-09-24: swimming is in scope). Reads the voxels around the root.
+function SpatialQueries.IsInWater(position: Vector3): boolean
+	local terrain = Workspace.Terrain
+	local half = Vector3.one * (MovementConstants.TerrainVoxelSize / 2)
+	local region = Region3.new(position - half, position + half)
+		:ExpandToGrid(MovementConstants.TerrainVoxelSize)
+	local materials, occupancies = terrain:ReadVoxels(region, MovementConstants.TerrainVoxelSize)
+	for x, plane in ipairs(materials) do
+		for y, row in ipairs(plane) do
+			for z, material in ipairs(row) do
+				if material == Enum.Material.Water and occupancies[x][y][z] > 0 then
+					return true
+				end
+			end
+		end
+	end
+	return false
 end
 
 -- WallRun's own entry/sustain probe (Wall Run & Leap Mechanic Guideline §1) --
@@ -85,9 +175,7 @@ function SpatialQueries.QueryWallRun(
 	castRadius: number?,
 	castDistance: number?
 ): WallRunQueryResult?
-	local params = RaycastParams.new()
-	params.FilterType = Enum.RaycastFilterType.Exclude
-	params.FilterDescendantsInstances = { filterInstance }
+	local params = excluding(excludeParams, filterInstance)
 
 	local radius = castRadius or MovementConstants.WallRunSideCastRadius
 	local distance = castDistance or MovementConstants.WallRunSideCastDistance
@@ -145,7 +233,10 @@ end
 function SpatialQueries.facingAngleToWallDegrees(lookVector: Vector3, wallNormal: Vector3): number
 	local flatLook = Vector3.new(lookVector.X, 0, lookVector.Z)
 	local flatInward = Vector3.new(-wallNormal.X, 0, -wallNormal.Z)
-	if flatLook.Magnitude < 1e-3 or flatInward.Magnitude < 1e-3 then
+	if
+		flatLook.Magnitude < MovementConstants.DirectionEpsilon
+		or flatInward.Magnitude < MovementConstants.DirectionEpsilon
+	then
 		return 180
 	end
 	local cosine = math.clamp(flatLook.Unit:Dot(flatInward.Unit), -1, 1)
@@ -174,13 +265,11 @@ end
 -- parameter on the structural side -- client and server run the identical
 -- thresholds there (docs/ARCHITECTURE.md §9).
 function SpatialQueries.castClingWall(rootPart: BasePart, filterInstance: Instance): ClingWallHit?
-	local params = RaycastParams.new()
-	params.FilterType = Enum.RaycastFilterType.Exclude
-	params.FilterDescendantsInstances = { filterInstance }
+	local params = excluding(excludeParams, filterInstance)
 
 	local lookVector = rootPart.CFrame.LookVector
 	local flatLook = Vector3.new(lookVector.X, 0, lookVector.Z)
-	if flatLook.Magnitude < 1e-3 then
+	if flatLook.Magnitude < MovementConstants.DirectionEpsilon then
 		return nil
 	end
 	flatLook = flatLook.Unit
@@ -221,7 +310,7 @@ function SpatialQueries.castClingWall(rootPart: BasePart, filterInstance: Instan
 	-- A shapecast that starts inside geometry can return a hit at distance 0
 	-- with a zero normal -- guards against that degenerate case rather than
 	-- feeding a zero vector into the verticality check below.
-	if result.Normal.Magnitude < 1e-3 then
+	if result.Normal.Magnitude < MovementConstants.DirectionEpsilon then
 		if WALLCLING_DEBUG_LOGGING then
 			print(string.format("[WallCling] rejected %s: zero normal", instance.Name))
 		end

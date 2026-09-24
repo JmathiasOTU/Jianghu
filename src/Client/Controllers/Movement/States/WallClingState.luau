@@ -39,6 +39,19 @@ local lockoutUntil: number? = nil
 -- called, since `context` carries no reason of its own.
 local pendingExitReason: WallClingExitReason? = nil
 
+-- Start-of-life reset (audit M-022): a life that ends mid-cling never runs
+-- Exit, and a lockout from the previous life would otherwise block re-cling
+-- into the new one with no server-side counterpart.
+function WallClingState.Reset()
+	wall = nil
+	normal = nil
+	enteredAt = nil
+	recheckAccumulator = 0
+	boostUsed = false
+	lockoutUntil = nil
+	pendingExitReason = nil
+end
+
 function WallClingState.GetBoostUsed(): boolean
 	return boostUsed
 end
@@ -107,7 +120,7 @@ function WallClingState.Enter(context: ClientMovementContext)
 	-- the character's pitch if passed through unflattened, same reasoning
 	-- WallRunState's own locked tangent is always already flat.
 	local flatInward = Vector3.new(-wallQuery.normal.X, 0, -wallQuery.normal.Z)
-	if flatInward.Magnitude > 1e-3 then
+	if flatInward.Magnitude > MovementConstants.DirectionEpsilon then
 		context.facingController:SetLockDirection(flatInward.Unit)
 	end
 end
@@ -149,7 +162,7 @@ function WallClingState.Update(dt: number, context: ClientMovementContext)
 	if moveDirection.Magnitude > 0 then
 		local flatAway = Vector3.new((normal :: Vector3).X, 0, (normal :: Vector3).Z)
 		if
-			flatAway.Magnitude > 1e-3
+			flatAway.Magnitude > MovementConstants.DirectionEpsilon
 			and moveDirection.Unit:Dot(flatAway.Unit)
 				>= context.constants.WallClingDropInputThreshold
 		then
@@ -195,7 +208,7 @@ function WallClingState.Exit(context: ClientMovementContext)
 	-- nudge first would just get stomped by it the very next step.
 	if reason == WallClingExitReasons.Dropped and normal then
 		local flatAway = Vector3.new((normal :: Vector3).X, 0, (normal :: Vector3).Z)
-		if flatAway.Magnitude > 1e-3 then
+		if flatAway.Magnitude > MovementConstants.DirectionEpsilon then
 			context.characterMover:SetHorizontalVelocity(
 				flatAway.Unit * MovementConstants.WallClingDropSeparationSpeed
 			)

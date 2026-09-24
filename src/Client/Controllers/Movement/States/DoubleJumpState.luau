@@ -25,6 +25,11 @@ DoubleJumpState.CanEnter = StateRules.CanEnter[MovementStates.DoubleJump]
 -- single in-flight impulse's own start time across ticks.
 local enteredAt: number? = nil
 
+-- Start-of-life reset (audit M-022), called by Movement/init.luau.
+function DoubleJumpState.Reset()
+	enteredAt = nil
+end
+
 -- `maxForce` only allows the Y axis (TRAVERSAL-ROADMAP.md §2/§11) -- X/Z stay
 -- entirely governed by the Humanoid's normal WalkSpeed-driven movement, so
 -- this never fights horizontal air control the way forcing the full vector

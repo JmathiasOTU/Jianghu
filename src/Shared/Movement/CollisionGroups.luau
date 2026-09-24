@@ -22,7 +22,18 @@ type MovementState = MovementStates.MovementState
 local CollisionGroups = {
 	Default = "Character",
 	Crouched = "CharacterCrouched",
+	-- Level geometry a crouched/sliding character fits under or through (low
+	-- bars, vents). Level authors put such parts in this group; a standing
+	-- character still collides with them (audit M-018 -- before this, the two
+	-- character groups were registered but no rule ever differed, so crouch
+	-- passability did nothing).
+	CrouchPassable = "CrouchPassable",
 }
+
+-- Last group written per character, so a transition that doesn't change the
+-- group (Idle <-> Walk <-> Run) skips the descendant walk (audit M-033).
+-- Weak-keyed: a destroyed character drops out on its own.
+local appliedGroup: { [Model]: string } = setmetatable({}, { __mode = "k" }) :: any
 
 -- Which states this passability applies to -- CrouchIdle/CrouchWalk/Slide/
 -- SlideJump, exactly the four states item 7 of docs/MOVEMENT.md §9 names.
@@ -45,6 +56,14 @@ function CollisionGroups.RegisterGroups()
 	-- separate "have I already registered" flag.
 	PhysicsService:RegisterCollisionGroup(CollisionGroups.Default)
 	PhysicsService:RegisterCollisionGroup(CollisionGroups.Crouched)
+	PhysicsService:RegisterCollisionGroup(CollisionGroups.CrouchPassable)
+	-- Player-vs-player collision stays on (designer answer 2026-09-24); the
+	-- only rule that differs from the all-collide default is this one.
+	PhysicsService:CollisionGroupSetCollidable(
+		CollisionGroups.Crouched,
+		CollisionGroups.CrouchPassable,
+		false
+	)
 end
 
 function CollisionGroups.GroupForState(state: MovementState): string
@@ -60,11 +79,27 @@ end
 -- everything else in this system (docs/MOVEMENT.md §9).
 function CollisionGroups.Apply(character: Model, state: MovementState)
 	local groupName = CollisionGroups.GroupForState(state)
-	for _, descendant in character:GetDescendants() do
+	if appliedGroup[character] == groupName then
+		return
+	end
+	appliedGroup[character] = groupName
+	for _, descendant in ipairs(character:GetDescendants()) do
 		if descendant:IsA("BasePart") then
 			descendant.CollisionGroup = groupName
 		end
 	end
+end
+
+-- Keeps parts added after the fact (accessories, tools) in the character's
+-- current group. The caller owns the returned connection (add it to the
+-- life's/session's Trove).
+function CollisionGroups.Watch(character: Model): RBXScriptConnection
+	return character.DescendantAdded:Connect(function(descendant: Instance)
+		local groupName = appliedGroup[character]
+		if groupName and descendant:IsA("BasePart") then
+			descendant.CollisionGroup = groupName
+		end
+	end)
 end
 
 return CollisionGroups

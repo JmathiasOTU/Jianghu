@@ -18,11 +18,11 @@ type ClientMovementContext = ClientMovementContextModule.ClientMovementContext
 -- "LandHard" for as long as it's `fsm.current`, no one-shot animation-hold
 -- hack needed.
 --
--- Mirrored server-side (`MovementValidationService.mirrorPassiveTransitions`'s
--- own HardLanding branch, `maxSpeedForState`'s HardLanding -> 0 cap) so the
--- lock is authoritative, not just a client-side courtesy -- same "never trust
--- the client" standard as every other movement state here
--- (docs/ARCHITECTURE.md §3).
+-- Enforced server-side too (audit M-010): `mirrorPassiveTransitions`'s
+-- HardLanding branch holds the lock off the server's own ground probe and
+-- snaps a jump-out back to the lock position, and `maxSpeedForState` caps
+-- horizontal movement -- same "never trust the client" standard as every
+-- other movement state here (docs/ARCHITECTURE.md §3).
 local HardLandingState = {}
 
 HardLandingState.CanEnter = StateRules.CanEnter[MovementStates.HardLanding]
@@ -30,6 +30,11 @@ HardLandingState.CanEnter = StateRules.CanEnter[MovementStates.HardLanding]
 -- Module-scope, not per-context -- same single-local-player-FSM pattern as
 -- RunState's dwell timer / SlideState's currentSpeed.
 local lockedUntil: number? = nil
+
+-- Start-of-life reset (audit M-022), called by Movement/init.luau.
+function HardLandingState.Reset()
+	lockedUntil = nil
+end
 
 -- WalkSpeed pinned to 0 (not a WalkSpeed=0-while-`grounded`-only trick --
 -- SetJumpBlocked also stops a locked player from cancelling the lock into a

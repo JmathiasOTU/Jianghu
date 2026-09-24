@@ -42,6 +42,14 @@ local currentDirection: Vector3? = nil
 local cachedGroundQuery: GroundQueryResult? = nil
 local raycastAccumulator = 0
 
+-- Start-of-life reset (audit M-022), called by Movement/init.luau.
+function SlideState.Reset()
+	currentSpeed = nil
+	currentDirection = nil
+	cachedGroundQuery = nil
+	raycastAccumulator = 0
+end
+
 -- Inherits whatever velocity the character actually had the instant Slide was
 -- entered (docs/MOVEMENT.md §9) -- real velocity via
 -- CharacterMover:GetHorizontalVelocity(), not the nominal RunSpeed/SprintSpeed

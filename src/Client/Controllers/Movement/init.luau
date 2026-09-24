@@ -13,6 +13,7 @@ local CollisionGroups = require(ReplicatedStorage.Shared.Movement.CollisionGroup
 local SpatialQueries = require(ReplicatedStorage.Shared.Movement.SpatialQueries)
 local MovementConstants = require(ReplicatedStorage.Shared.Constants.MovementConstants)
 local TraversalMath = require(ReplicatedStorage.Shared.Movement.TraversalMath)
+local MovementTuning = require(ReplicatedStorage.Shared.Movement.MovementTuning)
 
 local CharacterMover = require(script.CharacterMover)
 local InputController = require(script.InputController)
@@ -43,6 +44,7 @@ local WallBoostState = require(script.States.WallBoostState)
 
 type MovementState = MovementStates.MovementState
 type ClientMovementContext = ClientMovementContextModule.ClientMovementContext
+type EffectiveMovementConstants = MovementTuning.EffectiveMovementConstants
 
 -- This folder syncs as a single ModuleScript via init.luau (not a flat
 -- MovementController.luau) specifically so InputController/CharacterMover/States
@@ -132,9 +134,67 @@ local WALLCLING_TRACE_LOGGING = false
 
 local input: InputController.InputController
 
-local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
+-- The WalkSpeed each grounded tier's own Enter sets, for re-applying a live
+-- tuning change mid-state (audit M-032). Must match those Enter functions.
+local TIER_SPEED: { [MovementState]: (EffectiveMovementConstants) -> number } = {
+	[MovementStates.Idle] = function(constants)
+		return constants.WalkSpeed
+	end,
+	[MovementStates.Walk] = function(constants)
+		return constants.WalkSpeed
+	end,
+	[MovementStates.Run] = function(constants)
+		return constants.RunSpeed
+	end,
+	[MovementStates.Sprint] = function(constants)
+		return constants.SprintSpeed
+	end,
+	[MovementStates.CrouchIdle] = function(constants)
+		return constants.CrouchSpeed
+	end,
+	[MovementStates.CrouchWalk] = function(constants)
+		return constants.CrouchSpeed
+	end,
+}
+
+-- State modules keep per-life data at module scope (one local-player FSM),
+-- and a life that ends mid-state never runs that state's Exit (audit M-022).
+local STATEFUL_STATE_MODULES: { { Reset: () -> () } } = {
+	AirborneState,
+	RunState,
+	SlideState,
+	DoubleJumpState,
+	HardLandingState,
+	WallRunState,
+	WallClingState,
+	WallBoostState,
+}
+
+local function setupCharacter(
+	character: Model,
+	lifeTrove: Trove.Trove,
+	endLife: () -> (),
+	isCurrentLife: () -> boolean
+)
+	input:Reset()
+	for _, stateModule in ipairs(STATEFUL_STATE_MODULES) do
+		stateModule.Reset()
+	end
+
 	local humanoid = character:WaitForChild("Humanoid") :: Humanoid
 	local rootPart = character:WaitForChild("HumanoidRootPart") :: BasePart
+
+	-- The waits above yield: if the character was removed or replaced in the
+	-- meantime, `lifeTrove` is already destroyed and anything added to it now
+	-- would leak (audit M-011/M-022 scenario 2).
+	if not isCurrentLife() then
+		return
+	end
+
+	-- Movement stops the instant the rig dies instead of driving the corpse
+	-- until CharacterRemoving (audit M-011) -- a movement-only teardown, not a
+	-- combat defeat trigger (ARCHITECTURE §12 still forbids that use of Died).
+	lifeTrove:Connect(humanoid.Died, endLife)
 
 	local characterMover =
 		lifeTrove:Add(CharacterMover.new(humanoid, TuningSnapshot.Get().JumpPower))
@@ -166,56 +226,18 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 	-- unlike WalkSpeed/RunSpeed/SprintSpeed (only ever set on a state's own
 	-- Enter), JumpPower has no per-frame/per-transition write site of its own to
 	-- naturally pick up a changed value.
-	lifeTrove:Add(Network.TuningState.SetCallback(function(value)
-		TuningSnapshot.Set({
-			RunDoubleTapWindowSeconds = value.runDoubleTapWindowSeconds,
-			SprintThresholdSeconds = value.sprintThresholdSeconds,
-			WalkSpeed = value.walkSpeed,
-			RunSpeed = value.runSpeed,
-			SprintSpeed = value.sprintSpeed,
-			JumpPower = value.jumpPower,
-			SprintForwardDeadzone = value.sprintForwardDeadzone,
-			SpeedToleranceMultiplier = value.speedToleranceMultiplier,
-			CrouchSpeed = value.crouchSpeed,
-			SlideDecayRate = value.slideDecayRate,
-			SlideEntrySpeedMultiplier = value.slideEntrySpeedMultiplier,
-			SlideJumpBoostAmount = value.slideJumpBoostAmount,
-			AnimationFadeTimeSeconds = value.animationFadeTimeSeconds,
-			LandingAnimationHoldSeconds = value.landingAnimationHoldSeconds,
-			HardLandingHeightThreshold = value.hardLandingHeightThreshold,
-			HardLandingDurationSeconds = value.hardLandingDurationSeconds,
-			MediumLandingHeightThreshold = value.mediumLandingHeightThreshold,
-			MediumLandingDurationSeconds = value.mediumLandingDurationSeconds,
-			MediumLandingSpeedMultiplier = value.mediumLandingSpeedMultiplier,
-			DoubleJumpForce = value.doubleJumpForce,
-			DoubleJumpDecayDurationSeconds = value.doubleJumpDecayDurationSeconds,
-			SlideSlopeAngleThresholdDegrees = value.slideSlopeAngleThresholdDegrees,
-			SlideMaxWalkableSlopeDegrees = value.slideMaxWalkableSlopeDegrees,
-			SlideSlopeAmplificationCap = value.slideSlopeAmplificationCap,
-			SlideGroundRaycastThrottleSeconds = value.slideGroundRaycastThrottleSeconds,
-			WallRunMinEntrySpeed = value.wallRunMinEntrySpeed,
-			WallRunEntryDotThreshold = value.wallRunEntryDotThreshold,
-			WallRunSpeed = value.wallRunSpeed,
-			WallRunSinkSpeed = value.wallRunSinkSpeed,
-			WallRunClingDistance = value.wallRunClingDistance,
-			WallRunClingCorrectionRate = value.wallRunClingCorrectionRate,
-			WallRunClingMaxCorrectionSpeed = value.wallRunClingMaxCorrectionSpeed,
-			WallRunMaxNormalDeviationDegrees = value.wallRunMaxNormalDeviationDegrees,
-			WallRunMaxDurationSeconds = value.wallRunMaxDurationSeconds,
-			WallLeapBurstForce = value.wallLeapBurstForce,
-			WallLeapPushForce = value.wallLeapPushForce,
-			WallLeapUpwardForce = value.wallLeapUpwardForce,
-			WallClingMaxDuration = value.wallClingMaxDuration,
-			WallClingMaxFacingAngleDegrees = value.wallClingMaxFacingAngleDegrees,
-			WallClingDropInputThreshold = value.wallClingDropInputThreshold,
-			WallClingTimeoutLockout = value.wallClingTimeoutLockout,
-			WallClingDropLockout = value.wallClingDropLockout,
-			WallClingPostBoostCooldown = value.wallClingPostBoostCooldown,
-			WallBoostUpwardForce = value.wallBoostUpwardForce,
-			WallBoostSeparationSpeed = value.wallBoostSeparationSpeed,
-			WallBoostStateDuration = value.wallBoostStateDuration,
-		})
-		characterMover:SetJumpPower(value.jumpPower)
+	lifeTrove:Add(Network.TuningState.SetCallback(function(entries)
+		local constants = MovementTuning.FromEntries(entries)
+		TuningSnapshot.Set(constants)
+		characterMover:SetJumpPower(constants.JumpPower)
+		-- Grounded tiers only set WalkSpeed on Enter, while the server applies
+		-- a new cap immediately (audit M-032) -- re-push the live tier's speed
+		-- so a mid-state tuning change doesn't rubber-band until the next
+		-- transition.
+		local tierSpeed = TIER_SPEED[fsm.current]
+		if tierSpeed then
+			characterMover:SetSpeed(tierSpeed(TuningSnapshot.Get()))
+		end
 	end))
 
 	-- Noclip/fly (docs/MOVEMENT.md §8): the server is the sole authority on
@@ -348,6 +370,7 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 	-- run once up front to stay symmetric with every later transition.
 	IdleState.Enter(buildContext())
 	CollisionGroups.Apply(character, MovementStates.Idle)
+	lifeTrove:Add(CollisionGroups.Watch(character))
 
 	local lastClaimResyncAt = 0
 	local lastCrouchResyncAt = 0
@@ -356,6 +379,35 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 		Network.RequestMovementTransition.Fire(claimName)
 		DebugSnapshot.RecordClaim(claimName)
 		lastClaimResyncAt = os.clock()
+	end
+
+	-- Sent as a level, not just an edge (audit M-006): the server's limiter can
+	-- drop any single claim, and a dropped CrouchUp used to leave the mirror
+	-- crouched forever since only CrouchDown was ever resent.
+	-- Camera lock as a level claim (audit M-020): the server can't see
+	-- Humanoid.AutoRotate (FacingController writes it locally), so the client
+	-- reports it on every change and on the same 1s resync as crouch.
+	local lastCameraLockSent: boolean? = nil
+	local lastCameraResyncAt = 0
+
+	local function syncCameraLock()
+		local locked = not humanoid.AutoRotate
+		if
+			locked == lastCameraLockSent
+			and os.clock() - lastCameraResyncAt < CLAIM_RESYNC_INTERVAL_SECONDS
+		then
+			return
+		end
+		Network.RequestMovementTransition.Fire(if locked then "CameraLocked" else "CameraUnlocked")
+		lastCameraLockSent = locked
+		lastCameraResyncAt = os.clock()
+	end
+
+	local function fireCrouchLevel()
+		Network.RequestMovementTransition.Fire(
+			if input:IsCrouchHeld() then "CrouchDown" else "CrouchUp"
+		)
+		lastCrouchResyncAt = os.clock()
 	end
 
 	lifeTrove:Connect(fsm.changed, function(next: MovementState, previous: MovementState)
@@ -394,8 +446,11 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 		-- Passability (docs/MOVEMENT.md §9): switched on every transition, not
 		-- gated on "did the group actually change" -- cheap enough, and
 		-- CollisionGroups.Apply itself just re-derives the same group name for
-		-- non-crouch states, so a redundant write here is harmless.
-		CollisionGroups.Apply(character, next)
+		-- non-crouch states, so a redundant write here is harmless. Reads
+		-- `fsm.current`, not `next` (audit M-019): after a reentrant hand-off
+		-- (SlideJump/WallLeap -> Airborne inside `Enter` above) `next` is stale,
+		-- and applying it last left the character Crouched while Airborne.
+		CollisionGroups.Apply(character, fsm.current)
 
 		local claimName = NETWORK_CLAIM_NAMES[next]
 		if claimName then
@@ -590,8 +645,7 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 	-- crouched landing) reaches the server before the landing decision has to
 	-- be made, not after.
 	lifeTrove:Connect(input.CrouchChanged, function(held: boolean)
-		Network.RequestMovementTransition.Fire(if held then "CrouchDown" else "CrouchUp")
-		lastCrouchResyncAt = os.clock()
+		fireCrouchLevel()
 		-- Crouch-lock re-arm (SlideJump landing fix): the real key-up edge is
 		-- the only thing that clears the lock -- a legitimate re-press right
 		-- after release must work immediately, never gated on a cooldown.
@@ -612,7 +666,14 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 		-- (synchronously, within `Update`'s own `RequestTransition` call) AFTER
 		-- the landing decision has already consumed the real peak.
 		if peakHeight then
-			peakHeight = math.max(peakHeight, rootPart.Position.Y)
+			-- Water breaks a fall: re-seeded while swimming so climbing out of
+			-- a dive isn't resolved as one huge drop (mirrored server-side in
+			-- `updatePeakHeight`, which also checks for real water).
+			if humanoid:GetState() == Enum.HumanoidStateType.Swimming then
+				peakHeight = rootPart.Position.Y
+			else
+				peakHeight = math.max(peakHeight, rootPart.Position.Y)
+			end
 		end
 
 		-- WallRun side-cast throttle (Wall Run & Leap Mechanic Guideline §1):
@@ -693,17 +754,14 @@ local function setupCharacter(character: Model, lifeTrove: Trove.Trove)
 			fireClaim(claimName)
 		end
 
-		-- Periodic resync while Ctrl is held (same cadence, same self-healing
-		-- reasoning as Run/Sprint's own resync above) -- independent of
-		-- `fsm.current` on purpose, since the crouch flag matters even while
+		-- Periodic crouch-level resync, held OR released (same cadence, same
+		-- self-healing reasoning as Run/Sprint's own resync above) -- independent
+		-- of `fsm.current` on purpose, since the crouch flag matters even while
 		-- Airborne (see the mid-air comment above).
-		if
-			input:IsCrouchHeld()
-			and os.clock() - lastCrouchResyncAt >= CLAIM_RESYNC_INTERVAL_SECONDS
-		then
-			Network.RequestMovementTransition.Fire("CrouchDown")
-			lastCrouchResyncAt = os.clock()
+		if os.clock() - lastCrouchResyncAt >= CLAIM_RESYNC_INTERVAL_SECONDS then
+			fireCrouchLevel()
 		end
+		syncCameraLock()
 
 		-- F4 debug overlay (docs/MOVEMENT.md) -- published every Heartbeat
 		-- regardless of whether the overlay is even open, same as how the FSM's own
@@ -729,21 +787,26 @@ function MovementController.Init()
 	local player = Players.LocalPlayer
 	local lifeTrove: Trove.Trove? = nil
 
-	local function onCharacterAdded(character: Model)
-		if lifeTrove then
-			lifeTrove:Destroy()
-		end
-		lifeTrove = Trove.new()
-		setupCharacter(character, lifeTrove)
-	end
-
-	player.CharacterAdded:Connect(onCharacterAdded)
-	player.CharacterRemoving:Connect(function()
+	-- Single teardown path for every way a life can end (death, removal,
+	-- replacement), so the trove is destroyed exactly once (ARCHITECTURE §6).
+	local function endLife()
 		if lifeTrove then
 			lifeTrove:Destroy()
 			lifeTrove = nil
 		end
-	end)
+	end
+
+	local function onCharacterAdded(character: Model)
+		endLife()
+		local trove = Trove.new()
+		lifeTrove = trove
+		setupCharacter(character, trove, endLife, function()
+			return lifeTrove == trove
+		end)
+	end
+
+	player.CharacterAdded:Connect(onCharacterAdded)
+	player.CharacterRemoving:Connect(endLife)
 
 	if player.Character then
 		onCharacterAdded(player.Character)

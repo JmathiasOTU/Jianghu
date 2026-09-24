@@ -88,3 +88,10 @@ Any part whose position the server treats as ground truth (hitbox proxies, proje
 ## 14. World Streaming
 
 `StreamingEnabled` is a deliberate, documented decision for this project — not a default left unconsidered. Server-side hit detection is unaffected by it either way; the risk is client-side prediction/animation desync for characters that haven't streamed in yet. If enabled, the minimum streaming radius relative to combat engagement range is documented here as the project settles on it.
+
+**Decision (2026-09-24): enabled.** The setting lives on `Workspace` in the place file, not in `default.project.json`. **TODO:** confirm it in Studio and record `StreamingMinRadius`/`StreamingTargetRadius` here once combat engagement range is known.
+
+Consequences for movement (audit M-034):
+- **Server validation is unaffected.** The server always has the full world, so its own ground, wall, climbable and water probes are never missing geometry.
+- **Client prediction only errs on the safe side.** A wall or floor that hasn't streamed in yet can't be found by the client's `QueryWallRun`/`QueryClingWall`/`QueryGround`, so the client under-predicts (no wall run or cling there yet). It never claims something the server will reject. Traversal level geometry should sit inside the streaming radius of wherever players approach it from.
+- **Never make a gameplay decision client-side from the absence of a part.** "I don't see a wall, so there isn't one" is only a prediction.

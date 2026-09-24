@@ -51,12 +51,12 @@ src/
 
 - [Rojo](https://rojo.space/docs/installation/) `>= 7.4`
 - [Wally](https://github.com/UpliftGames/wally) `>= 0.3`
-- [Aftman](https://github.com/LPGhatguy/aftman) (recommended, for toolchain management — installs Rojo, Wally, Selene, StyLua, and Zap from `aftman.toml`)
+- [Aftman](https://github.com/LPGhatguy/aftman) (recommended, for toolchain management — installs Rojo, Wally, Selene, StyLua, Zap, and Lune from `aftman.toml`)
 
 ### Setup
 
 ```bash
-# Install pinned CLI tooling (Rojo, Wally, Selene, StyLua, Zap)
+# Install pinned CLI tooling (Rojo, Wally, Selene, StyLua, Zap, Lune)
 aftman install
 
 # Install Luau dependencies (shared → Packages/, server-only → ServerPackages/)
@@ -73,12 +73,15 @@ Connect to the running Rojo server from the Rojo Studio plugin to sync `src/` in
 
 Remote events are never hand-written — every combat/movement remote is declared in [`network.zap`](network.zap) (see [Zap's event docs](https://zap.redblox.dev/config/events)) and regenerated with `zap network.zap` whenever that file changes. The generated `src/Client/Network/network.luau` and `src/Server/Network/network.luau` are build artifacts and are not committed.
 
-### Linting & Formatting
+### Linting, Formatting & Tests
 
 ```bash
 selene src
-stylua --check src
+stylua --check src tests --glob '!src/**/Network/network.luau'
+lune run tests/run
 ```
+
+`tests/` runs the pure shared movement modules (FSM rules, landing resolution, traversal math, tuning) under [Lune](https://lune-org.github.io/docs), outside Studio. `tests/harness.luau` maps the Rojo tree onto files so `require(ReplicatedStorage.Shared.X)` works. Anything touching physics, raycasts or replication still needs a Studio playtest.
 
 ## Contributing
 

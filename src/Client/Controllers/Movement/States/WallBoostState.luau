@@ -23,6 +23,11 @@ WallBoostState.CanEnter = StateRules.CanEnter[MovementStates.WallBoost]
 
 local enteredAt: number? = nil
 
+-- Start-of-life reset (audit M-022), called by Movement/init.luau.
+function WallBoostState.Reset()
+	enteredAt = nil
+end
+
 -- Wall normal comes from `context.wallClingNormal` (WallClingState's own
 -- locked cling normal, captured into context BEFORE WallClingState.Exit nils
 -- its own copy -- same pre-Exit-snapshot pattern `wallRunEntryInstance`

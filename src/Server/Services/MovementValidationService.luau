@@ -4,6 +4,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
 
+local Trove = require(ReplicatedStorage.Packages.Trove)
 local StateMachine = require(ReplicatedStorage.Shared.FSM.StateMachine)
 local MovementStates = require(ReplicatedStorage.Shared.FSM.MovementStates)
 local MovementStateGroups = require(ReplicatedStorage.Shared.FSM.MovementStateGroups)
@@ -22,6 +23,8 @@ local ViolationTracker = require(ReplicatedStorage.Shared.Util.ViolationTracker)
 
 local Network = require(script.Parent.Parent.Network.network)
 local CharacterTeleported = require(script.Parent.Parent.Events.CharacterTeleported)
+local VerticalAllowanceGranted = require(script.Parent.Parent.Events.VerticalAllowanceGranted)
+local MovementViolation = require(script.Parent.Parent.Events.MovementViolation)
 local MovementTuningState = require(script.Parent.Parent.State.MovementTuningState)
 local NoclipState = require(script.Parent.Parent.State.NoclipState)
 local DebugOverlayState = require(script.Parent.Parent.State.DebugOverlayState)
@@ -46,14 +49,55 @@ local DEBUG_STATE_NAMES = MovementStateNames.DebugNames
 local GROUNDED_STATES = MovementStateGroups.Grounded
 
 type PlayerSession = {
+	-- Owns the FSM and every connection for this one character life (audit
+	-- M-023); destroyed exactly once by `destroySession`, never reused.
+	_trove: Trove.Trove,
 	player: Player,
 	humanoid: Humanoid,
 	rootPart: BasePart,
 	fsm: StateMachine.StateMachine<MovementState, MovementContext>,
 	rateLimiter: RateLimiter.RateLimiter,
+	-- Separate budget for the level claims (CrouchDown/CrouchUp, audit M-006;
+	-- CameraLocked/CameraUnlocked, M-020) so Run/Sprint claims and their
+	-- resyncs can never starve them.
+	levelRateLimiter: RateLimiter.RateLimiter,
+	-- Shift Lock/first-person, from the client's level claims (audit M-020).
+	cameraLocked: boolean,
 	runEnteredAt: number?,
+	-- Horizontal speed window (audit M-002): the position/time the current
+	-- window opened at, plus a distance budget accumulated EVERY Heartbeat at
+	-- whatever cap applied during that Heartbeat. Transitions never reset the
+	-- window, so a window straddling several states is judged against exactly
+	-- the caps that were in force, and no state change can discard evidence.
 	speedCheckPosition: Vector3,
 	speedCheckAt: number,
+	speedBudget: number,
+	speedBudgetAt: number,
+	-- The full effective cap (tier + any traversal allowance) in force right
+	-- before the most recent transition, for the landing-momentum grace --
+	-- recorded before that transition's own bookkeeping clears allowances.
+	previousCap: number,
+	-- Server-owned ground truth (audit M-004): does the R6 leg footprint sit on
+	-- real collidable geometry right now (`SpatialQueries.QuerySupport`),
+	-- refreshed once per Heartbeat before anything reads it. `supportedSince`
+	-- is when the current stretch of "supported but labelled airborne" began.
+	supported: boolean,
+	supportedSince: number?,
+	-- Horizontal speed of whatever the character stands on (audit M-014),
+	-- credited to the speed budget on top of the character's own cap.
+	floorSpeed: number,
+	-- Vertical ceiling (audit M-001): the highest Y this character can
+	-- legitimately reach from here, derived only from server-known impulses
+	-- (JumpPower, accepted DoubleJump/WallLeap/WallBoost/WallRun claims, and
+	-- `VerticalAllowanceGranted`). `verticalExcessSince` is when the character
+	-- first went above it without a claim catching up yet.
+	verticalCeilingY: number,
+	verticalExcessSince: number?,
+	verticalCheckAt: number,
+	-- Where the character stood when the server entered HardLanding (audit
+	-- M-010), so a jump out of the lock can be told apart from the floor
+	-- giving way, and snapped back.
+	hardLandingLockPosition: Vector3?,
 	-- Landing-momentum grace (docs/MOVEMENT.md §5, added 2026-09-14): the state
 	-- this session was in immediately before its most recent transition, and
 	-- when that transition happened -- generic over which transition, never
@@ -103,19 +147,17 @@ type PlayerSession = {
 	-- client's own `HardLandingState`'s `lockedUntil`: this server's own
 	-- `os.clock()` deadline, set the instant this session's mirror enters
 	-- HardLanding, read by `mirrorPassiveTransitions`'s own HardLanding branch
-	-- to decide when to resolve back out. `maxSpeedForState`'s HardLanding ->
-	-- 0 cap is what actually makes the lock authoritative (via
-	-- `enforceSpeedSanity`'s existing position correction) -- this timestamp
-	-- only decides when the MIRROR itself is allowed to leave the state.
+	-- to decide when to resolve back out. The lock is enforced two ways: the
+	-- HardLanding horizontal cap (`maxSpeedForState`) and the jump-escape
+	-- check in `mirrorPassiveTransitions` against `hardLandingLockPosition`.
 	hardLandingLockUntil: number?,
 	-- Entry snapshot for DoubleJump's resimulation (TRAVERSAL-ROADMAP.md §7.1),
 	-- reused as-is for WallRun's own entry timestamp (Wall Run & Leap Mechanic
 	-- Guideline §6 -- only one traversal move is ever active at a time, so one
 	-- generic "when did I enter this move" field covers both) -- this server's
 	-- OWN `os.clock()` the instant it accepted the claim, never anything the
-	-- client sends. `enforceDoubleJumpTrajectory` measures elapsed time from
-	-- this for DoubleJump; `mirrorPassiveTransitions`'s WallRun branch uses it
-	-- against `WallRunMaxDurationSeconds` the same way.
+	-- client sends. `mirrorPassiveTransitions` measures DoubleJump's own
+	-- duration and WallRun's `WallRunMaxDurationSeconds` from it.
 	traversalEntryAt: number?,
 	-- WallRun's own side-cast probe, server side (guideline §1/§6) -- the
 	-- SAME `SpatialQueries.QueryWallRun` pure function the client calls,
@@ -166,24 +208,14 @@ type PlayerSession = {
 	-- `retryBufferedSprintClaim` is the only reader; `onRequestMovementTransition`
 	-- is the only writer.
 	pendingSprintClaimUntil: number?,
-	-- WallLeap's own speed-sanity ceiling (playtest fix 2026-09-18) -- see
-	-- `onClaimTraversalMove`'s WallLeap branch for the full reasoning: a
-	-- flat one-shot suspension window (`speedSanitySuspendedUntil`, sized
-	-- for DoubleJump's DECAYING impulse) isn't enough for WallLeap, whose
-	-- boosted speed doesn't decay on its own -- Roblox applies no horizontal
-	-- air drag, so the excess speed persists for the entire flight. This is
-	-- a real, computed ceiling (current speed + burst + push at the instant
-	-- the claim was accepted), not a guessed tolerance, consulted by
-	-- `effectiveMaxSpeed` for as long as this session hasn't landed since.
-	-- Cleared the instant it does (`fsm.changed`'s own landing bookkeeping,
-	-- same edge `peakHeight` already clears on).
+	-- WallLeap's own speed-sanity ceiling (playtest fix 2026-09-18) --
+	-- WallLeap's boosted speed doesn't decay on its own (Roblox applies no
+	-- horizontal air drag), so the excess persists for the entire flight. An
+	-- exact bound computed from server-known constants only
+	-- (`TraversalMath.WallLeapMaxHorizontalSpeed`, audit M-003 -- never the
+	-- client's replicated velocity), consulted by `effectiveMaxSpeed` until
+	-- this session lands or stands on real ground (`updateSupport`).
 	wallLeapAllowedSpeed: number?,
-	-- Set the instant a ClaimTraversalMove is accepted, cleared once expired
-	-- (TRAVERSAL-ROADMAP.md §7.4) -- suspends `enforceSpeedSanity`'s
-	-- horizontal check for `TraversalSpeedSanityGraceSeconds` so a legitimate
-	-- traversal move's own residual momentum on landing doesn't get
-	-- immediately flagged as a violation.
-	speedSanitySuspendedUntil: number?,
 	-- Independent rate limit for ClaimTraversalMove (TRAVERSAL-ROADMAP.md §11)
 	-- -- kept separate from `rateLimiter` (RequestMovementTransition's own),
 	-- same orthogonal-cooldown principle Run/Sprint's limiter already
@@ -264,39 +296,47 @@ type PlayerSession = {
 -- MovementConstants.
 local TRANSITION_CLAIMS_PER_SECOND = 5
 
+-- Level claims (crouch, audit M-006; camera lock, M-020): edges plus one 1/s
+-- resync per level. A drop is self-healing since the client resends each
+-- current level every second, so this only bounds spam, never correctness.
+local LEVEL_CLAIMS_PER_SECOND = 6
+
 -- Rate limit for ClaimTraversalMove, independent of RequestMovementTransition's
 -- own limiter above (TRAVERSAL-ROADMAP.md §11) -- same reasoning, separate
 -- counter so a burst against one event can never eat into the other's budget.
 local TRAVERSAL_CLAIMS_PER_SECOND = 5
 
--- Starting-point tolerance for `enforceDoubleJumpTrajectory` below -- flagged
--- unmeasured on purpose (docs/MOVEMENT.md §9's "measured, not guessed" bar has
--- no data yet for this brand-new check): generous enough to absorb ordinary
--- gravity/replication variance on top of the claimed impulse without being a
--- no-op. Revisit only with real measured data from
--- TRAVERSAL_TRAJECTORY_DEBUG_LOGGING below -- the same "capture before
--- retuning" pattern SpeedToleranceMultiplier's own comment
--- (MovementConstants.luau) already established for SPEED_SANITY_DEBUG_LOGGING.
-local TRAVERSAL_VERTICAL_VELOCITY_TOLERANCE = 15
-
 -- Absorbs standing-still jitter during HardLanding's WalkSpeed=0 lock without
 -- tolerating a real WASD movement attempt.
 local HARD_LANDING_RESIDUAL_SPEED_TOLERANCE = 6
 
--- Diagnostic capture for `enforceDoubleJumpTrajectory`, same pattern as
--- SPEED_SANITY_DEBUG_LOGGING below -- off by default, prints actual/expected/
--- delta vertical velocity every Heartbeat DoubleJump is active so
--- TRAVERSAL_VERTICAL_VELOCITY_TOLERANCE above can eventually be sized from a
--- real playtest capture instead of the unmeasured starting-point guess it is
--- today (docs/MOVEMENT.md §9).
-local TRAVERSAL_TRAJECTORY_DEBUG_LOGGING = false
+-- Measurement capture for the vertical ceiling (audit M-001, ARCHITECTURE §9):
+-- prints how far above the ceiling a character went and for how long, every
+-- time it happens. The ceiling ships with ZERO tolerance; if honest play
+-- produces excesses, this capture is what sizes a documented fix -- never a
+-- guessed slack constant.
+local VERTICAL_CEILING_DEBUG_LOGGING = false
+
+-- Measurement capture for SpeedToleranceMultiplier (audit M-007/M-015/M-016,
+-- ARCHITECTURE §9): every closed speed window records how far the character
+-- really moved as a fraction of the budget it was allowed (before the
+-- tolerance multiplier). Honest play's p99.9 of that ratio IS the measured
+-- tolerance. Windows with zero budget (WallCling) report their raw drift in
+-- studs instead, which is what sizes the cling's "no drift" definition.
+-- Studio playtests only; the sample list is capped.
+local SPEED_RATIO_CAPTURE = false
+local SPEED_RATIO_REPORT_EVERY = 200
+local SPEED_RATIO_MAX_SAMPLES = 20000
+local speedRatioSamples: { number } = {}
+local speedRatioSinceReport = 0
+local zeroBudgetDriftMax = 0
 
 -- Temporary instrumentation for the 2026-09-13 Sprint-rubber-banding
 -- investigation (docs/MOVEMENT.md §5) -- prints real numbers instead of guessing
 -- at a tolerance. Flip on for a playtest, off for normal play; left in (not
 -- deleted) since Stage 2's WallRun/etc. validation will want the same kind of
 -- capture again.
-local SPEED_SANITY_DEBUG_LOGGING = true
+local SPEED_SANITY_DEBUG_LOGGING = false
 
 -- Diagnostic capture for the 2026-09-18 "WallLeap boost gets erased" bug --
 -- same pattern as the other *_DEBUG_LOGGING flags above. Prints why a
@@ -306,7 +346,7 @@ local SPEED_SANITY_DEBUG_LOGGING = true
 -- WallLeapBurstForce/PushForce 14/16->75/75) -- need to confirm whether the
 -- claim is being rejected again (same root cause as before) versus something
 -- new, rather than guessing at a second patch on top of the first.
-local WALL_TRAVERSAL_DEBUG_LOGGING = true
+local WALL_TRAVERSAL_DEBUG_LOGGING = false
 
 -- Sized from a real 2026-09-14 playtest capture (docs/MOVEMENT.md §5), not a
 -- guess: every landing sample showed the FIRST `enforceSpeedSanity` check after
@@ -325,11 +365,120 @@ local MovementValidationService = {}
 
 local sessions: { [Player]: PlayerSession } = {}
 local speedViolations = ViolationTracker.new()
+-- One tracker per kind: the debug overlay's payload is shaped around the
+-- horizontal check's distance/budget/elapsed, and each kind keeps its own
+-- count for the moderation event.
+local violationTrackers: { [MovementViolation.Kind]: ViolationTracker.ViolationTracker } = {
+	Speed = speedViolations,
+	VerticalCeiling = ViolationTracker.new(),
+	HardLandingEscape = ViolationTracker.new(),
+}
+
+-- Every correction reports through here (audit M-008): recorded, then
+-- published on MovementViolation for a future moderation system. Policy
+-- (flag, kick) deliberately lives with that subscriber, not in this service.
+local function reportViolation(
+	session: PlayerSession,
+	kind: MovementViolation.Kind,
+	detail: { [string]: number }
+)
+	local violation = violationTrackers[kind]:Record(session.player, detail)
+	MovementViolation:Fire(session.player, kind, detail, violation.count)
+end
+
+local function recordSpeedRatio(flatDistance: number, budget: number)
+	if budget <= 0 then
+		zeroBudgetDriftMax = math.max(zeroBudgetDriftMax, flatDistance)
+		return
+	end
+	if #speedRatioSamples < SPEED_RATIO_MAX_SAMPLES then
+		table.insert(speedRatioSamples, flatDistance / budget)
+	end
+	speedRatioSinceReport += 1
+	if speedRatioSinceReport < SPEED_RATIO_REPORT_EVERY then
+		return
+	end
+	speedRatioSinceReport = 0
+
+	local sorted = table.clone(speedRatioSamples)
+	table.sort(sorted)
+	local function percentile(fraction: number): number
+		return sorted[math.clamp(math.ceil(fraction * #sorted), 1, #sorted)]
+	end
+	print(
+		string.format(
+			"[SpeedRatio] n=%d p50=%.3f p99=%.3f p99.9=%.3f max=%.3f zeroBudgetDriftMax=%.3f studs",
+			#sorted,
+			percentile(0.5),
+			percentile(0.99),
+			percentile(0.999),
+			sorted[#sorted],
+			zeroBudgetDriftMax
+		)
+	)
+end
+
+local function resetSpeedWindow(session: PlayerSession)
+	local now = os.clock()
+	session.speedCheckPosition = session.rootPart.Position
+	session.speedCheckAt = now
+	session.speedBudget = 0
+	session.speedBudgetAt = now
+end
+
+-- Every server position correction lands here (audit M-008): moves the rig
+-- (rotation kept) and kills its velocity, so a cheat snapped back doesn't just
+-- resume at full speed the next frame, then restarts the speed window from
+-- the corrected position.
+local function correctToPosition(session: PlayerSession, position: Vector3)
+	local rootPart = session.rootPart
+	rootPart.CFrame = (rootPart.CFrame - rootPart.Position) + position
+	rootPart.AssemblyLinearVelocity = Vector3.zero
+	resetSpeedWindow(session)
+end
 
 local function isGrounded(state: Enum.HumanoidStateType): boolean
 	return state == Enum.HumanoidStateType.Running
 		or state == Enum.HumanoidStateType.RunningNoPhysics
 		or state == Enum.HumanoidStateType.Landed
+end
+
+-- Refreshed once per Heartbeat (and forced at claim time) before anything
+-- reads `session.supported`, so every consumer in one Heartbeat agrees.
+local function updateSupport(session: PlayerSession)
+	local hit = SpatialQueries.QuerySupport(session.rootPart, session.humanoid.Parent :: Instance)
+	local supported = hit ~= nil
+	session.supported = supported
+	session.floorSpeed = if hit
+		then Vector3.new(hit.floorVelocity.X, 0, hit.floorVelocity.Z).Magnitude
+		else 0
+	-- Start of the current stretch where the character is on real ground but
+	-- its Humanoid label says it isn't -- reset by either one ending.
+	if not supported or isGrounded(session.humanoid:GetState()) then
+		session.supportedSince = nil
+	elseif not session.supportedSince then
+		session.supportedSince = os.clock()
+	end
+end
+
+-- The server's own answer to "is this character on the ground" (audit M-004).
+-- A grounded Humanoid label only counts with real geometry under the feet, so
+-- a client can't fake a landing mid-air to refresh DoubleJump or clear its
+-- fall height. The reverse lie (reporting Freefall while standing, to keep an
+-- airborne speed cap or a WallLeap allowance alive) ends once that mismatch
+-- has lasted a full speed-check window -- an honest takeoff or landing only
+-- spends a few frames within `GroundQueryCastDistance` of the floor while
+-- labelled airborne.
+local function isSessionGrounded(session: PlayerSession): boolean
+	if not session.supported then
+		return false
+	end
+	if isGrounded(session.humanoid:GetState()) then
+		return true
+	end
+	local mismatchSince = session.supportedSince
+	return mismatchSince ~= nil
+		and os.clock() - mismatchSince >= MovementConstants.SpeedCheckIntervalSeconds
 end
 
 -- The server never sees raw WASD key state (that's client-only), so it can't
@@ -338,10 +487,10 @@ end
 -- relies on, geometrically: forward/backward from facing's dot with MoveDirection
 -- past a deadzone, strafeLeft/strafeRight from the sign of the analogous cross
 -- product (same convention as LocomotionAnimator.resolveDirectionBucket -- positive
--- means Right). Both inputs (rootPart.CFrame, humanoid.MoveDirection) are
--- server-trusted replicated state, not anything the client asserts directly, which
--- is what makes this a real fix rather than trusting the client's own claim (see
--- docs/MOVEMENT.md §5).
+-- means Right). Both inputs (rootPart.CFrame, humanoid.MoveDirection) are written
+-- by the network-owning client (audit M-004/M-027), so this only classifies
+-- intent for the mirror's tier choices -- every cap it can unlock is still
+-- enforced against real displacement by `enforceSpeedSanity`.
 --
 -- Forward/backward use a deadzone (this session's effective
 -- SprintForwardDeadzone, docs/MOVEMENT.md §8 -- MovementConstants' shipped
@@ -388,6 +537,7 @@ local function buildContext(session: PlayerSession): MovementContext
 		then os.clock() - (session.runEnteredAt :: number)
 		else nil
 
+	local humanoidState = session.humanoid:GetState()
 	local moveDirection = session.humanoid.MoveDirection
 	local facing = session.rootPart.CFrame.LookVector
 	local forward, backward, strafeLeft, strafeRight =
@@ -401,8 +551,8 @@ local function buildContext(session: PlayerSession): MovementContext
 			strafeLeft = strafeLeft,
 			strafeRight = strafeRight,
 		},
-		grounded = isGrounded(session.humanoid:GetState()),
-		jumping = session.humanoid:GetState() == Enum.HumanoidStateType.Jumping,
+		grounded = isSessionGrounded(session),
+		jumping = humanoidState == Enum.HumanoidStateType.Jumping,
 		crouchHeld = session.crouchHeld and not session.crouchSuppressed,
 		doubleJumpUsed = session.doubleJumpUsed,
 		runDuration = runDuration,
@@ -433,11 +583,13 @@ local function buildContext(session: PlayerSession): MovementContext
 		-- same placeholder the client uses.
 		qinggong = math.huge,
 		-- Landing-resume fix, hardened 2026-09-18 (see MovementTypes.luau's
-		-- own field comment) -- the same replicated property
-		-- `mirrorPassiveTransitions`'s own Sprint-demotion branch already
-		-- trusts for the identical "facing lags MoveDirection while
-		-- unlocked" reason.
-		cameraLocked = not session.humanoid.AutoRotate,
+		-- own field comment). From the client's CameraLocked/CameraUnlocked
+		-- level claims (audit M-020), not `Humanoid.AutoRotate`: the client
+		-- writes that property locally and it never replicated, so the server
+		-- always read "unlocked". Lying "unlocked" only selects the lenient
+		-- landing path this used to take for everyone; the speed cap still
+		-- applies regardless.
+		cameraLocked = session.cameraLocked,
 		constants = constants,
 	}
 end
@@ -678,12 +830,35 @@ local function mirrorPassiveTransitions(session: PlayerSession)
 	-- use. `context.fallHeight` is already nil by this point (cleared the
 	-- instant HardLanding was entered), so this always resolves to an
 	-- ordinary grounded target, never back into HardLanding again.
+	--
+	-- Server-enforced (audit M-010, designer answer 2026-09-24): while the
+	-- lock runs, only the server's OWN support probe can end it -- the
+	-- client's Humanoid label is ignored. Losing support after rising more
+	-- than the probe's reach above the lock position can only be a jump (a
+	-- vanishing floor drops the character, never lifts it), so it is a
+	-- violation and the character is put back where the lock began.
 	if current == MovementStates.HardLanding then
-		if not context.grounded then
+		local lockUntil = session.hardLandingLockUntil
+		local lockPosition = session.hardLandingLockPosition
+		if lockUntil and lockPosition and os.clock() < lockUntil then
+			if session.supported then
+				return
+			end
+			local rise = session.rootPart.Position.Y - lockPosition.Y
+			if
+				rise
+				> MovementConstants.GroundQueryCastDistance
+					- MovementConstants.RigRootHeightAboveFeet
+			then
+				reportViolation(session, "HardLandingEscape", { rise = rise })
+				correctToPosition(session, lockPosition)
+				return
+			end
 			session.fsm:RequestTransition(MovementStates.Airborne, context)
 			return
 		end
-		if session.hardLandingLockUntil and os.clock() < session.hardLandingLockUntil then
+		if not context.grounded then
+			session.fsm:RequestTransition(MovementStates.Airborne, context)
 			return
 		end
 		session.fsm:RequestTransition(LandingResolution.Resolve(context), context)
@@ -785,14 +960,14 @@ local function mirrorPassiveTransitions(session: PlayerSession)
 		session.fsm:RequestTransition(MovementStates.Idle, context)
 	elseif
 		current == MovementStates.Sprint
-		and not session.humanoid.AutoRotate
+		and session.cameraLocked
 		and not context.moveIntent.forward
 	then
 		-- Same demotion condition as SprintState.Update client-side (backpedal or
 		-- pure strafe drops Sprint), enforced independently of whether a modified
 		-- client ever sends the matching reclaim.
 		--
-		-- Gated on `not session.humanoid.AutoRotate` (found during the 2026-09-13
+		-- Gated on a locked camera (found during the 2026-09-13
 		-- rubber-banding investigation): `classifyMoveIntent` approximates "is this
 		-- forward" from `rootPart.CFrame.LookVector` vs. `MoveDirection`, but
 		-- `FacingController`'s own fix (§4, also 2026-09-13) established that
@@ -805,9 +980,9 @@ local function mirrorPassiveTransitions(session: PlayerSession)
 		-- this proxy being the wrong signal in that mode: strafe-style facing
 		-- decoupling (and with it, a meaningful "backpedal relative to facing")
 		-- only applies while locked in the first place (see this doc's intro).
-		-- `AutoRotate` itself is a plain replicated Humanoid property the
-		-- server already trusts elsewhere (`CharacterMover`/`FacingController`
-		-- toggle it, same as `WalkSpeed`), so this costs no new trust assumption.
+		-- The lock state comes from the client's CameraLocked/CameraUnlocked
+		-- level claims (audit M-020): `AutoRotate`, which this used to read, is
+		-- written client-side and never replicated, so this branch never ran.
 		--
 		-- This narrows, rather than removes, server enforcement while unlocked:
 		-- the "no input at all -> Idle" branch above and `enforceSpeedSanity`'s
@@ -843,9 +1018,22 @@ end
 -- `mirrorPassiveTransitions`'s own `RequestTransition` call) AFTER the
 -- landing decision has already consumed the real peak.
 local function updatePeakHeight(session: PlayerSession)
-	if session.peakHeight then
-		session.peakHeight = math.max(session.peakHeight, session.rootPart.Position.Y)
+	local peakHeight = session.peakHeight
+	if not peakHeight then
+		return
 	end
+	local y = session.rootPart.Position.Y
+	-- Water breaks a fall (swimming in scope, 2026-09-24): without this, a
+	-- dive into water followed by climbing out onto land resolved the whole
+	-- drop as one fall and forced HardLanding. Mirrors the client exactly.
+	if
+		session.humanoid:GetState() == Enum.HumanoidStateType.Swimming
+		and SpatialQueries.IsInWater(session.rootPart.Position)
+	then
+		session.peakHeight = y
+		return
+	end
+	session.peakHeight = math.max(peakHeight, y)
 end
 
 -- Slide's own ground-normal probe, server side (TRAVERSAL-ROADMAP.md §7.5/§8
@@ -876,7 +1064,7 @@ end
 -- `force` bypasses the throttle for claim-time legality checks, which need
 -- real current geometry (§3), not a stale Heartbeat-cadence sample (§9).
 local function updateWallRunQuery(session: PlayerSession, force: boolean?)
-	if isGrounded(session.humanoid:GetState()) then
+	if isSessionGrounded(session) then
 		session.wallRunQuery = nil
 		return
 	end
@@ -904,7 +1092,7 @@ end
 -- same reasoning `wallRunQuery` is kept continuously fresh rather than only
 -- probed on demand.
 local function updateWallClingQuery(session: PlayerSession, force: boolean?)
-	if isGrounded(session.humanoid:GetState()) then
+	if isSessionGrounded(session) then
 		session.wallClingQuery = nil
 		return
 	end
@@ -923,11 +1111,10 @@ end
 
 -- Companion to the client's own slope-amplification read (SlideState.Update)
 -- -- same `TraversalMath.SlideSlopeAmplification` function, fed the server's
--- own cached ground-normal and the session's real, physics-owned
--- `AssemblyLinearVelocity` direction (already server-trusted ground truth
--- elsewhere in this file, e.g. `enforceDoubleJumpTrajectory`'s own read of
--- the Y component) rather than anything the client asserts about its
--- direction.
+-- own cached ground-normal and the session's replicated
+-- `AssemblyLinearVelocity` direction. That velocity is client-written, but it
+-- only picks a direction here: the amplification it can unlock is capped at
+-- `SlideSlopeAmplificationCap` and needs a real server-probed slope.
 local function slideSlopeAmplification(
 	session: PlayerSession,
 	constants: EffectiveMovementConstants
@@ -975,9 +1162,7 @@ end
 -- downhill top-up `TraversalMath.SlideSlopeAmplification` grants the client,
 -- so a real slope-boosted slide doesn't rubber-band against a cap that only
 -- ever assumed flat ground. `slopeAmplification` defaults to 0 for every call
--- site that doesn't have a live ground read to pass (e.g. `effectiveMaxSpeed`'s
--- own `previousCap` lookup below, which only needs a generous flat ceiling
--- for grace purposes, never a precise live figure).
+-- site that doesn't have a live ground read to pass.
 local function maxSpeedForState(
 	state: MovementState,
 	constants: EffectiveMovementConstants,
@@ -1000,9 +1185,8 @@ local function maxSpeedForState(
 		-- already uses. Neither is ever actually the LIVE `session.fsm.current`
 		-- for more than the one accepting Heartbeat (WallLeap hands straight
 		-- back to Airborne in the same call, guideline §6) -- this branch only
-		-- matters for `effectiveMaxSpeed`'s `previousState` grace lookup right
-		-- after one of them, and `speedSanitySuspendedUntil`'s own exemption
-		-- window already covers the actual launch instant.
+		-- matters for the `previousCap` grace snapshot right after one of
+		-- them; WallLeap's real launch speed comes from `wallLeapAllowedSpeed`.
 		return constants.SprintSpeed
 	elseif state == MovementStates.WallRun then
 		-- Live-capped at the mechanic's OWN tuned speed (guideline §6),
@@ -1021,13 +1205,9 @@ local function maxSpeedForState(
 		-- false flag with).
 		return MovementConstants.WallClingSpeedCeiling
 	elseif state == MovementStates.WallBoost then
-		-- Same "one-shot impulse, real enforcement lives elsewhere" shape as
-		-- DoubleJump/WallLeap above -- WallBoost's actual envelope is a
-		-- computed, decaying ceiling (`TraversalMath.WallBoostSpeedCeilingAt`),
-		-- enforced by `effectiveMaxSpeed` off `session.wallBoostStartedAt`
-		-- instead of a flat tier here; this branch only matters for the
-		-- `previousState` grace lookup right after the mirror hands back to
-		-- Airborne.
+		-- Same "one-shot impulse" shape as DoubleJump/WallLeap above: the
+		-- boost's horizontal part (`WallBoostSeparationSpeed`) sits under this
+		-- cap, and its vertical part is enforced by the vertical ceiling.
 		return constants.SprintSpeed
 	elseif state == MovementStates.CrouchIdle or state == MovementStates.CrouchWalk then
 		return constants.CrouchSpeed
@@ -1055,46 +1235,34 @@ end
 -- ClimbVault/LedgeGrab/Slide (all of which will exit into Airborne or Walk with
 -- their own residual momentum) get this grace for free the moment their own cap
 -- is taught to `maxSpeedForState`, with no separate copy of this fix needed.
-local function effectiveMaxSpeed(
+local function capForState(
 	session: PlayerSession,
+	state: MovementState,
 	constants: EffectiveMovementConstants
 ): number
-	local currentCap = maxSpeedForState(
-		session.fsm.current,
-		constants,
-		slideSlopeAmplification(session, constants)
-	)
+	local currentCap =
+		maxSpeedForState(state, constants, slideSlopeAmplification(session, constants))
 
 	-- WallLeap's own computed ceiling (playtest fix 2026-09-18) -- takes over
 	-- from the ordinary Airborne/SprintSpeed cap for as long as this session
-	-- hasn't landed since the leap (see `onClaimTraversalMove`'s WallLeap
-	-- branch and the field's own comment on `PlayerSession`). `math.max`, not
-	-- an unconditional override -- never LOWERS the cap below whatever the
-	-- current state would already allow.
+	-- hasn't landed since the leap (see `acceptWallLeapLaunch` and the field's
+	-- own comment on `PlayerSession`). `math.max`, not an unconditional
+	-- override -- never LOWERS the cap below whatever the state would allow.
 	if session.wallLeapAllowedSpeed and session.wallLeapAllowedSpeed > currentCap then
 		currentCap = session.wallLeapAllowedSpeed
 	end
 
-	-- WallBoost's own computed ceiling (docs/WallClimbingPlan.md §11.5) --
-	-- same `math.max`-not-override shape as `wallLeapAllowedSpeed` above, and
-	-- for the identical reason: the mirror can already be back in Airborne by
-	-- the time this evaluates (WallBoostStateDuration is short), but the real
-	-- physical impulse is still decaying under gravity for longer than that,
-	-- so this has to keep being consulted off `session.wallBoostStartedAt`
-	-- regardless of `session.fsm.current`. The envelope naturally ends itself
-	-- once it decays below the normal Airborne/SprintSpeed ceiling -- no fixed
-	-- grace duration needed, exactly as the plan's own formula intends.
-	if session.wallBoostStartedAt then
-		local boostCeiling = TraversalMath.WallBoostSpeedCeilingAt(
-			os.clock() - session.wallBoostStartedAt,
-			constants.WallBoostUpwardForce,
-			constants.WallBoostSeparationSpeed,
-			Workspace.Gravity
-		)
-		if boostCeiling > currentCap then
-			currentCap = boostCeiling
-		end
-	end
+	-- No WallBoost term (audit M-024): the boost's horizontal part is only
+	-- `WallBoostSeparationSpeed`, already under every airborne cap; its
+	-- vertical part is policed by the vertical ceiling instead.
+	return currentCap
+end
+
+local function effectiveMaxSpeed(
+	session: PlayerSession,
+	constants: EffectiveMovementConstants
+): number
+	local currentCap = capForState(session, session.fsm.current, constants)
 
 	-- Skips the grace below -- it's sized for an ordinary landing's brief
 	-- momentum tail, not a multi-second lock.
@@ -1102,12 +1270,10 @@ local function effectiveMaxSpeed(
 		return currentCap
 	end
 
-	local previousState = session.previousState
-	if not previousState then
-		return currentCap
-	end
-
-	local previousCap = maxSpeedForState(previousState, constants)
+	-- `previousCap` is the full effective cap in force right before the last
+	-- transition (allowances included), so landing out of a WallLeap graces
+	-- the leap's real speed rather than only the bare Airborne tier.
+	local previousCap = session.previousCap
 	if previousCap <= currentCap then
 		-- The cap went up or stayed the same -- there's no residual-momentum
 		-- tail to grace here, only ever downward transitions produce one.
@@ -1121,16 +1287,35 @@ local function effectiveMaxSpeed(
 end
 
 local function createSession(player: Player, humanoid: Humanoid, rootPart: BasePart): PlayerSession
-	local fsm = StateMachine.new(MovementStates.Idle, StateRules.Transitions, StateRules.CanEnter)
+	local trove = Trove.new()
+	local fsm = trove:Add(
+		StateMachine.new(MovementStates.Idle, StateRules.Transitions, StateRules.CanEnter)
+	)
 	local session: PlayerSession = {
+		_trove = trove,
 		player = player,
 		humanoid = humanoid,
 		rootPart = rootPart,
 		fsm = fsm,
 		rateLimiter = RateLimiter.new(TRANSITION_CLAIMS_PER_SECOND, 1),
+		levelRateLimiter = RateLimiter.new(LEVEL_CLAIMS_PER_SECOND, 1),
+		cameraLocked = false,
 		runEnteredAt = nil,
 		speedCheckPosition = rootPart.Position,
 		speedCheckAt = os.clock(),
+		speedBudget = 0,
+		speedBudgetAt = os.clock(),
+		previousCap = 0,
+		supported = false,
+		supportedSince = nil,
+		floorSpeed = 0,
+		verticalCeilingY = rootPart.Position.Y + TraversalMath.BallisticRise(
+			MovementTuningState.GetEffective(player).JumpPower,
+			Workspace.Gravity
+		),
+		verticalExcessSince = nil,
+		verticalCheckAt = os.clock(),
+		hardLandingLockPosition = nil,
 		previousState = nil,
 		lastTransitionAt = os.clock(),
 		crouchHeld = false,
@@ -1140,7 +1325,6 @@ local function createSession(player: Player, humanoid: Humanoid, rootPart: BaseP
 		peakHeight = nil,
 		hardLandingLockUntil = nil,
 		traversalEntryAt = nil,
-		speedSanitySuspendedUntil = nil,
 		traversalRateLimiter = RateLimiter.new(TRAVERSAL_CLAIMS_PER_SECOND, 1),
 		slideGroundQuery = nil,
 		slideGroundQueryAt = 0,
@@ -1161,30 +1345,37 @@ local function createSession(player: Player, humanoid: Humanoid, rootPart: BaseP
 		pendingWallClingClaimUntil = nil,
 	}
 
-	-- Reset the speed-sanity baseline on EVERY FSM transition, not just Sprint
-	-- entry (found during the 2026-09-13 rubber-banding investigation): any
-	-- transition can change `maxSpeedForState`'s cap, and Humanoid's WalkSpeed
-	-- changes are not instant -- its ground controller accelerates/decelerates
-	-- toward the new target over a real, documented handful of frames, it doesn't
-	-- snap velocity immediately (docs/ARCHITECTURE.md §9's own example of an
-	-- acceptable tolerance is exactly this class of thing). A window that
-	-- straddles a transition boundary would compare a mix of old- and new-tier
-	-- motion against only the new tier's cap -- most sharply on a large drop
-	-- (Sprint/Airborne -> Walk on landing), where residual momentum can still
-	-- exceed the new, much lower cap for a moment. Starting the window fresh at
-	-- the boundary sidesteps needing to quantify that transient's length at all,
-	-- rather than padding `SpeedToleranceMultiplier` to guess-cover it.
-	fsm.changed:Connect(function(next: MovementState, previous: MovementState)
+	-- The speed window is deliberately NOT reset here (audit M-002): it used to
+	-- be, to keep a window from straddling two tiers, but that let any client
+	-- that could force transitions (by toggling its own Humanoid state) discard
+	-- every window before it was ever measured. `enforceSpeedSanity` now builds
+	-- each window's budget per Heartbeat from whichever cap was live, so a
+	-- straddling window is judged correctly without throwing evidence away.
+	trove:Connect(fsm.changed, function(next: MovementState, previous: MovementState)
 		local now = os.clock()
-		session.speedCheckPosition = rootPart.Position
-		session.speedCheckAt = now
+		local constants = MovementTuningState.GetEffective(player)
 
-		-- Landing-momentum grace bookkeeping (see `effectiveMaxSpeed` below) --
-		-- just records what state this session was in and when, regardless of
-		-- which states are involved; `effectiveMaxSpeed` is what decides whether
-		-- that's actually a cap decrease worth gracing.
+		-- Landing-momentum grace bookkeeping (see `effectiveMaxSpeed`) --
+		-- records the full cap that applied in `previous`, BEFORE this
+		-- handler's own landing bookkeeping below clears any allowance.
+		session.previousCap = capForState(session, previous, constants)
 		session.previousState = previous
 		session.lastTransitionAt = now
+
+		-- WallRun and WallCling both replace the character's velocity outright
+		-- (full-force override), so a WallLeap allowance carried in from an
+		-- earlier leap no longer describes anything physical -- and left in
+		-- place it would lift WallCling's zero-drift cap to leap speed.
+		if next == MovementStates.WallRun or next == MovementStates.WallCling then
+			session.wallLeapAllowedSpeed = nil
+		end
+
+		-- Post-boost re-grab cooldown, server-owned (audit M-038): the client
+		-- applies it on WallBoost's own Exit, so the server applies it on the
+		-- same edge of its own mirror.
+		if previous == MovementStates.WallBoost then
+			session.wallClingLockoutUntil = now + constants.WallClingPostBoostCooldown
+		end
 
 		-- HardLanding fall-height bookkeeping (docs/MOVEMENT.md §10 rework) --
 		-- mirrors Movement/init.luau's own client-side edge exactly: seeded on
@@ -1221,8 +1412,10 @@ local function createSession(player: Player, humanoid: Humanoid, rootPart: BaseP
 		-- duration) so `mirrorPassiveTransitions`'s own HardLanding branch
 		-- knows exactly when the client-side lock is expected to release.
 		if next == MovementStates.HardLanding then
-			session.hardLandingLockUntil = now
-				+ MovementTuningState.GetEffective(player).HardLandingDurationSeconds
+			session.hardLandingLockUntil = now + constants.HardLandingDurationSeconds
+			session.hardLandingLockPosition = rootPart.Position
+		elseif previous == MovementStates.HardLanding then
+			session.hardLandingLockPosition = nil
 		end
 
 		-- Passability (docs/MOVEMENT.md §9): the SERVER's own copy, keyed off
@@ -1234,9 +1427,8 @@ local function createSession(player: Player, humanoid: Humanoid, rootPart: BaseP
 		CollisionGroups.Apply(humanoid.Parent :: Model, next)
 
 		if SPEED_SANITY_DEBUG_LOGGING then
-			local constants = MovementTuningState.GetEffective(player)
-			local previousCap = maxSpeedForState(previous, constants)
-			local newCap = maxSpeedForState(next, constants)
+			local previousCap = session.previousCap
+			local newCap = capForState(session, next, constants)
 			if previousCap > newCap then
 				print(
 					string.format(
@@ -1256,6 +1448,7 @@ local function createSession(player: Player, humanoid: Humanoid, rootPart: BaseP
 	-- starts already in Idle, so no `changed` fires for it, and this session's
 	-- CollisionGroup needs setting up front for the same reason.
 	CollisionGroups.Apply(humanoid.Parent :: Model, MovementStates.Idle)
+	trove:Add(CollisionGroups.Watch(humanoid.Parent :: Model))
 
 	return session
 end
@@ -1267,8 +1460,13 @@ end
 -- every Heartbeat: per-frame `CFrame` replication from an owning client arrives in
 -- bursts, not evenly, so a raw frame-to-frame delta would false-positive on normal
 -- replication jitter long before it caught a real speed hack. Vertical (Y) motion
--- is deliberately excluded -- falling/jumping isn't gated by any WalkSpeed tier,
--- and this check has no business policing gravity.
+-- is policed separately by `enforceVerticalCeiling`.
+--
+-- The window's allowed distance is a budget accumulated every Heartbeat at the
+-- cap live during that Heartbeat (audit M-002), so neither a transition nor a
+-- one-shot "exemption" ever discards an unmeasured stretch of movement. The
+-- old post-claim suspension window is gone for the same reason: 5 accepted
+-- DoubleJump claims a second each suspending the check for 0.5s turned it off.
 --
 -- Exempted entirely while `NoclipState.IsActive` (docs/MOVEMENT.md §8) -- the
 -- scouting tool's whole point is to move faster than any tier's cap allows, so
@@ -1277,22 +1475,18 @@ end
 -- flag (docs/ARCHITECTURE.md §3) -- DevToolsService.luau is the only writer.
 local function enforceSpeedSanity(session: PlayerSession, constants: EffectiveMovementConstants)
 	if NoclipState.IsActive(session.player) then
-		return
-	end
-
-	-- Traversal exemption window (TRAVERSAL-ROADMAP.md §7.4) -- suspended
-	-- entirely (not just baseline-reset) for a short grace after a
-	-- ClaimTraversalMove is accepted, so a legitimate move's own residual
-	-- momentum on landing doesn't immediately read as a violation. Cleared
-	-- lazily here rather than on a timer -- once expired, this check simply
-	-- stops short-circuiting and the field is left stale until the next
-	-- claim overwrites it, same "no separate invalidation bookkeeping"
-	-- reasoning `buildContext`'s own comment already uses for `constants`.
-	if session.speedSanitySuspendedUntil and os.clock() < session.speedSanitySuspendedUntil then
+		resetSpeedWindow(session)
 		return
 	end
 
 	local now = os.clock()
+	-- The floor's own speed rides on top of the character's cap (audit M-014,
+	-- player-vs-player collision kept on): standing on a moving platform or
+	-- another player's head carries you along. Only physics-driven motion is
+	-- visible here -- an anchored part moved by CFrame/tween reports zero.
+	session.speedBudget += (effectiveMaxSpeed(session, constants) + session.floorSpeed) * (now - session.speedBudgetAt)
+	session.speedBudgetAt = now
+
 	local elapsed = now - session.speedCheckAt
 	if elapsed < MovementConstants.SpeedCheckIntervalSeconds then
 		return
@@ -1301,42 +1495,142 @@ local function enforceSpeedSanity(session: PlayerSession, constants: EffectiveMo
 	local position = session.rootPart.Position
 	local previous = session.speedCheckPosition
 	local flatDelta = Vector3.new(position.X - previous.X, 0, position.Z - previous.Z)
-	local maxDistance = effectiveMaxSpeed(session, constants)
-		* elapsed
-		* constants.SpeedToleranceMultiplier
+	local maxDistance = session.speedBudget * MovementConstants.SpeedToleranceMultiplier
+
+	if SPEED_RATIO_CAPTURE then
+		recordSpeedRatio(flatDelta.Magnitude, session.speedBudget)
+	end
 
 	if flatDelta.Magnitude > maxDistance then
-		-- Unconditional (not gated behind SPEED_SANITY_DEBUG_LOGGING below): every
-		-- correction is worth seeing in the console as it happens, not just during
-		-- an opt-in debug session.
-		print(
-			string.format(
-				"[SpeedSanity] %s state=%s flatDelta=%.2f maxDistance=%.2f elapsed=%.3f",
-				session.player.Name,
-				tostring(session.fsm.current),
-				flatDelta.Magnitude,
-				maxDistance,
-				elapsed
+		-- Always visible in Studio playtests; in a live server a cheater could
+		-- otherwise flood the log at will (audit M-025) -- there the record goes
+		-- to `speedViolations` only.
+		if SPEED_SANITY_DEBUG_LOGGING or RunService:IsStudio() then
+			print(
+				string.format(
+					"[SpeedSanity] %s state=%s flatDelta=%.2f maxDistance=%.2f elapsed=%.3f",
+					session.player.Name,
+					tostring(session.fsm.current),
+					flatDelta.Magnitude,
+					maxDistance,
+					elapsed
+				)
 			)
-		)
+		end
 		-- The detail captured here (docs/MOVEMENT.md §8) is exactly the same
 		-- flatDelta/maxDistance/elapsed data the print above already has --
 		-- ViolationTracker keeps a bounded history of it instead of only the
 		-- running count, so broadcastDebugState can show the overlay's last
 		-- few corrections, not just how many there have been.
-		speedViolations:Record(session.player, {
+		reportViolation(session, "Speed", {
 			flatDelta = flatDelta.Magnitude,
 			maxDistance = maxDistance,
 			elapsed = elapsed,
 		})
 
+		-- Horizontal-only snap: Y is left to the vertical ceiling, and the
+		-- horizontal velocity is killed so the cheat can't simply carry on
+		-- (audit M-008).
+		local rootPart = session.rootPart
 		local corrected = Vector3.new(previous.X, position.Y, previous.Z)
-		session.rootPart.CFrame = (session.rootPart.CFrame - position) + corrected
-		position = corrected
+		rootPart.CFrame = (rootPart.CFrame - position) + corrected
+		rootPart.AssemblyLinearVelocity = Vector3.new(0, rootPart.AssemblyLinearVelocity.Y, 0)
 	end
 
-	session.speedCheckPosition = position
-	session.speedCheckAt = now
+	resetSpeedWindow(session)
+end
+
+-- Vertical ceiling (audit M-001): the highest Y this character can legally
+-- reach, built only from server-known impulses. Standing on real ground
+-- re-anchors it to "here plus one Humanoid jump"; every accepted vertical move
+-- raises it by that move's own maximum rise (`raiseVerticalCeiling`). Every
+-- built-in launch REPLACES vertical velocity rather than adding to it, and the
+-- character can't be above the old ceiling when it launches, so old ceiling +
+-- rise is a true upper bound whatever the timing.
+--
+-- An excess only counts once it has outlasted `WallRunClaimBufferSeconds`:
+-- position replication and the claim that justifies a rise travel separately
+-- and can arrive in either order -- the same replication-ordering fact that
+-- buffer was measured for, reused rather than a second unmeasured window. A
+-- confirmed excess is snapped back down to the ceiling with upward velocity
+-- killed. Zero tolerance otherwise (ARCHITECTURE §9); measure with
+-- VERTICAL_CEILING_DEBUG_LOGGING before ever changing that.
+local function enforceVerticalCeiling(session: PlayerSession, constants: EffectiveMovementConstants)
+	local rootPart = session.rootPart
+	local y = rootPart.Position.Y
+	local now = os.clock()
+	local dt = now - session.verticalCheckAt
+	session.verticalCheckAt = now
+	local jumpRise = TraversalMath.BallisticRise(constants.JumpPower, Workspace.Gravity)
+	local humanoidState = session.humanoid:GetState()
+
+	-- Swimming in real terrain water re-anchors like ground does (designer
+	-- answer 2026-09-24): the character can swim up to the surface and jump
+	-- out. The water check is the server's own, so the label alone buys
+	-- nothing outside water.
+	local swimming = humanoidState == Enum.HumanoidStateType.Swimming
+		and SpatialQueries.IsInWater(rootPart.Position)
+
+	if NoclipState.IsActive(session.player) or isSessionGrounded(session) or swimming then
+		session.verticalCeilingY = y + jumpRise
+		session.verticalExcessSince = nil
+		return
+	end
+
+	-- Climbing (ladders, trusses; designer answer 2026-09-24) on something the
+	-- server can see in front of the torso: the ceiling rises at most at this
+	-- player's own speed cap (the Humanoid climbs at a fraction of WalkSpeed,
+	-- and the cap bounds WalkSpeed), and never more than one jump above where
+	-- the character really is, so a climb can't bank height to spend later.
+	if
+		humanoidState == Enum.HumanoidStateType.Climbing
+		and SpatialQueries.QueryClimbable(rootPart, session.humanoid.Parent :: Instance)
+	then
+		local climbed = math.min(
+			math.max(session.verticalCeilingY, y) + effectiveMaxSpeed(session, constants) * dt,
+			y + jumpRise
+		)
+		session.verticalCeilingY = math.max(session.verticalCeilingY, climbed)
+	end
+
+	local excess = y - session.verticalCeilingY
+	if excess <= 0 then
+		session.verticalExcessSince = nil
+		return
+	end
+
+	if not session.verticalExcessSince then
+		session.verticalExcessSince = now
+	end
+	local excessFor = now - (session.verticalExcessSince :: number)
+
+	if VERTICAL_CEILING_DEBUG_LOGGING then
+		print(
+			string.format(
+				"[VerticalCeiling] %s state=%s excess=%.2f for=%.3fs",
+				session.player.Name,
+				tostring(session.fsm.current),
+				excess,
+				excessFor
+			)
+		)
+	end
+
+	if excessFor < MovementConstants.WallRunClaimBufferSeconds then
+		return
+	end
+
+	reportViolation(session, "VerticalCeiling", { excess = excess, excessFor = excessFor })
+	local position = rootPart.Position
+	rootPart.CFrame = (rootPart.CFrame - position)
+		+ Vector3.new(position.X, session.verticalCeilingY, position.Z)
+	local velocity = rootPart.AssemblyLinearVelocity
+	rootPart.AssemblyLinearVelocity = Vector3.new(velocity.X, math.min(velocity.Y, 0), velocity.Z)
+	session.verticalExcessSince = nil
+end
+
+local function raiseVerticalCeiling(session: PlayerSession, rise: number)
+	session.verticalCeilingY += math.max(rise, 0)
 end
 
 -- Debug overlay (F4, developer-only, docs/MOVEMENT.md): one-way broadcast of this
@@ -1371,7 +1665,7 @@ local function broadcastDebugState(session: PlayerSession)
 	local violationEntries: { { flatDelta: number, maxDistance: number, elapsed: number, ageSeconds: number } } =
 		{}
 	if violation then
-		for _, entry in violation.history do
+		for _, entry in ipairs(violation.history) do
 			table.insert(violationEntries, {
 				flatDelta = entry.flatDelta,
 				maxDistance = entry.maxDistance,
@@ -1389,47 +1683,38 @@ local function broadcastDebugState(session: PlayerSession)
 	})
 end
 
--- DoubleJump's own resimulation slice (TRAVERSAL-ROADMAP.md §7.2) -- the
--- simplest possible version of the "full trajectory resimulation" decision,
--- proportionate to DoubleJump having no spatial claim and no continuous
--- input: compares real vertical velocity against
--- `TraversalMath.DoubleJumpVerticalVelocity` (the SAME function the client's
--- own DoubleJumpState calls) seeded from this session's own entry-snapshot
--- timestamp, never the client-reported one. Vertical only -- horizontal
--- speed during DoubleJump is already covered by `enforceSpeedSanity`'s own
--- cap via `maxSpeedForState`.
-local function enforceDoubleJumpTrajectory(
+-- A claim travels separately from position replication: by the time one is
+-- accepted, the client has already moved under the new move for about one
+-- network leg. When the accept raises the cap, that stretch was budgeted at
+-- the old cap, so the difference is credited for that leg (server-measured
+-- ping, never anything the client sends) plus however long the claim waited
+-- in a claim buffer. Capped at one speed-check window: anything older belongs
+-- to a window that has already been judged.
+local function creditClaimLatency(
 	session: PlayerSession,
-	constants: EffectiveMovementConstants
+	capBefore: number,
+	constants: EffectiveMovementConstants,
+	bufferedFor: number?
 )
-	if session.fsm.current ~= MovementStates.DoubleJump or not session.traversalEntryAt then
+	local capAfter = effectiveMaxSpeed(session, constants)
+	if capAfter <= capBefore then
 		return
 	end
+	local oneWay = math.max(session.player:GetNetworkPing(), 0) / 2
+	local lag = math.min(oneWay + (bufferedFor or 0), MovementConstants.SpeedCheckIntervalSeconds)
+	session.speedBudget += (capAfter - capBefore) * lag
+end
 
-	local elapsed = os.clock() - (session.traversalEntryAt :: number)
-	local expected = TraversalMath.DoubleJumpVerticalVelocity(
-		elapsed,
-		constants.DoubleJumpForce,
-		constants.DoubleJumpDecayDurationSeconds
-	)
-	local actual = session.rootPart.AssemblyLinearVelocity.Y
-
-	if TRAVERSAL_TRAJECTORY_DEBUG_LOGGING then
-		print(
-			string.format(
-				"[TrajectoryDebug] %s actual=%.2f expected=%.2f delta=%.2f",
-				session.player.Name,
-				actual,
-				expected,
-				actual - expected
-			)
-		)
-	end
-
-	if actual > expected + TRAVERSAL_VERTICAL_VELOCITY_TOLERANCE then
-		local velocity = session.rootPart.AssemblyLinearVelocity
-		session.rootPart.AssemblyLinearVelocity = Vector3.new(velocity.X, expected, velocity.Z)
-	end
+-- WallRunState.Enter's one-time snap onto the cling distance moves the rig
+-- along the wall normal, and a wall may tilt up to `WallDetectMaxUpDot`, so
+-- the snap can lift the character slightly. Bounded by the farthest a
+-- QueryWallRun hit can be from the root (cast reach plus sphere radius).
+local function wallRunEntryMaxRise(constants: EffectiveMovementConstants): number
+	local maxOffset = MovementConstants.WallRunSideCastDistance
+		+ MovementConstants.WallRunSideCastRadius
+	local maxNudge =
+		math.max(constants.WallRunClingDistance, maxOffset - constants.WallRunClingDistance)
+	return maxNudge * MovementConstants.WallDetectMaxUpDot
 end
 
 -- Shared acceptance bookkeeping for a WallRun entry landing -- whether it's
@@ -1441,10 +1726,9 @@ end
 -- branch for why that reference is anchored lazily off the Heartbeat loop's
 -- own next throttled probe instead of whatever probe accepted the claim
 -- (2026-09-19 fix for a spurious near-instant corner-exceeded force-exit).
-local function acceptWallRunEntry(session: PlayerSession)
+local function acceptWallRunEntry(session: PlayerSession, constants: EffectiveMovementConstants)
 	session.traversalEntryAt = os.clock()
-	session.speedCheckPosition = session.rootPart.Position
-	session.speedCheckAt = os.clock()
+	raiseVerticalCeiling(session, wallRunEntryMaxRise(constants))
 	session.wallRunEntryNormal = nil
 	session.wallRunEntryInstance = nil
 	session.pendingWallRunClaimUntil = nil
@@ -1456,8 +1740,6 @@ end
 -- later (`pendingWallClingClaimUntil`), one source of truth.
 local function acceptWallClingEntry(session: PlayerSession)
 	session.traversalEntryAt = os.clock()
-	session.speedCheckPosition = session.rootPart.Position
-	session.speedCheckAt = os.clock()
 	session.wallClingBoostUsed = false
 	session.pendingWallClingClaimUntil = nil
 end
@@ -1465,32 +1747,27 @@ end
 -- Shared acceptance bookkeeping for a WallLeap launch -- same two-caller
 -- reasoning as `acceptWallRunEntry` above.
 local function acceptWallLeapLaunch(session: PlayerSession, context: MovementContext)
+	local constants = context.constants
 	session.traversalEntryAt = os.clock()
-	session.speedCheckPosition = session.rootPart.Position
-	session.speedCheckAt = os.clock()
-	-- One-shot launch, same short exemption DoubleJump's own impulse gets --
-	-- sized to cover the single frame the impulse needs to register, never a
-	-- sustained exemption (guideline §6).
-	session.speedSanitySuspendedUntil = os.clock()
-		+ MovementConstants.TraversalSpeedSanityGraceSeconds
 
-	-- The REAL fix for the "boost gets erased" playtest bug (2026-09-18): the
-	-- suspension window above only covers the launch INSTANT, but WallLeap's
-	-- resulting speed doesn't decay the way DoubleJump's impulse does --
-	-- Roblox applies no horizontal air drag, so the excess speed persists for
-	-- the whole flight. Without this, the very first `enforceSpeedSanity`
-	-- check after the window above expired would measure the whole flight
-	-- against the ordinary Airborne/SprintSpeed cap and snap the player
-	-- straight back to the wall, discarding the entire leap. A conservative
-	-- upper bound -- current speed + burst + push SUMMED, not
-	-- vector-combined -- so this never needs to match the client's own
-	-- `TraversalMath.WallLeapVelocity` bit for bit: real vector addition of
-	-- two roughly perpendicular components is always <= this sum.
-	-- `effectiveMaxSpeed` consults it; cleared the instant this session lands
-	-- (`fsm.changed` above).
-	session.wallLeapAllowedSpeed = context.horizontalVelocity.Magnitude
-		+ context.constants.WallLeapBurstForce
-		+ context.constants.WallLeapPushForce
+	-- The REAL fix for the "boost gets erased" playtest bug (2026-09-18):
+	-- WallLeap's resulting speed doesn't decay -- Roblox applies no horizontal
+	-- air drag, so the excess persists for the whole flight, and without this
+	-- the flight would be measured against the ordinary Airborne cap and
+	-- snapped back to the wall. Derived from server-known constants only
+	-- (audit M-003): the old version added the client's replicated velocity,
+	-- which a cheater could set to anything for one frame before the claim.
+	-- `effectiveMaxSpeed` consults it; cleared on landing (`fsm.changed`).
+	session.wallLeapAllowedSpeed = TraversalMath.WallLeapMaxHorizontalSpeed(
+		constants.WallRunSpeed,
+		constants.WallRunClingMaxCorrectionSpeed,
+		constants.WallLeapBurstForce,
+		constants.WallLeapPushForce
+	)
+	raiseVerticalCeiling(
+		session,
+		TraversalMath.BallisticRise(constants.WallLeapUpwardForce, Workspace.Gravity)
+	)
 
 	-- Mirrors the client's own synchronous two-step (WallLeapState.Enter):
 	-- hand straight back to Airborne in the SAME call, matching the client's
@@ -1521,37 +1798,55 @@ end
 -- `CanEnter`/topology check -- off whatever fresher server state THIS
 -- Heartbeat has, every Heartbeat, until it succeeds or the buffer window
 -- closes. Never invents new legality of its own.
+local function bufferedFor(pendingUntil: number): number
+	return MovementConstants.WallRunClaimBufferSeconds - (pendingUntil - os.clock())
+end
+
 local function retryBufferedTraversalClaims(session: PlayerSession)
 	local now = os.clock()
+	local current = session.fsm.current
+
+	-- Airborne is where a buffered WallRun/WallCling claim can land. DoubleJump
+	-- keeps the buffer alive too (audit M-009): the server times DoubleJump ->
+	-- Airborne from its own later accept, so a claim for the client's
+	-- post-DoubleJump move can arrive while the mirror is still a few ms short
+	-- of handing back to Airborne. Anything else (landed, moved into some other
+	-- move entirely) means the gesture this claim wanted no longer applies.
+	local airborneFamily = current == MovementStates.Airborne
+		or current == MovementStates.DoubleJump
 
 	if session.pendingWallRunClaimUntil then
-		if now >= session.pendingWallRunClaimUntil then
+		if now >= session.pendingWallRunClaimUntil or not airborneFamily then
 			session.pendingWallRunClaimUntil = nil
-		elseif session.fsm.current == MovementStates.Airborne then
+		elseif current == MovementStates.Airborne then
 			local context = buildContext(session)
+			local capBefore = effectiveMaxSpeed(session, context.constants)
+			local waited = bufferedFor(session.pendingWallRunClaimUntil)
 			if session.fsm:RequestTransition(MovementStates.WallRun, context) then
-				acceptWallRunEntry(session)
+				acceptWallRunEntry(session, context.constants)
+				creditClaimLatency(session, capBefore, context.constants, waited)
 			end
-		else
-			-- No longer airborne (landed, or moved into some other move
-			-- entirely) -- the gesture this claim wanted no longer applies.
-			session.pendingWallRunClaimUntil = nil
 		end
 	end
 
+	-- Landed, or otherwise left the WallRun/Airborne family entirely (e.g. the
+	-- buffered WallRun claim above never itself landed) -- the leap this claim
+	-- wanted no longer makes sense.
 	if session.pendingWallLeapClaimUntil then
-		if now >= session.pendingWallLeapClaimUntil then
+		current = session.fsm.current
+		if
+			now >= session.pendingWallLeapClaimUntil
+			or (current ~= MovementStates.WallRun and current ~= MovementStates.Airborne)
+		then
 			session.pendingWallLeapClaimUntil = nil
-		elseif session.fsm.current == MovementStates.WallRun then
+		elseif current == MovementStates.WallRun then
 			local context = buildContext(session)
+			local capBefore = effectiveMaxSpeed(session, context.constants)
+			local waited = bufferedFor(session.pendingWallLeapClaimUntil)
 			if session.fsm:RequestTransition(MovementStates.WallLeap, context) then
 				acceptWallLeapLaunch(session, context)
+				creditClaimLatency(session, capBefore, context.constants, waited)
 			end
-		elseif session.fsm.current ~= MovementStates.Airborne then
-			-- Landed, or otherwise left the WallRun/Airborne family entirely
-			-- (e.g. the buffered WallRun claim above never itself landed) --
-			-- the leap this claim wanted no longer makes sense.
-			session.pendingWallLeapClaimUntil = nil
 		end
 	end
 
@@ -1564,17 +1859,17 @@ local function retryBufferedTraversalClaims(session: PlayerSession)
 	-- before `mirrorPassiveTransitions`/this function -- see the Heartbeat
 	-- loop's own ordering comment).
 	if session.pendingWallClingClaimUntil then
-		if now >= session.pendingWallClingClaimUntil then
+		current = session.fsm.current
+		if
+			now >= session.pendingWallClingClaimUntil
+			or (current ~= MovementStates.Airborne and current ~= MovementStates.DoubleJump)
+		then
 			session.pendingWallClingClaimUntil = nil
-		elseif session.fsm.current == MovementStates.Airborne then
+		elseif current == MovementStates.Airborne then
 			local context = buildContext(session)
 			if session.fsm:RequestTransition(MovementStates.WallCling, context) then
 				acceptWallClingEntry(session)
 			end
-		else
-			-- No longer airborne (landed, or moved into some other move
-			-- entirely) -- the gesture this claim wanted no longer applies.
-			session.pendingWallClingClaimUntil = nil
 		end
 	end
 end
@@ -1615,8 +1910,11 @@ local function retryBufferedSprintClaim(session: PlayerSession)
 		return
 	end
 
+	local capBefore = effectiveMaxSpeed(session, context.constants)
+	local waited = bufferedFor(session.pendingSprintClaimUntil)
 	if session.fsm:RequestTransition(MovementStates.Sprint, context) then
 		session.pendingSprintClaimUntil = nil
+		creditClaimLatency(session, capBefore, context.constants, waited)
 	end
 end
 
@@ -1666,6 +1964,7 @@ local function onClaimTraversalMove(player: Player, claim: Network.ClaimableTrav
 	-- is internally throttled, so the plain call above wasn't actually fresh.
 	-- `updateWallClingQuery` gets the identical forced-fresh treatment for the
 	-- same reason (docs/WallClimbingPlan.md §11.2).
+	updateSupport(session)
 	updateWallRunQuery(session, true)
 	updateWallClingQuery(session, true)
 	mirrorPassiveTransitions(session)
@@ -1682,20 +1981,22 @@ local function onClaimTraversalMove(player: Player, claim: Network.ClaimableTrav
 	end
 
 	local context = buildContext(session)
+	local constants = context.constants
+	local capBefore = effectiveMaxSpeed(session, constants)
 	if session.fsm:RequestTransition(claimedState, context) then
 		if claimedState == MovementStates.DoubleJump then
 			session.traversalEntryAt = os.clock()
-			session.speedCheckPosition = session.rootPart.Position
-			session.speedCheckAt = os.clock()
 			session.doubleJumpUsed = true
-			-- Exemption window (TRAVERSAL-ROADMAP.md §7.4, shipped alongside
-			-- Phase 1 per the roadmap's own risk register -- without it, this
-			-- move's residual momentum on landing would immediately rubber-band
-			-- against `enforceSpeedSanity`'s cap for the tier it's landing into).
-			session.speedSanitySuspendedUntil = os.clock()
-				+ MovementConstants.TraversalSpeedSanityGraceSeconds
+			raiseVerticalCeiling(
+				session,
+				TraversalMath.DoubleJumpMaxRise(
+					constants.DoubleJumpForce,
+					constants.DoubleJumpDecayDurationSeconds,
+					Workspace.Gravity
+				)
+			)
 		elseif claimedState == MovementStates.WallRun then
-			acceptWallRunEntry(session)
+			acceptWallRunEntry(session, constants)
 		elseif claimedState == MovementStates.WallLeap then
 			acceptWallLeapLaunch(session, context)
 		elseif claimedState == MovementStates.WallCling then
@@ -1703,9 +2004,12 @@ local function onClaimTraversalMove(player: Player, claim: Network.ClaimableTrav
 		elseif claimedState == MovementStates.WallBoost then
 			session.wallClingBoostUsed = true
 			session.wallBoostStartedAt = os.clock()
-			session.speedCheckPosition = session.rootPart.Position
-			session.speedCheckAt = os.clock()
+			raiseVerticalCeiling(
+				session,
+				TraversalMath.BallisticRise(constants.WallBoostUpwardForce, Workspace.Gravity)
+			)
 		end
+		creditClaimLatency(session, capBefore, constants)
 		return
 	end
 
@@ -1750,26 +2054,67 @@ local function onClaimTraversalMove(player: Player, claim: Network.ClaimableTrav
 	end
 end
 
+-- The one teardown path for a session (audit M-011/M-023): death, character
+-- removal, replacement, and leaving all end here, so the session's trove is
+-- destroyed exactly once and the Heartbeat loop stops touching the old rig.
+local function destroySession(player: Player)
+	local session = sessions[player]
+	if session then
+		sessions[player] = nil
+		session._trove:Destroy()
+	end
+end
+
+-- Per-player connections (CharacterAdded/CharacterRemoving), outliving any
+-- single character life -- destroyed on PlayerRemoving.
+local playerTroves: { [Player]: Trove.Trove } = {}
+
 local function onPlayerAdded(player: Player)
+	local playerTrove = Trove.new()
+	playerTroves[player] = playerTrove
+
 	local function onCharacterAdded(character: Model)
+		destroySession(player)
 		local humanoid = character:WaitForChild("Humanoid") :: Humanoid
 		local rootPart = character:WaitForChild("HumanoidRootPart") :: BasePart
-		sessions[player] = createSession(player, humanoid, rootPart)
+		-- The waits above yield; a newer character (or a leave) may have
+		-- arrived meanwhile, and this stale rig must not claim the session.
+		if player.Character ~= character or playerTroves[player] ~= playerTrove then
+			return
+		end
+		local session = createSession(player, humanoid, rootPart)
+		sessions[player] = session
+		-- Movement-only teardown, never a combat-defeat trigger (ARCHITECTURE
+		-- §12): a dead rig stops being mirrored/validated/corrected.
+		session._trove:Connect(humanoid.Died, function()
+			if sessions[player] == session then
+				destroySession(player)
+			end
+		end)
 	end
 
-	player.CharacterAdded:Connect(onCharacterAdded)
+	playerTrove:Connect(player.CharacterAdded, onCharacterAdded)
+	playerTrove:Connect(player.CharacterRemoving, function(character: Model)
+		local session = sessions[player]
+		if session and session.humanoid.Parent == character then
+			destroySession(player)
+		end
+	end)
 	if player.Character then
-		onCharacterAdded(player.Character)
+		task.spawn(onCharacterAdded, player.Character)
 	end
 end
 
 local function onPlayerRemoving(player: Player)
-	local session = sessions[player]
-	if session then
-		session.fsm:Destroy()
+	destroySession(player)
+	local playerTrove = playerTroves[player]
+	if playerTrove then
+		playerTroves[player] = nil
+		playerTrove:Destroy()
 	end
-	sessions[player] = nil
-	speedViolations:Clear(player)
+	for _, tracker in pairs(violationTrackers) do
+		tracker:Clear(player)
+	end
 end
 
 -- The real exploit surface (see docs/ARCHITECTURE.md §5): a modified client could
@@ -1779,6 +2124,36 @@ end
 local function onRequestMovementTransition(player: Player, claim: Network.ClaimableMovementState)
 	local session = sessions[player]
 	if not session then
+		return
+	end
+
+	-- Crouch/Slide (docs/MOVEMENT.md §9): these two DON'T name an FSM target
+	-- state, unlike every other claim here -- they only set/clear this
+	-- session's own `crouchHeld` flag. No dwell timer, no FSM attempt at all;
+	-- `mirrorPassiveTransitions` (next Heartbeat) is what turns this into an
+	-- actual transition, the same way it already turns `moveIntent` into
+	-- Idle<->Walk. Resent by the client as a level every second (audit M-006),
+	-- so both are idempotent and gated by their own limiter.
+	if claim == "CameraLocked" or claim == "CameraUnlocked" then
+		if session.levelRateLimiter:TryAcquire() then
+			session.cameraLocked = claim == "CameraLocked"
+		end
+		return
+	end
+
+	if claim == "CrouchDown" or claim == "CrouchUp" then
+		if not session.levelRateLimiter:TryAcquire() then
+			return
+		end
+		if claim == "CrouchDown" then
+			session.crouchHeld = true
+		else
+			session.crouchHeld = false
+			-- Crouch-lock re-arm (SlideJump landing fix): mirrors the client's
+			-- own `crouchSuppressed` clear, which happens whenever Ctrl is up --
+			-- a CrouchUp level report IS that fact server-side.
+			session.crouchSuppressed = false
+		end
 		return
 	end
 
@@ -1794,29 +2169,12 @@ local function onRequestMovementTransition(player: Player, claim: Network.Claima
 		return
 	end
 
-	-- Crouch/Slide (docs/MOVEMENT.md §9): these two DON'T name an FSM target
-	-- state, unlike every other claim here -- they only set/clear this
-	-- session's own `crouchHeld` flag. No dwell timer, no FSM attempt at all;
-	-- `mirrorPassiveTransitions` (next Heartbeat) is what turns this into an
-	-- actual transition, the same way it already turns `moveIntent` into
-	-- Idle<->Walk. Simpler than Sprint's claim handling on purpose -- there's
-	-- no dwell-timestamp machinery to copy where it doesn't apply.
-	if claim == "CrouchDown" then
-		session.crouchHeld = true
-		return
-	elseif claim == "CrouchUp" then
-		session.crouchHeld = false
-		-- Crouch-lock re-arm (SlideJump landing fix): mirrors the client's own
-		-- `crouchSuppressed` clear on the same real key-up edge -- this claim
-		-- IS that edge server-side, there's no separate signal to wait for.
-		session.crouchSuppressed = false
-		return
-	end
-
 	local claimedState = if claim == "Run" then MovementStates.Run else MovementStates.Sprint
 	local context = buildContext(session)
+	local capBefore = effectiveMaxSpeed(session, context.constants)
 
 	if session.fsm:RequestTransition(claimedState, context) then
+		creditClaimLatency(session, capBefore, context.constants)
 		-- A fresh accept on either claim invalidates any earlier buffered
 		-- Sprint retry (2026-09-21 investigation, see `pendingSprintClaimUntil`'s
 		-- own PlayerSession comment): a new "Run" claim starts a brand new
@@ -1929,7 +2287,7 @@ function MovementValidationService.Init()
 
 	Players.PlayerAdded:Connect(onPlayerAdded)
 	Players.PlayerRemoving:Connect(onPlayerRemoving)
-	for _, player in Players:GetPlayers() do
+	for _, player in ipairs(Players:GetPlayers()) do
 		onPlayerAdded(player)
 	end
 
@@ -1943,8 +2301,24 @@ function MovementValidationService.Init()
 	CharacterTeleported:Connect(function(player: Player)
 		local session = sessions[player]
 		if session then
-			session.speedCheckPosition = session.rootPart.Position
-			session.speedCheckAt = os.clock()
+			resetSpeedWindow(session)
+			session.verticalCeilingY = session.rootPart.Position.Y
+				+ TraversalMath.BallisticRise(
+					MovementTuningState.GetEffective(player).JumpPower,
+					Workspace.Gravity
+				)
+			session.verticalExcessSince = nil
+		end
+	end)
+
+	-- The exemption hook for server-granted upward travel (audit M-001): lets
+	-- knockback, launch pads or Qinggong lift a player without tripping the
+	-- vertical ceiling, measured from wherever the player is right now.
+	VerticalAllowanceGranted:Connect(function(player: Player, rise: number)
+		local session = sessions[player]
+		if session then
+			session.verticalCeilingY =
+				math.max(session.verticalCeilingY, session.rootPart.Position.Y + math.max(rise, 0))
 		end
 	end)
 
@@ -1956,6 +2330,9 @@ function MovementValidationService.Init()
 	-- design decision, not a drive-by cleanup -- open scalability question for
 	-- whenever a future traversal phase adds a ninth check here.
 	--
+	-- `updateSupport` runs first: every "is this character grounded" read in
+	-- this Heartbeat (the wall probes, the mirror, the vertical ceiling) goes
+	-- through `isSessionGrounded`, which needs this frame's support probe.
 	-- `updateWallRunQuery`/`updateWallClingQuery` both run BEFORE
 	-- `mirrorPassiveTransitions` for the same same-frame-race reason
 	-- `updatePeakHeight` already does (guideline §6): the sustain check inside
@@ -1963,10 +2340,13 @@ function MovementValidationService.Init()
 	-- frame's. `retryBufferedTraversalClaims`/`retryBufferedSprintClaim` both
 	-- run AFTER `mirrorPassiveTransitions` for the identical reason -- a
 	-- buffered retry needs to see THIS frame's mirrored state (e.g. a landing
-	-- `mirrorPassiveTransitions` just resolved), not last frame's.
+	-- `mirrorPassiveTransitions` just resolved), not last frame's. The vertical
+	-- ceiling runs after every claim path, so a rise accepted this frame is
+	-- already credited before it is measured.
 	RunService.Heartbeat:Connect(function()
-		for _, session in sessions do
+		for _, session in pairs(sessions) do
 			local constants = MovementTuningState.GetEffective(session.player)
+			updateSupport(session)
 			updatePeakHeight(session)
 			updateWallRunQuery(session)
 			updateWallClingQuery(session)
@@ -1975,7 +2355,7 @@ function MovementValidationService.Init()
 			retryBufferedSprintClaim(session)
 			updateSlideGroundQuery(session, constants)
 			enforceSpeedSanity(session, constants)
-			enforceDoubleJumpTrajectory(session, constants)
+			enforceVerticalCeiling(session, constants)
 			broadcastDebugState(session)
 		end
 	end)

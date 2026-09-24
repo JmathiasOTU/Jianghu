@@ -18,7 +18,6 @@ export type TunableConstantName =
 	| "SprintSpeed"
 	| "JumpPower"
 	| "SprintForwardDeadzone"
-	| "SpeedToleranceMultiplier"
 	| "CrouchSpeed"
 	| "SlideDecayRate"
 	| "SlideEntrySpeedMultiplier"
@@ -74,7 +73,6 @@ export type EffectiveMovementConstants = {
 	SprintSpeed: number,
 	JumpPower: number,
 	SprintForwardDeadzone: number,
-	SpeedToleranceMultiplier: number,
 	CrouchSpeed: number,
 	SlideDecayRate: number,
 	SlideEntrySpeedMultiplier: number,
@@ -125,7 +123,6 @@ local TUNABLE_NAMES: { TunableConstantName } = {
 	"SprintSpeed",
 	"JumpPower",
 	"SprintForwardDeadzone",
-	"SpeedToleranceMultiplier",
 	"CrouchSpeed",
 	"SlideDecayRate",
 	"SlideEntrySpeedMultiplier",
@@ -168,10 +165,10 @@ local TUNABLE_NAMES: { TunableConstantName } = {
 
 -- Sanity bounds for RequestSetTuning (Server/Services/MovementTuningService.luau)
 -- -- not a tuning decision in themselves, just wide-enough guardrails against a
--- value that would break the movement math outright (e.g. a negative speed, or
--- a SpeedToleranceMultiplier below 1x, which would make the sanity check
--- STRICTER than the tier it's supposed to grace and false-positive on ordinary
--- jitter -- the exact class of bug docs/MOVEMENT.md §5 already fixed once).
+-- value that would break the movement math outright (e.g. a negative speed).
+-- Server validation tolerances are deliberately NOT in this set (audit M-017):
+-- a live knob on one is exactly the "nudge a number until the false flag goes
+-- away" pattern docs/ARCHITECTURE.md §9 forbids.
 local VALID_RANGES: { [TunableConstantName]: { min: number, max: number } } = {
 	RunDoubleTapWindowSeconds = { min = 0.05, max = 2 },
 	SprintThresholdSeconds = { min = 0, max = 60 },
@@ -180,7 +177,6 @@ local VALID_RANGES: { [TunableConstantName]: { min: number, max: number } } = {
 	SprintSpeed = { min = 0, max = 500 },
 	JumpPower = { min = 0, max = 500 },
 	SprintForwardDeadzone = { min = -1, max = 1 },
-	SpeedToleranceMultiplier = { min = 1, max = 10 },
 	CrouchSpeed = { min = 0, max = 500 },
 	SlideDecayRate = { min = 0.1, max = 500 },
 	SlideEntrySpeedMultiplier = { min = 0.5, max = 5 },
@@ -239,57 +235,49 @@ local MovementTuning = {}
 
 MovementTuning.Names = TUNABLE_NAMES
 
+-- Every tunable name must be a real numeric MovementConstants key with a
+-- valid range -- checked once at require time, so a typo or a half-added key
+-- fails loudly on load instead of reading nil in play (audit M-028).
+for _, name in ipairs(TUNABLE_NAMES) do
+	assert(
+		type((MovementConstants :: any)[name]) == "number",
+		`MovementTuning: "{name}" has no numeric MovementConstants value`
+	)
+	assert(VALID_RANGES[name] ~= nil, `MovementTuning: "{name}" has no VALID_RANGES entry`)
+end
+
 -- Fresh copy of the shipped values every time -- callers may freely mutate
--- what they get back without risking corrupting the one true default.
+-- what they get back without risking corrupting the one true default. Built
+-- from TUNABLE_NAMES rather than listed by hand (audit M-028).
 function MovementTuning.Defaults(): EffectiveMovementConstants
-	return {
-		RunDoubleTapWindowSeconds = MovementConstants.RunDoubleTapWindowSeconds,
-		SprintThresholdSeconds = MovementConstants.SprintThresholdSeconds,
-		WalkSpeed = MovementConstants.WalkSpeed,
-		RunSpeed = MovementConstants.RunSpeed,
-		SprintSpeed = MovementConstants.SprintSpeed,
-		JumpPower = MovementConstants.JumpPower,
-		SprintForwardDeadzone = MovementConstants.SprintForwardDeadzone,
-		SpeedToleranceMultiplier = MovementConstants.SpeedToleranceMultiplier,
-		CrouchSpeed = MovementConstants.CrouchSpeed,
-		SlideDecayRate = MovementConstants.SlideDecayRate,
-		SlideEntrySpeedMultiplier = MovementConstants.SlideEntrySpeedMultiplier,
-		SlideJumpBoostAmount = MovementConstants.SlideJumpBoostAmount,
-		AnimationFadeTimeSeconds = MovementConstants.AnimationFadeTimeSeconds,
-		LandingAnimationHoldSeconds = MovementConstants.LandingAnimationHoldSeconds,
-		HardLandingHeightThreshold = MovementConstants.HardLandingHeightThreshold,
-		HardLandingDurationSeconds = MovementConstants.HardLandingDurationSeconds,
-		MediumLandingHeightThreshold = MovementConstants.MediumLandingHeightThreshold,
-		MediumLandingDurationSeconds = MovementConstants.MediumLandingDurationSeconds,
-		MediumLandingSpeedMultiplier = MovementConstants.MediumLandingSpeedMultiplier,
-		DoubleJumpForce = MovementConstants.DoubleJumpForce,
-		DoubleJumpDecayDurationSeconds = MovementConstants.DoubleJumpDecayDurationSeconds,
-		SlideSlopeAngleThresholdDegrees = MovementConstants.SlideSlopeAngleThresholdDegrees,
-		SlideMaxWalkableSlopeDegrees = MovementConstants.SlideMaxWalkableSlopeDegrees,
-		SlideSlopeAmplificationCap = MovementConstants.SlideSlopeAmplificationCap,
-		SlideGroundRaycastThrottleSeconds = MovementConstants.SlideGroundRaycastThrottleSeconds,
-		WallRunMinEntrySpeed = MovementConstants.WallRunMinEntrySpeed,
-		WallRunEntryDotThreshold = MovementConstants.WallRunEntryDotThreshold,
-		WallRunSpeed = MovementConstants.WallRunSpeed,
-		WallRunSinkSpeed = MovementConstants.WallRunSinkSpeed,
-		WallRunClingDistance = MovementConstants.WallRunClingDistance,
-		WallRunClingCorrectionRate = MovementConstants.WallRunClingCorrectionRate,
-		WallRunClingMaxCorrectionSpeed = MovementConstants.WallRunClingMaxCorrectionSpeed,
-		WallRunMaxNormalDeviationDegrees = MovementConstants.WallRunMaxNormalDeviationDegrees,
-		WallRunMaxDurationSeconds = MovementConstants.WallRunMaxDurationSeconds,
-		WallLeapBurstForce = MovementConstants.WallLeapBurstForce,
-		WallLeapPushForce = MovementConstants.WallLeapPushForce,
-		WallLeapUpwardForce = MovementConstants.WallLeapUpwardForce,
-		WallClingMaxDuration = MovementConstants.WallClingMaxDuration,
-		WallClingMaxFacingAngleDegrees = MovementConstants.WallClingMaxFacingAngleDegrees,
-		WallClingDropInputThreshold = MovementConstants.WallClingDropInputThreshold,
-		WallClingTimeoutLockout = MovementConstants.WallClingTimeoutLockout,
-		WallClingDropLockout = MovementConstants.WallClingDropLockout,
-		WallClingPostBoostCooldown = MovementConstants.WallClingPostBoostCooldown,
-		WallBoostUpwardForce = MovementConstants.WallBoostUpwardForce,
-		WallBoostSeparationSpeed = MovementConstants.WallBoostSeparationSpeed,
-		WallBoostStateDuration = MovementConstants.WallBoostStateDuration,
-	}
+	local defaults = {}
+	for _, name in ipairs(TUNABLE_NAMES) do
+		defaults[name] = (MovementConstants :: any)[name]
+	end
+	return defaults :: any
+end
+
+-- The TuningState wire format (network.zap): one entry per tunable name, so
+-- adding a tunable never touches the network schema or a hand-written mapper.
+export type TuningEntry = { name: TunableConstantName, value: number }
+
+function MovementTuning.ToEntries(constants: EffectiveMovementConstants): { TuningEntry }
+	local entries = table.create(#TUNABLE_NAMES)
+	for _, name in ipairs(TUNABLE_NAMES) do
+		table.insert(entries, { name = name, value = constants[name] })
+	end
+	return entries
+end
+
+-- Starts from the shipped defaults so a missing entry can never leave a nil.
+function MovementTuning.FromEntries(entries: { TuningEntry }): EffectiveMovementConstants
+	local constants = MovementTuning.Defaults() :: any
+	for _, entry in ipairs(entries) do
+		if VALID_RANGES[entry.name] then
+			constants[entry.name] = entry.value
+		end
+	end
+	return constants
 end
 
 -- Merges a (possibly nil, possibly partial) per-session override table over
@@ -299,7 +287,7 @@ function MovementTuning.WithOverrides(
 ): EffectiveMovementConstants
 	local effective = MovementTuning.Defaults()
 	if overrides then
-		for name, value in overrides do
+		for name, value in pairs(overrides) do
 			effective[name] = value
 		end
 	end

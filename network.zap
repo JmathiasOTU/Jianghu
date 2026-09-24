@@ -38,7 +38,18 @@ opt write_checks = true
 -- decision. The server only ever uses these two to set/clear one session
 -- flag (`PlayerSession.crouchHeld`); every resulting FSM transition is
 -- mirrored passively from it, the same way Idle<->Walk already is.
-type ClaimableMovementState = enum { "Run", "Sprint", "CrouchDown", "CrouchUp" }
+-- "CameraLocked"/"CameraUnlocked" (audit M-020) are a second level claim of
+-- the same kind: Shift Lock/first-person state. The server used to read it
+-- off Humanoid.AutoRotate, which the client writes locally and which does not
+-- replicate, so the server never saw a locked camera.
+type ClaimableMovementState = enum {
+	"Run",
+	"Sprint",
+	"CrouchDown",
+	"CrouchUp",
+	"CameraLocked",
+	"CameraUnlocked",
+}
 
 event RequestMovementTransition = {
 	from: Client,
@@ -143,7 +154,6 @@ type TunableConstantName = enum {
 	"SprintSpeed",
 	"JumpPower",
 	"SprintForwardDeadzone",
-	"SpeedToleranceMultiplier",
 	"CrouchSpeed",
 	"SlideDecayRate",
 	"SlideEntrySpeedMultiplier",
@@ -198,63 +208,20 @@ event RequestSetTuning = {
 -- over MovementConstants, or the raw constants if nothing is overridden) so
 -- client and server read back the exact same numbers -- a divergence here is
 -- exactly the class of bug the 2026-09-13 rubber-banding investigation
--- (docs/MOVEMENT.md §5) had to fix once already. Struct field names are
--- lowerCamel per this file's own convention (see MovementDebugState above);
--- Server/Services/MovementTuningService.luau and
--- Client/Controllers/Movement/TuningSnapshot.luau each do the one small
--- name-case mapping to/from Shared/Movement/MovementTuning's PascalCase keys.
+-- (docs/MOVEMENT.md §5) had to fix once already. Sent as a list of
+-- name/value pairs keyed by the same TunableConstantName enum RequestSetTuning
+-- uses (audit M-028), so adding a tunable never touches this schema --
+-- Shared/Movement/MovementTuning.luau's ToEntries/FromEntries convert.
+type TuningEntry = struct {
+	name: TunableConstantName,
+	value: f32,
+}
+
 event TuningState = {
 	from: Server,
 	type: Reliable,
 	call: SingleSync,
-	data: struct {
-		runDoubleTapWindowSeconds: f32,
-		sprintThresholdSeconds: f32,
-		walkSpeed: f32,
-		runSpeed: f32,
-		sprintSpeed: f32,
-		jumpPower: f32,
-		sprintForwardDeadzone: f32,
-		speedToleranceMultiplier: f32,
-		crouchSpeed: f32,
-		slideDecayRate: f32,
-		slideEntrySpeedMultiplier: f32,
-		slideJumpBoostAmount: f32,
-		animationFadeTimeSeconds: f32,
-		landingAnimationHoldSeconds: f32,
-		hardLandingHeightThreshold: f32,
-		hardLandingDurationSeconds: f32,
-		mediumLandingHeightThreshold: f32,
-		mediumLandingDurationSeconds: f32,
-		mediumLandingSpeedMultiplier: f32,
-		doubleJumpForce: f32,
-		doubleJumpDecayDurationSeconds: f32,
-		slideSlopeAngleThresholdDegrees: f32,
-		slideMaxWalkableSlopeDegrees: f32,
-		slideSlopeAmplificationCap: f32,
-		slideGroundRaycastThrottleSeconds: f32,
-		wallRunMinEntrySpeed: f32,
-		wallRunEntryDotThreshold: f32,
-		wallRunSpeed: f32,
-		wallRunSinkSpeed: f32,
-		wallRunClingDistance: f32,
-		wallRunClingCorrectionRate: f32,
-		wallRunClingMaxCorrectionSpeed: f32,
-		wallRunMaxNormalDeviationDegrees: f32,
-		wallRunMaxDurationSeconds: f32,
-		wallLeapBurstForce: f32,
-		wallLeapPushForce: f32,
-		wallLeapUpwardForce: f32,
-		wallClingMaxDuration: f32,
-		wallClingMaxFacingAngleDegrees: f32,
-		wallClingDropInputThreshold: f32,
-		wallClingTimeoutLockout: f32,
-		wallClingDropLockout: f32,
-		wallClingPostBoostCooldown: f32,
-		wallBoostUpwardForce: f32,
-		wallBoostSeparationSpeed: f32,
-		wallBoostStateDuration: f32,
-	},
+	data: TuningEntry[],
 }
 
 -- Noclip/fly scouting tool (F4 overlay, developer-only) ----------------------

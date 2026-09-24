@@ -171,14 +171,21 @@ function WallRunState.Update(_dt: number, context: ClientMovementContext)
 	applyVelocity(context, wallQuery)
 end
 
-function WallRunState.Exit(context: ClientMovementContext)
-	context.characterMover:ClearVelocityOverride()
-	context.facingController:SetLockDirection(nil)
+-- Module-scope state outlives the FSM, and a life that ends mid-run never
+-- calls Exit (audit M-022) -- Movement/init.luau resets every state module at
+-- the start of each life.
+function WallRunState.Reset()
 	entryNormal = nil
 	entryTangent = nil
 	entryTimestamp = nil
 	entrySide = nil
 	entryInstance = nil
+end
+
+function WallRunState.Exit(context: ClientMovementContext)
+	context.characterMover:ClearVelocityOverride()
+	context.facingController:SetLockDirection(nil)
+	WallRunState.Reset()
 end
 
 return WallRunState

@@ -73,7 +73,11 @@ local function resolveDirectionBucket(facing: Vector3, moveDirection: Vector3): 
 		degrees += 360
 	end
 
-	local index = math.floor((degrees + 22.5) / 45) % 8
+	-- One equal sector per direction name, centred on it (audit M-031: derived
+	-- from DIRECTION_NAMES instead of hardcoding 45/22.5/8).
+	local bucketCount = #DIRECTION_NAMES
+	local sector = 360 / bucketCount
+	local index = math.floor((degrees + sector / 2) / sector) % bucketCount
 	return DIRECTION_NAMES[index + 1]
 end
 
@@ -216,7 +220,7 @@ function LocomotionAnimator.new(
 	self._tracks.CrouchIdle = loadTrack(animator, ANIMATIONS_ROOT, "CrouchIdle", self._trove, true)
 	self._tracks.CrouchWalk = loadTrack(animator, ANIMATIONS_ROOT, "CrouchWalk", self._trove, true)
 	self._tracks.Slide = loadTrack(animator, ANIMATIONS_ROOT, "Slide", self._trove, true)
-	for _, direction in DIRECTION_NAMES do
+	for _, direction in ipairs(DIRECTION_NAMES) do
 		self._tracks["Walk_" .. direction] =
 			loadTrack(animator, WALK_FOLDER, direction, self._trove, true)
 	end
@@ -280,7 +284,7 @@ function LocomotionAnimator.new(
 	-- so a blank-AnimationId slot (`loadTrack` returning `nil`) is correctly
 	-- absent from the allow-list rather than needing a nil-check per entry.
 	local ownTracks: { [AnimationTrack]: true } = {}
-	for _, track in self._tracks do
+	for _, track in pairs(self._tracks) do
 		if track then
 			ownTracks[track] = true
 		end
@@ -499,7 +503,7 @@ function LocomotionAnimator:_playKey(key: string?)
 	-- state switch with no extra invalidation bookkeeping.
 	local fadeTime = TuningSnapshot.Get().AnimationFadeTimeSeconds
 
-	for trackKey, track in self._tracks do
+	for trackKey, track in pairs(self._tracks) do
 		if track and trackKey ~= key and track.IsPlaying then
 			track:Stop(fadeTime)
 		end

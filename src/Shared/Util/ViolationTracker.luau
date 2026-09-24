@@ -36,6 +36,9 @@ export type ViolationTracker = {
 local ViolationTracker = {}
 ViolationTracker.__index = ViolationTracker
 
+-- Exported so a debug overlay sizes its row pool from this number (audit M-031).
+ViolationTracker.HistoryLimit = HISTORY_LIMIT
+
 function ViolationTracker.new(): ViolationTracker
 	local self = setmetatable({}, ViolationTracker) :: any
 	self._violations = {} :: { [any]: Violation }

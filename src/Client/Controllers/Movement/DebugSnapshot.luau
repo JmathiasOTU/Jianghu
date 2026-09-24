@@ -69,6 +69,11 @@ local claimLog: { ClaimLogEntry } = {}
 
 local DebugSnapshot = {}
 
+-- Exported so the overlay sizes its row pools from the same numbers instead
+-- of hardcoding matching literals (audit M-031).
+DebugSnapshot.StateHistoryLimit = STATE_HISTORY_LIMIT
+DebugSnapshot.ClaimLogLimit = CLAIM_LOG_LIMIT
+
 function DebugSnapshot.Set(snapshot: MovementDebugSnapshot)
 	current = snapshot
 end

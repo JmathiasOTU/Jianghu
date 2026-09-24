@@ -5,6 +5,7 @@ local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
 local Trove = require(ReplicatedStorage.Packages.Trove)
+local MovementConstants = require(ReplicatedStorage.Shared.Constants.MovementConstants)
 
 export type FacingController = {
 	SetLockDirection: (self: FacingController, direction: Vector3?) -> (),
@@ -50,7 +51,19 @@ end
 -- new value (not currently needed, but cheaper than special-casing "already
 -- locked").
 function FacingController:SetLockDirection(direction: Vector3?)
-	self._lockDirection = direction
+	-- A zero/near-zero direction (e.g. WallRunTangent of a vertical normal)
+	-- would build a NaN CFrame in `_update` (audit M-036) -- treat it as
+	-- "no lock" instead, flattened so the rig never pitches.
+	if direction then
+		local flat = Vector3.new(direction.X, 0, direction.Z)
+		if flat.Magnitude <= MovementConstants.DirectionEpsilon then
+			self._lockDirection = nil
+			return
+		end
+		self._lockDirection = flat.Unit
+		return
+	end
+	self._lockDirection = nil
 end
 
 function FacingController:_update()

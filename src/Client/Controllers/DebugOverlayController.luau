@@ -9,6 +9,7 @@ local Workspace = game:GetService("Workspace")
 local Trove = require(ReplicatedStorage.Packages.Trove)
 local DeveloperAllowlist = require(ReplicatedStorage.Shared.Constants.DeveloperAllowlist)
 local MovementTuning = require(ReplicatedStorage.Shared.Movement.MovementTuning)
+local ViolationTracker = require(ReplicatedStorage.Shared.Util.ViolationTracker)
 local Network = require(script.Parent.Parent.Network.network)
 
 local DebugSnapshot = require(script.Parent.Movement.DebugSnapshot)
@@ -111,7 +112,7 @@ local function collectFadeTargets(root: Instance): { FadeTarget }
 	end
 
 	capture(root, "BackgroundTransparency")
-	for _, descendant in root:GetDescendants() do
+	for _, descendant in ipairs(root:GetDescendants()) do
 		if
 			descendant:IsA("Frame")
 			or descendant:IsA("TextButton")
@@ -192,7 +193,7 @@ function DebugOverlayController.Init()
 
 	local stateHistoryList = movementTab:WaitForChild("StateHistorySection"):WaitForChild("List")
 	local stateHistoryRows: { TextLabel } = {}
-	for i = 1, 10 do
+	for i = 1, DebugSnapshot.StateHistoryLimit do
 		stateHistoryRows[i] = stateHistoryList:WaitForChild("Row" .. i) :: TextLabel
 	end
 
@@ -208,13 +209,13 @@ function DebugOverlayController.Init()
 	local violationHistoryList =
 		movementTab:WaitForChild("ViolationHistorySection"):WaitForChild("List")
 	local violationHistoryRows: { TextLabel } = {}
-	for i = 1, 5 do
+	for i = 1, ViolationTracker.HistoryLimit do
 		violationHistoryRows[i] = violationHistoryList:WaitForChild("Row" .. i) :: TextLabel
 	end
 
 	local claimLogList = movementTab:WaitForChild("ClaimLogSection"):WaitForChild("List")
 	local claimLogRows: { TextLabel } = {}
-	for i = 1, 8 do
+	for i = 1, DebugSnapshot.ClaimLogLimit do
 		claimLogRows[i] = claimLogList:WaitForChild("Row" .. i) :: TextLabel
 	end
 
@@ -259,7 +260,7 @@ function DebugOverlayController.Init()
 		clearButton: TextButton,
 	}
 	local tuningRows: { [TunableConstantName]: TuningRowRefs } = {} :: any
-	for _, rawName in MovementTuning.Names do
+	for _, rawName in ipairs(MovementTuning.Names) do
 		local name = rawName :: TunableConstantName
 		local rowFrame = tuningTab:WaitForChild("Row_" .. name)
 		tuningRows[name] = {
@@ -300,7 +301,7 @@ function DebugOverlayController.Init()
 			-- frame before the tween catches up. Isolated per-target (not one bare
 			-- loop) for the same reason as the tween loop below -- one bad
 			-- assignment shouldn't silently skip snapping every target after it.
-			for _, target in targets do
+			for _, target in ipairs(targets) do
 				local ok, err = pcall(function()
 					(target.instance :: any)[target.property] = 1
 				end)
@@ -322,7 +323,7 @@ function DebugOverlayController.Init()
 		-- TweenService:Create/property-write failure partway through would
 		-- otherwise silently abort the whole loop, leaving every remaining target
 		-- un-tweened with no error visible anywhere near the actual cause.
-		for _, target in targets do
+		for _, target in ipairs(targets) do
 			local goal = if open then target.visibleValue else 1
 			local ok, err = pcall(function()
 				TweenService:Create(target.instance :: Instance, TWEEN_INFO, {
@@ -341,6 +342,16 @@ function DebugOverlayController.Init()
 			end
 		end
 	end
+
+	-- The fade-out's delayed hide, owned by the trove (audit M-030) so it
+	-- can't fire into a torn-down overlay.
+	local pendingHide: thread? = nil
+	trove:Add(function()
+		if pendingHide then
+			task.cancel(pendingHide)
+			pendingHide = nil
+		end
+	end)
 
 	local function setOpen(open: boolean)
 		if open == isOpen then
@@ -362,7 +373,11 @@ function DebugOverlayController.Init()
 		else
 			cornerTab.Visible = true
 			playFade(false)
-			task.delay(TWEEN_INFO.Time, function()
+			if pendingHide then
+				task.cancel(pendingHide)
+			end
+			pendingHide = task.delay(TWEEN_INFO.Time, function()
+				pendingHide = nil
 				if not isOpen then
 					panel.Visible = false
 				end
@@ -475,10 +490,10 @@ function DebugOverlayController.Init()
 		{ Movement = movementTab, World = worldTab, Tuning = tuningTab }
 
 	local function setTab(name: string)
-		for tabName, page in tabPages do
+		for tabName, page in pairs(tabPages) do
 			page.Visible = tabName == name
 		end
-		for tabName, button in tabButtons do
+		for tabName, button in pairs(tabButtons) do
 			local active = tabName == name
 			button.BackgroundColor3 = if active then ACCENT else BG_DARK
 			button.TextColor3 = if active then BG_DARK else TEXT_MUTED
@@ -516,7 +531,7 @@ function DebugOverlayController.Init()
 	local function reconcileClaimLog()
 		local claims = DebugSnapshot.GetClaimLog()
 		local now = os.clock()
-		for _, entry in claims do
+		for _, entry in ipairs(claims) do
 			if entry.reflected == nil then
 				if serverState and serverState.state == entry.state then
 					entry.reflected = true
@@ -530,7 +545,7 @@ function DebugOverlayController.Init()
 	local function renderStateHistory()
 		local history = DebugSnapshot.GetStateHistory()
 		local now = os.clock()
-		for i, label in stateHistoryRows do
+		for i, label in ipairs(stateHistoryRows) do
 			local entry = history[i]
 			if entry then
 				label.Visible = true
@@ -547,7 +562,7 @@ function DebugOverlayController.Init()
 	local function renderClaimLog()
 		local claims = DebugSnapshot.GetClaimLog()
 		local now = os.clock()
-		for i, label in claimLogRows do
+		for i, label in ipairs(claimLogRows) do
 			local entry = claims[i]
 			if entry then
 				label.Visible = true
@@ -572,7 +587,7 @@ function DebugOverlayController.Init()
 
 	local function renderViolationHistory()
 		local entries = if serverState then serverState.violations else nil
-		for i, label in violationHistoryRows do
+		for i, label in ipairs(violationHistoryRows) do
 			local entry = entries and entries[i]
 			if entry then
 				label.Visible = true
@@ -638,14 +653,14 @@ function DebugOverlayController.Init()
 		noclipToggleButton.BackgroundColor3 = if noclipActive then ACCENT else BG_DARK
 		noclipToggleButton.TextColor3 = if noclipActive then BG_DARK else TEXT_PRIMARY
 
-		for _, rawName in MovementTuning.Names do
+		-- Read once per frame, not once per row (audit M-030).
+		local focusedTextBox = UserInputService:GetFocusedTextBox()
+		local tuning = TuningSnapshot.Get() :: any
+		for _, rawName in ipairs(MovementTuning.Names) do
 			local name = rawName :: TunableConstantName
 			local refs = tuningRows[name]
-			if
-				not UserInputService:GetFocusedTextBox()
-				or UserInputService:GetFocusedTextBox() ~= refs.input
-			then
-				refs.value.Text = string.format("%.2f", (TuningSnapshot.Get() :: any)[name])
+			if focusedTextBox ~= refs.input then
+				refs.value.Text = string.format("%.2f", tuning[name])
 			end
 		end
 	end)
@@ -759,7 +774,7 @@ function DebugOverlayController.Init()
 	local waypoints: { Waypoint } = {}
 
 	local function renderWaypoints()
-		for i, refs in waypointRows do
+		for i, refs in ipairs(waypointRows) do
 			local waypoint = waypoints[i]
 			if waypoint then
 				refs.row.Visible = true
@@ -786,7 +801,7 @@ function DebugOverlayController.Init()
 
 		local position = rootPart.Position
 		local existing: Waypoint? = nil
-		for _, waypoint in waypoints do
+		for _, waypoint in ipairs(waypoints) do
 			if waypoint.name == name then
 				existing = waypoint
 				break
@@ -808,7 +823,7 @@ function DebugOverlayController.Init()
 		renderWaypoints()
 	end)
 
-	for i, refs in waypointRows do
+	for i, refs in ipairs(waypointRows) do
 		trove:Connect(refs.jumpButton.MouseButton1Click, function()
 			local waypoint = waypoints[i]
 			if waypoint then
@@ -833,7 +848,7 @@ function DebugOverlayController.Init()
 	-- controller only ever sends a claim, the server decides whether it's legal
 	-- and bounds-checked (MovementTuning.IsValidValue) before it ever affects this
 	-- session's EffectiveMovementConstants.
-	for _, rawName in MovementTuning.Names do
+	for _, rawName in ipairs(MovementTuning.Names) do
 		local name = rawName :: TunableConstantName
 		local refs = tuningRows[name]
 

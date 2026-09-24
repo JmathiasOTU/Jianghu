@@ -8,9 +8,15 @@
 -- hand-synced copies. No stored state of any kind here -- nothing in this
 -- module needs a Trove or a cleanup path.
 
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local MovementConstants = require(ReplicatedStorage.Shared.Constants.MovementConstants)
+
 local TraversalMath = {}
 
 local UP = Vector3.new(0, 1, 0)
+local EPSILON = MovementConstants.DirectionEpsilon
+local DOUBLE_JUMP_FLOOR = MovementConstants.DoubleJumpDecayFloorFraction
 
 -- WallBoost's launch vector (docs/WallClimbingPlan.md §8) -- an instant,
 -- flat impulse: a small separation push away from the wall (so the character
@@ -25,26 +31,10 @@ function TraversalMath.WallBoostVelocity(
 ): Vector3
 	local away = Vector3.new(wallNormal.X, 0, wallNormal.Z)
 	local separation = Vector3.zero
-	if away.Magnitude > 1e-3 then
+	if away.Magnitude > EPSILON then
 		separation = away.Unit * separationSpeed
 	end
 	return Vector3.new(separation.X, upwardForce, separation.Z)
-end
-
--- The exact physical envelope of WallBoost's impulse under gravity
--- (docs/WallClimbingPlan.md §8/§11.5) -- the server enforces THIS instead of a
--- padded multiplier (docs/ARCHITECTURE.md §9): it naturally decays toward the
--- separation-only floor as the upward component bleeds off under gravity, and
--- reaches its own natural end once it drops below the normal Airborne
--- ceiling -- no grace duration constant needed.
-function TraversalMath.WallBoostSpeedCeilingAt(
-	secondsSinceBoost: number,
-	upwardForce: number,
-	separationSpeed: number,
-	gravity: number
-): number
-	local upwardSpeed = math.max(upwardForce - gravity * secondsSinceBoost, 0)
-	return math.sqrt(upwardSpeed ^ 2 + separationSpeed ^ 2)
 end
 
 -- How tall a gap one boost clears (docs/WallClimbingPlan.md §8) -- for level
@@ -65,7 +55,53 @@ function TraversalMath.DoubleJumpVerticalVelocity(
 	decayDuration: number
 ): number
 	local t = if decayDuration > 0 then math.clamp(elapsed / decayDuration, 0, 1) else 1
-	return force * (1 - 0.5 * t)
+	return force * (1 - (1 - DOUBLE_JUMP_FLOOR) * t)
+end
+
+-- Height gained by a body launched straight up at `verticalSpeed` under
+-- gravity alone. Used by the server's vertical ceiling (audit M-001) for every
+-- one-shot vertical launch: the Humanoid's own jump (JumpPower), WallLeap and
+-- WallBoost all REPLACE vertical velocity rather than add to it.
+function TraversalMath.BallisticRise(verticalSpeed: number, gravity: number): number
+	local speed = math.max(verticalSpeed, 0)
+	return speed * speed / (2 * gravity)
+end
+
+-- Upper bound on DoubleJump's total rise (audit M-001). The override holds
+-- vertical speed at `DoubleJumpVerticalVelocity` (never above `force`) for
+-- `decayDuration`, then releases at half of `force` into a ballistic arc.
+-- Bounding the held phase by `force * decayDuration` (not the curve's exact
+-- 0.75 integral) absorbs the client's per-frame sampling of that curve and
+-- the one extra frame before its Update notices the window ended.
+function TraversalMath.DoubleJumpMaxRise(
+	force: number,
+	decayDuration: number,
+	gravity: number
+): number
+	return force * decayDuration + TraversalMath.BallisticRise(force * DOUBLE_JUMP_FLOOR, gravity)
+end
+
+-- Exact upper bound on WallLeap's horizontal launch speed (audit M-003),
+-- derived from server-known constants only. During WallRun the horizontal
+-- velocity is `tangent * runSpeed + normal * c` with |c| <= maxCorrection, and
+-- the leap launches along that velocity's own direction at (speed + burst)
+-- plus `push` along the wall normal. Every term of the resulting magnitude
+-- grows with c, so the bound is taken at c = maxCorrection.
+function TraversalMath.WallLeapMaxHorizontalSpeed(
+	runSpeed: number,
+	maxCorrection: number,
+	burstForce: number,
+	pushForce: number
+): number
+	local runVelocity = math.sqrt(runSpeed * runSpeed + maxCorrection * maxCorrection)
+	if runVelocity == 0 then
+		return burstForce + pushForce
+	end
+	local forward = runVelocity + burstForce
+	local alongNormal = maxCorrection / runVelocity
+	return math.sqrt(
+		forward * forward + pushForce * pushForce + 2 * pushForce * forward * alongNormal
+	)
 end
 
 -- Slide slope angle off the ground normal (mechanic 3a, TRAVERSAL-ROADMAP.md

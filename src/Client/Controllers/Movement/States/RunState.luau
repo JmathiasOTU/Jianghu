@@ -17,6 +17,11 @@ RunState.CanEnter = StateRules.CanEnter[MovementStates.Run]
 -- predicate for Sprint (via GetDuration below).
 local enteredAt: number? = nil
 
+-- Start-of-life reset (audit M-022), called by Movement/init.luau.
+function RunState.Reset()
+	enteredAt = nil
+end
+
 function RunState.Enter(context: ClientMovementContext)
 	enteredAt = os.clock()
 	context.characterMover:SetSpeed(context.constants.RunSpeed)

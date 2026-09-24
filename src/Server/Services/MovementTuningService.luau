@@ -2,6 +2,7 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
+local Trove = require(ReplicatedStorage.Packages.Trove)
 local MovementTuning = require(ReplicatedStorage.Shared.Movement.MovementTuning)
 local RateLimiter = require(ReplicatedStorage.Shared.Util.RateLimiter)
 
@@ -30,65 +31,11 @@ function MovementTuningService.GetEffective(player: Player): EffectiveMovementCo
 	return MovementTuningState.GetEffective(player)
 end
 
--- struct field names in network.zap's TuningState are lowerCamel (matching
--- this file's own MovementDebugState convention); Shared/Movement/
--- MovementTuning.luau's EffectiveMovementConstants keys are PascalCase
--- (matching MovementConstants.luau). This is the one place that maps between
--- them for the outgoing broadcast -- RequestSetTuning's `name` enum needs no
--- equivalent mapping, since its values already ARE the PascalCase names.
-local function toTuningStatePayload(constants: EffectiveMovementConstants)
-	return {
-		runDoubleTapWindowSeconds = constants.RunDoubleTapWindowSeconds,
-		sprintThresholdSeconds = constants.SprintThresholdSeconds,
-		walkSpeed = constants.WalkSpeed,
-		runSpeed = constants.RunSpeed,
-		sprintSpeed = constants.SprintSpeed,
-		jumpPower = constants.JumpPower,
-		sprintForwardDeadzone = constants.SprintForwardDeadzone,
-		speedToleranceMultiplier = constants.SpeedToleranceMultiplier,
-		crouchSpeed = constants.CrouchSpeed,
-		slideDecayRate = constants.SlideDecayRate,
-		slideEntrySpeedMultiplier = constants.SlideEntrySpeedMultiplier,
-		slideJumpBoostAmount = constants.SlideJumpBoostAmount,
-		animationFadeTimeSeconds = constants.AnimationFadeTimeSeconds,
-		landingAnimationHoldSeconds = constants.LandingAnimationHoldSeconds,
-		hardLandingHeightThreshold = constants.HardLandingHeightThreshold,
-		hardLandingDurationSeconds = constants.HardLandingDurationSeconds,
-		mediumLandingHeightThreshold = constants.MediumLandingHeightThreshold,
-		mediumLandingDurationSeconds = constants.MediumLandingDurationSeconds,
-		mediumLandingSpeedMultiplier = constants.MediumLandingSpeedMultiplier,
-		doubleJumpForce = constants.DoubleJumpForce,
-		doubleJumpDecayDurationSeconds = constants.DoubleJumpDecayDurationSeconds,
-		slideSlopeAngleThresholdDegrees = constants.SlideSlopeAngleThresholdDegrees,
-		slideMaxWalkableSlopeDegrees = constants.SlideMaxWalkableSlopeDegrees,
-		slideSlopeAmplificationCap = constants.SlideSlopeAmplificationCap,
-		slideGroundRaycastThrottleSeconds = constants.SlideGroundRaycastThrottleSeconds,
-		wallRunMinEntrySpeed = constants.WallRunMinEntrySpeed,
-		wallRunEntryDotThreshold = constants.WallRunEntryDotThreshold,
-		wallRunSpeed = constants.WallRunSpeed,
-		wallRunSinkSpeed = constants.WallRunSinkSpeed,
-		wallRunClingDistance = constants.WallRunClingDistance,
-		wallRunClingCorrectionRate = constants.WallRunClingCorrectionRate,
-		wallRunClingMaxCorrectionSpeed = constants.WallRunClingMaxCorrectionSpeed,
-		wallRunMaxNormalDeviationDegrees = constants.WallRunMaxNormalDeviationDegrees,
-		wallRunMaxDurationSeconds = constants.WallRunMaxDurationSeconds,
-		wallLeapBurstForce = constants.WallLeapBurstForce,
-		wallLeapPushForce = constants.WallLeapPushForce,
-		wallLeapUpwardForce = constants.WallLeapUpwardForce,
-		wallClingMaxDuration = constants.WallClingMaxDuration,
-		wallClingMaxFacingAngleDegrees = constants.WallClingMaxFacingAngleDegrees,
-		wallClingDropInputThreshold = constants.WallClingDropInputThreshold,
-		wallClingTimeoutLockout = constants.WallClingTimeoutLockout,
-		wallClingDropLockout = constants.WallClingDropLockout,
-		wallClingPostBoostCooldown = constants.WallClingPostBoostCooldown,
-		wallBoostUpwardForce = constants.WallBoostUpwardForce,
-		wallBoostSeparationSpeed = constants.WallBoostSeparationSpeed,
-		wallBoostStateDuration = constants.WallBoostStateDuration,
-	}
-end
-
 local function broadcast(player: Player)
-	Network.TuningState.Fire(player, toTuningStatePayload(MovementTuningState.GetEffective(player)))
+	Network.TuningState.Fire(
+		player,
+		MovementTuning.ToEntries(MovementTuningState.GetEffective(player))
+	)
 end
 
 -- Dev-gated via DevToolsService.RegisterDevOnly (docs/MOVEMENT.md §8) -- the
@@ -118,10 +65,15 @@ local onRequestSetTuning = DevToolsService.RegisterDevOnly(
 	end
 )
 
+-- Per-player connections, destroyed on PlayerRemoving (audit M-023).
+local playerTroves: { [Player]: Trove.Trove } = {}
+
 local function onPlayerAdded(player: Player)
 	rateLimiters[player] = RateLimiter.new(TUNING_CLAIMS_PER_SECOND, 1)
+	local playerTrove = Trove.new()
+	playerTroves[player] = playerTrove
 
-	player.CharacterAdded:Connect(function()
+	playerTrove:Connect(player.CharacterAdded, function()
 		-- Every new life gets the same effective numbers re-pushed so the
 		-- client's TuningSnapshot never starts a life on stale defaults --
 		-- overrides persist across respawns for the same player (a
@@ -134,12 +86,17 @@ end
 local function onPlayerRemoving(player: Player)
 	rateLimiters[player] = nil
 	MovementTuningState.Clear(player)
+	local playerTrove = playerTroves[player]
+	if playerTrove then
+		playerTroves[player] = nil
+		playerTrove:Destroy()
+	end
 end
 
 function MovementTuningService.Init()
 	Players.PlayerAdded:Connect(onPlayerAdded)
 	Players.PlayerRemoving:Connect(onPlayerRemoving)
-	for _, player in Players:GetPlayers() do
+	for _, player in ipairs(Players:GetPlayers()) do
 		onPlayerAdded(player)
 	end
 

@@ -12,7 +12,8 @@ Before opening a PR, read [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) in full
    ```bash
    zap network.zap
    selene src
-   stylua --check src
+   stylua --check src tests --glob '!src/**/Network/network.luau'
+   lune run tests/run
    ```
 4. Open a PR against `main` using the provided template. Fill in every section — reviewers will bounce PRs that skip the architecture checklist.
 

@@ -135,7 +135,9 @@ local Transitions: { [MovementState]: { MovementState } } = {
 	-- §5 snippet omits them -- LandingResolution.Resolve can land a crouched
 	-- player into either one, and leaving them out would strand the FSM in
 	-- WallRun the instant that resolution ran (the exact "Sprint dead end"
-	-- shape docs/MOVEMENT.md §2 already had to fix once).
+	-- shape docs/MOVEMENT.md §2 already had to fix once). HardLanding for the
+	-- same reason (audit M-005): a wall run entered partway down a >= threshold
+	-- fall resolves its landing to HardLanding.
 	[MovementStates.WallRun] = {
 		MovementStates.Airborne,
 		MovementStates.Idle,
@@ -144,6 +146,7 @@ local Transitions: { [MovementState]: { MovementState } } = {
 		MovementStates.Sprint,
 		MovementStates.CrouchIdle,
 		MovementStates.CrouchWalk,
+		MovementStates.HardLanding,
 		MovementStates.WallLeap,
 	},
 
@@ -312,6 +315,12 @@ local CanEnter: { [MovementState]: (context: MovementContext) -> boolean } = {
 		end
 		local wallQuery = context.wallRunQuery
 		if not wallQuery then
+			return false
+		end
+		-- No WallLeap chains on one wall (audit M-037, designer answer
+		-- 2026-09-24): the wall just leapt from stays off-limits until the
+		-- character lands, same memory WallCling already uses.
+		if context.lastWallLeapWall and wallQuery.instance == context.lastWallLeapWall then
 			return false
 		end
 		if context.horizontalVelocity.Magnitude < context.constants.WallRunMinEntrySpeed then

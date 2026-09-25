@@ -171,14 +171,20 @@ function Mirror.PassiveTransitions(session: PlayerSession)
 		-- (~`WallRunQueryThrottleSeconds` later, once rotation has caught up)
 		-- then reads the REAL normal, which can easily be > the corner budget
 		-- away from that first noisy sample -- a false corner, not a real one.
-		-- Anchoring instead off the first query `Mirror.PassiveTransitions`
-		-- itself observes (this Heartbeat loop's own natural throttled
-		-- cadence, not a claim-time forced probe) gives rotation a beat to
-		-- settle before anything gets compared against it. This doesn't
-		-- relax the anti-exploit check -- the SAME angle/duration budget still
-		-- applies from here on -- it only fixes which sample the budget is
-		-- measured against.
+		-- Anchoring instead off the first probe taken AFTER the accept gives
+		-- rotation a beat to settle before anything gets compared against it.
+		-- The cached query at the accept is the claim-time probe itself, so it
+		-- must be skipped explicitly (2026-09-25 capture: wrapping round a wall
+		-- end, that probe still saw the face just left, and the first real
+		-- probe force-exited at `elapsed=0.10` with `angleExceeded`). This
+		-- doesn't relax the anti-exploit check -- the SAME angle/duration
+		-- budget still applies from here on -- it only fixes which sample the
+		-- budget is measured against.
 		if not session.wallRunEntryNormal then
+			local enteredAt = session.traversalEntryAt or session.lastTransitionAt
+			if session.wallRunQueryAt <= enteredAt then
+				return
+			end
 			if query then
 				session.wallRunEntryNormal = query.normal
 				-- Same lazy-anchor timing as the normal above (docs/MovementSystem.md §4.6/§5) --
@@ -186,8 +192,12 @@ function Mirror.PassiveTransitions(session: PlayerSession)
 				-- is accepted) agrees with whichever wall the corner-deviation check itself is
 				-- actually anchored to.
 				session.wallRunEntryInstance = query.instance
+				return
 			end
-			return
+			-- The first post-entry probe found no wall: fall through to the
+			-- lost-wall exit below rather than waiting unanchored, which used to
+			-- skip the wall and duration checks (and hold the vertical ceiling)
+			-- for as long as no wall showed up.
 		end
 
 		local angleExceeded = query

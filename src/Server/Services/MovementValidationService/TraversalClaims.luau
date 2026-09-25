@@ -112,6 +112,41 @@ local function reportRejectedClaim(session: PlayerSession, claim: string)
 	)
 end
 
+-- WALL_TRAVERSAL_DEBUG_LOGGING only: each CanEnter[WallRun] gate as the
+-- server sees it, so a refused or dropped claim says which gate failed.
+local function describeWallRunGates(context: MovementContext): string
+	local query = context.wallRunQuery
+	local velocity = context.horizontalVelocity
+	local moveDot, faceDot = 0 / 0, 0 / 0
+	if query then
+		local tangent = TraversalMath.WallRunTangent(query.normal, velocity)
+		local move = context.moveIntent.direction
+		if move.Magnitude > 0 then
+			moveDot = move.Unit:Dot(tangent)
+		end
+		local facing = context.facingDirection
+		local flatFacing = if facing then Vector3.new(facing.X, 0, facing.Z) else Vector3.zero
+		if flatFacing.Magnitude >= MovementConstants.DirectionEpsilon then
+			faceDot = flatFacing.Unit:Dot(tangent)
+		end
+	end
+	return string.format(
+		"grounded=%s wall=%s leaptWall=%s speed=%.1f(>=%.1f) moveDot=%.2f faceDot=%.2f(>=%.2f)",
+		tostring(context.grounded),
+		tostring(query ~= nil),
+		tostring(
+			query ~= nil
+				and context.lastWallLeapWall ~= nil
+				and query.instance == context.lastWallLeapWall
+		),
+		velocity.Magnitude,
+		context.constants.WallRunMinEntrySpeed,
+		moveDot,
+		faceDot,
+		context.constants.WallRunEntryDotThreshold
+	)
+end
+
 -- Shared acceptance bookkeeping for a WallBoost launch, first attempt or a
 -- buffered retry (`pendingWallBoostClaimUntil`).
 local function acceptWallBoost(session: PlayerSession, constants: EffectiveMovementConstants)
@@ -165,6 +200,7 @@ local function acceptWallLeapLaunch(session: PlayerSession, context: MovementCon
 	-- `wallRunEntryInstance` is cleared below, mirroring the client's own
 	-- identical ordering in Movement/init.luau's `fsm.changed` handler.
 	session.lastWallLeapWall = session.wallRunEntryInstance
+	session.wallLeapLeftGround = false
 	session.wallRunEntryNormal = nil
 	session.wallRunEntryInstance = nil
 	session.pendingWallLeapClaimUntil = nil
@@ -194,8 +230,35 @@ function TraversalClaims.RetryBuffered(session: PlayerSession)
 	local airborneFamily = current == MovementStates.Airborne
 		or current == MovementStates.DoubleJump
 
+	-- A pending WallRun/WallCling claim means the client's DoubleJump is
+	-- already over: neither is reachable from DoubleJump, so the client went
+	-- through Airborne first. The server's own DoubleJump is timed from its
+	-- later accept (plus any time that claim itself sat buffered), so on a
+	-- quick double jump -> wall run it could outlast this buffer and the
+	-- claim was dropped (2026-09-25 playtest). End it here instead. Ending a
+	-- DoubleJump early gains nothing: Airborne has the same cap, and the
+	-- jump's ceiling raise was applied at its accept.
+	if
+		current == MovementStates.DoubleJump
+		and (session.pendingWallRunClaimUntil or session.pendingWallClingClaimUntil)
+		and session.fsm:RequestTransition(MovementStates.Airborne, Context.Build(session))
+	then
+		current = session.fsm.current
+	end
+
 	if session.pendingWallRunClaimUntil then
 		if now >= session.pendingWallRunClaimUntil or not airborneFamily then
+			if DebugFlags.WALL_TRAVERSAL_DEBUG_LOGGING then
+				print(
+					string.format(
+						"[WallTraversal] %s buffered WallRun claim dropped: current=%s expired=%s %s",
+						session.player.Name,
+						tostring(current),
+						tostring(now >= session.pendingWallRunClaimUntil),
+						describeWallRunGates(Context.Build(session))
+					)
+				)
+			end
 			session.pendingWallRunClaimUntil = nil
 		elseif current == MovementStates.Airborne then
 			local context = Context.Build(session)
@@ -243,6 +306,16 @@ function TraversalClaims.RetryBuffered(session: PlayerSession)
 			now >= session.pendingWallClingClaimUntil
 			or (current ~= MovementStates.Airborne and current ~= MovementStates.DoubleJump)
 		then
+			if DebugFlags.WALL_TRAVERSAL_DEBUG_LOGGING then
+				print(
+					string.format(
+						"[WallTraversal] %s buffered WallCling claim dropped: current=%s expired=%s",
+						session.player.Name,
+						tostring(current),
+						tostring(now >= session.pendingWallClingClaimUntil)
+					)
+				)
+			end
 			session.pendingWallClingClaimUntil = nil
 		elseif current == MovementStates.Airborne then
 			local context = Context.Build(session)
@@ -418,11 +491,11 @@ function TraversalClaims.OnClaim(player: Player, claim: Network.ClaimableTravers
 	then
 		print(
 			string.format(
-				"[WallTraversal] %s claim=%s REJECTED current=%s wallRunQuery=%s",
+				"[WallTraversal] %s claim=%s REJECTED current=%s %s",
 				player.Name,
 				claim,
 				tostring(session.fsm.current),
-				tostring(context.wallRunQuery ~= nil)
+				describeWallRunGates(context)
 			)
 		)
 	end

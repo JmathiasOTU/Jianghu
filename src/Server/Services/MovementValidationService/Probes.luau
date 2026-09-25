@@ -83,6 +83,15 @@ function Probes.UpdateSupport(session: PlayerSession)
 			session.doubleJumpUsed = false
 		end
 	end
+
+	-- Same for the wall just leapt from (see `wallLeapLeftGround`).
+	if session.lastWallLeapWall then
+		if not supported then
+			session.wallLeapLeftGround = true
+		elseif session.wallLeapLeftGround then
+			session.lastWallLeapWall = nil
+		end
+	end
 end
 
 -- The server's own answer to "is this character on the ground" (audit M-004).

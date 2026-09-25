@@ -296,8 +296,15 @@ export type PlayerSession = {
 	-- Wall-leap memory, server side (docs/MovementSystem.md §4.6/§5) -- the
 	-- server's OWN copy of `wallRunEntryInstance` at the instant a WallLeap
 	-- launch was accepted, never anything the client asserts. Cleared on
-	-- landing, same edge `peakHeight`/`airborneAllowedSpeed` already clear on.
+	-- landing, same edge `peakHeight`/`airborneAllowedSpeed` already clear on,
+	-- and on the first real touchdown after the leap even if the mirror never
+	-- lands (same quick-hop capture as `doubleJumpLeftGround`, 2026-09-25: the
+	-- client cleared it on a brief touchdown, the server didn't, and a wall run
+	-- back onto that wall was refused and snapped down).
 	lastWallLeapWall: BasePart?,
+	-- Whether the support probe has seen the character off the ground since
+	-- `lastWallLeapWall` was set; the next touchdown after that clears it.
+	wallLeapLeftGround: boolean,
 	-- WallBoost's own launch timestamp (docs/MovementSystem.md §8.4/§8.2)
 	-- -- a DEDICATED field, not a reuse of the generic `traversalEntryAt`
 	-- (unlike WallCling's own duration check, which does reuse it): the boost

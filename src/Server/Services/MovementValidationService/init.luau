@@ -123,6 +123,7 @@ local function createSession(player: Player, humanoid: Humanoid, rootPart: BaseP
 		wallClingLockoutUntil = nil,
 		wallClingBoostUsed = false,
 		lastWallLeapWall = nil,
+		wallLeapLeftGround = false,
 		wallBoostStartedAt = nil,
 		pendingWallClingClaimUntil = nil,
 		wallClingEnteredAt = nil,

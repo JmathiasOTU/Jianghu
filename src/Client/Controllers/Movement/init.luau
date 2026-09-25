@@ -3,6 +3,7 @@ local ContentProvider = game:GetService("ContentProvider")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
 
 local Trove = require(ReplicatedStorage.Packages.Trove)
 local StateMachine = require(ReplicatedStorage.Shared.FSM.StateMachine)
@@ -48,6 +49,7 @@ local WallRunState = require(script.States.WallRunState)
 local WallLeapState = require(script.States.WallLeapState)
 local WallClingState = require(script.States.WallClingState)
 local WallBoostState = require(script.States.WallBoostState)
+local VaultState = require(script.States.VaultState)
 
 type MovementState = MovementStates.MovementState
 type ClientMovementContext = ClientMovementContextModule.ClientMovementContext
@@ -77,6 +79,7 @@ local States = {
 	[MovementStates.WallLeap] = WallLeapState,
 	[MovementStates.WallCling] = WallClingState,
 	[MovementStates.WallBoost] = WallBoostState,
+	[MovementStates.Vault] = VaultState,
 }
 
 -- Only Run/Sprint are earned, exploit-relevant transitions that need a server
@@ -139,6 +142,11 @@ local WALLRUN_DEBUG_LOGGING = false
 -- Anchored, not a code bug. Off by default now that it's confirmed.
 local WALLCLING_TRACE_LOGGING = false
 
+-- Temporary capture for the 2026-09-25 "boost never auto-vaults" report,
+-- paired with SpatialQueries' VAULT_DEBUG_LOGGING: says when a ledge was found
+-- but CanEnter[Vault] still refused it. Flip back to false once diagnosed.
+local VAULT_TRACE_LOGGING = false
+
 local input: InputController.InputController
 
 -- The WalkSpeed each grounded tier's own Enter sets, for re-applying a live
@@ -175,6 +183,7 @@ local STATEFUL_STATE_MODULES: { { Reset: () -> () } } = {
 	WallRunState,
 	WallClingState,
 	WallBoostState,
+	VaultState,
 }
 
 local function setupCharacter(
@@ -334,6 +343,13 @@ local function setupCharacter(
 	-- `characterMover:QueryClingWall()` directly instead of reading this.
 	local wallClingQuery: SpatialQueries.ClingWallHit? = nil
 
+	-- Vault's probe (docs/MovementSystem.md §4.8): taken fresh on a Space
+	-- press and only live for that press's transition attempts.
+	local ledgeQuery: SpatialQueries.LedgeHit? = nil
+	-- Automatic vault during a boost (docs/MovementSystem.md §4.8): the
+	-- accumulator for its rise-speed-derived probe throttle.
+	local autoVaultAccumulatedDt = 0
+
 	-- Wall-leap memory (docs/MovementSystem.md §4.6/§5): the physical wall
 	-- part this life most recently wall-leapt from, nil otherwise -- set on
 	-- the WallRun -> WallLeap edge below (off `context.wallRunEntryInstance`,
@@ -364,6 +380,8 @@ local function setupCharacter(
 			wallClingElapsed = WallClingState.GetElapsed(),
 			wallClingNormal = WallClingState.GetNormal(),
 			lastWallLeapWall = lastWallLeapWall,
+			ledge = ledgeQuery,
+			lastVaultAt = VaultState.GetLastVaultAt(),
 			-- Still an open design decision (docs/MovementSystem.md §13/§2) --
 			-- "always available" until a real Qinggong/stamina resource
 			-- exists, same placeholder both sides use.
@@ -383,6 +401,9 @@ local function setupCharacter(
 			wallRunEntryNormal = WallRunState.GetEntryNormal(),
 			wallRunEntryTangent = WallRunState.GetEntryTangent(),
 			wallRunEntryInstance = WallRunState.GetEntryInstance(),
+			cameraLook = if Workspace.CurrentCamera
+				then Workspace.CurrentCamera.CFrame.LookVector
+				else nil,
 		}
 	end
 
@@ -508,6 +529,8 @@ local function setupCharacter(
 			Network.ClaimTraversalMove.Fire("WallCling")
 		elseif next == MovementStates.WallBoost then
 			Network.ClaimTraversalMove.Fire("WallBoost")
+		elseif next == MovementStates.Vault then
+			Network.ClaimTraversalMove.Fire("Vault")
 		elseif GROUNDED_STATES[next] then
 			doubleJumpUsed = false
 			-- Cleared on landing (docs/MovementSystem.md §4.6 assumption 5) --
@@ -539,7 +562,8 @@ local function setupCharacter(
 			if previous == MovementStates.Run or previous == MovementStates.Sprint then
 				preAirborneLocomotion = previous
 			end
-		elseif GROUNDED_STATES[next] then
+		elseif GROUNDED_STATES[next] or next == MovementStates.Vault then
+			-- A vault never lands you back into Run/Sprint (docs/MovementSystem.md §4.8).
 			preAirborneLocomotion = nil
 		end
 
@@ -547,7 +571,7 @@ local function setupCharacter(
 		-- seeded on the real takeoff edge -- `next == Airborne` covers every
 		-- grounded-state jump-off AND Slide -> SlideJump -> Airborne (`previous`
 		-- there is SlideJump); excluded when `previous` is DoubleJump, WallRun,
-		-- WallLeap, WallCling, or WallBoost so none of those hops back to
+		-- WallLeap, WallCling, WallBoost or Vault so none of those hops back to
 		-- Airborne resets the peak mid-excursion (found while wiring WallRun
 		-- into this same edge -- each is still the same continuous excursion,
 		-- exactly like the DoubleJump hop already correctly treated it --
@@ -563,6 +587,7 @@ local function setupCharacter(
 				and previous ~= MovementStates.WallLeap
 				and previous ~= MovementStates.WallCling
 				and previous ~= MovementStates.WallBoost
+				and previous ~= MovementStates.Vault
 			then
 				peakHeight = rootPart.Position.Y
 			end
@@ -613,6 +638,7 @@ local function setupCharacter(
 			wallRunQuery = characterMover:QueryWallRun()
 			wallRunQueryAccumulatedDt = 0
 			wallClingQuery = characterMover:QueryClingWall()
+			ledgeQuery = characterMover:QueryLedge()
 		end
 		if WALLCLING_TRACE_LOGGING then
 			print(
@@ -631,6 +657,17 @@ local function setupCharacter(
 			return
 		end
 		if fsm:RequestTransition(MovementStates.WallRun, context) then
+			ledgeQuery = nil
+			return
+		end
+		-- Vault (docs/MovementSystem.md §4.8) before WallCling: both want a
+		-- head-on wall, and the ledge probe's clearance cast separates them --
+		-- a wall you can get over is vaulted, a taller one is clung to. Also the
+		-- only thing Space does while clinging or boosting. The probe is only
+		-- good for this press.
+		local vaulted = fsm:RequestTransition(MovementStates.Vault, context)
+		ledgeQuery = nil
+		if vaulted then
 			return
 		end
 		-- WallCling (docs/MovementSystem.md §4.6): tried before the
@@ -761,6 +798,49 @@ local function setupCharacter(
 					)
 				end
 			end
+		end
+
+		-- Automatic vault (designer, 2026-09-25): cling, boost, and the boost
+		-- carries you over the lip as it comes into range, no press needed.
+		-- Probed on a throttle sized to the boost's rise speed, since a 0.1 s
+		-- throttle would skip the height window entirely.
+		if fsm.current == MovementStates.WallBoost then
+			autoVaultAccumulatedDt += dt
+			local constants = TuningSnapshot.Get()
+			local interval = TraversalMath.VaultAutoProbeInterval(
+				MovementConstants.VaultMaxLedgeHeight - MovementConstants.VaultMinLedgeHeight,
+				constants.WallBoostUpwardForce,
+				MovementConstants.VaultAutoProbeSamplesPerWindow
+			)
+			if autoVaultAccumulatedDt >= interval then
+				autoVaultAccumulatedDt = 0
+				ledgeQuery = characterMover:QueryLedge()
+				if ledgeQuery then
+					local vaultContext = buildContext()
+					local vaulted = fsm:RequestTransition(MovementStates.Vault, vaultContext)
+					if VAULT_TRACE_LOGGING and not vaulted then
+						print(
+							string.format(
+								"[VaultTrace] ledge found but CanEnter[Vault] refused: facing %.1f deg (max %.1f), since last vault %s",
+								SpatialQueries.facingAngleToWallDegrees(
+									ledgeQuery.direction,
+									ledgeQuery.normal
+								),
+								vaultContext.constants.VaultMaxFacingAngleDegrees,
+								if vaultContext.lastVaultAt
+									then string.format(
+										"%.2fs",
+										os.clock() - vaultContext.lastVaultAt
+									)
+									else "never"
+							)
+						)
+					end
+				end
+				ledgeQuery = nil
+			end
+		else
+			autoVaultAccumulatedDt = 0
 		end
 
 		States[fsm.current].Update(dt, buildContext())

@@ -40,6 +40,7 @@ export type CharacterMover = {
 		castDistance: number?
 	) -> SpatialQueries.WallRunQueryResult?,
 	QueryClingWall: (self: CharacterMover) -> SpatialQueries.ClingWallHit?,
+	QueryLedge: (self: CharacterMover) -> SpatialQueries.LedgeHit?,
 	Destroy: (self: CharacterMover) -> (),
 }
 
@@ -368,6 +369,15 @@ function CharacterMover:QueryClingWall(): SpatialQueries.ClingWallHit?
 		return nil
 	end
 	return SpatialQueries.castClingWall(rootPart, self._humanoid.Parent :: Instance)
+end
+
+-- Vault's ledge probe (docs/MovementSystem.md §4.8), same delegation shape.
+function CharacterMover:QueryLedge(): SpatialQueries.LedgeHit?
+	local rootPart = self._humanoid.RootPart
+	if not rootPart then
+		return nil
+	end
+	return SpatialQueries.QueryLedge(rootPart.CFrame, self._humanoid.Parent :: Instance)
 end
 
 function CharacterMover:Destroy()

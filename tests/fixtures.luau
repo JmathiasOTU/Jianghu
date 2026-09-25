@@ -41,6 +41,8 @@ function Fixtures.context(overrides: { [string]: any }?): any
 		wallClingLockoutUntil = nil,
 		wallClingBoostUsed = false,
 		lastWallLeapWall = nil,
+		ledge = nil,
+		lastVaultAt = nil,
 		qinggong = math.huge,
 		cameraLocked = false,
 		constants = MovementTuning.Defaults(),

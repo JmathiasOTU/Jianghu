@@ -63,11 +63,9 @@ event RequestMovementTransition = {
 -- each validated server-side via its own resimulation
 -- (MovementValidationService) rather than the passive-mirror/dwell-timestamp
 -- model Run/Sprint use, since they involve real physics impulses a modified
--- client could otherwise fake outright. "DoubleJump" (Phase 1) exists so far
--- -- Dash was deliberately skipped (docs/MovementSystem.md), wall running/climbing
--- was removed for a from-scratch redo, and Vault is added to this enum only
--- once its own phase lands, never all speculatively up front.
-type ClaimableTraversalMove = enum { "DoubleJump", "WallRun", "WallLeap", "WallCling", "WallBoost" }
+-- client could otherwise fake outright. Dash was deliberately skipped
+-- (docs/MovementSystem.md §13); a move is added here only once it ships.
+type ClaimableTraversalMove = enum { "DoubleJump", "WallRun", "WallLeap", "WallCling", "WallBoost", "Vault" }
 
 event ClaimTraversalMove = {
 	from: Client,
@@ -102,6 +100,7 @@ type MovementStateName = enum {
 	"WallLeap",
 	"WallCling",
 	"WallBoost",
+	"Vault",
 }
 
 -- One recent speed-sanity correction (Shared/Util/ViolationTracker.luau's
@@ -196,6 +195,16 @@ type TunableConstantName = enum {
 	"WallBoostSeparationSpeed",
 	"WallBoostStateDuration",
 	"WallBoostMinClingSeconds",
+	"VaultForwardSpeed",
+	"VaultUpwardSpeed",
+	"VaultHorizontalMomentumKeep",
+	"VaultVerticalMomentumKeep",
+	"VaultMaxMomentumUpward",
+	"VaultDurationSeconds",
+	"VaultMantleSeconds",
+	"VaultMaxFacingAngleDegrees",
+	"VaultCooldownSeconds",
+	"VaultDoubleJumpBlockSeconds",
 }
 
 event RequestSetTuning = {

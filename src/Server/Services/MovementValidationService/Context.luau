@@ -117,6 +117,9 @@ function Context.Build(session: PlayerSession): MovementContext
 			then os.clock() - session.wallClingEnteredAt
 			else nil,
 		lastWallLeapWall = session.lastWallLeapWall,
+		-- The server's own ledge probe (`Probes.UpdateLedgeQuery`), claim-time only.
+		ledge = session.ledgeQuery,
+		lastVaultAt = session.lastVaultAt,
 		-- Still an open design decision (docs/MovementSystem.md §13/§2) --
 		-- "always available" until a real Qinggong/stamina resource exists,
 		-- same placeholder the client uses.

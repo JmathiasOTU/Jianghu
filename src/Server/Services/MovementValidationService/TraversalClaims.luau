@@ -16,6 +16,7 @@ local Probes = require(script.Parent.Probes)
 local Context = require(script.Parent.Context)
 local SpeedCaps = require(script.Parent.SpeedCaps)
 local ClaimTiming = require(script.Parent.ClaimTiming)
+local SpeedCheck = require(script.Parent.SpeedCheck)
 local VerticalCeiling = require(script.Parent.VerticalCeiling)
 local Mirror = require(script.Parent.Mirror)
 
@@ -23,11 +24,19 @@ type MovementContext = MovementTypes.MovementContext
 type EffectiveMovementConstants = MovementTuning.EffectiveMovementConstants
 type PlayerSession = Sessions.PlayerSession
 
--- ClaimTraversalMove (DoubleJump, WallRun, WallLeap, WallCling, WallBoost;
+-- ClaimTraversalMove (DoubleJump, WallRun, WallLeap, WallCling, WallBoost, Vault;
 -- docs/MovementSystem.md §8.4): legality against the server's own mirror,
 -- what each accepted move changes, and the claim buffer that retries a
 -- claim which arrived before the positions supporting it.
 local TraversalClaims = {}
+
+-- Where a buffered Vault claim can still land (StateRules.Transitions).
+local VAULT_SOURCES = {
+	MovementStates.Airborne,
+	MovementStates.DoubleJump,
+	MovementStates.WallCling,
+	MovementStates.WallBoost,
+}
 
 -- WallRunState.Enter's one-time snap onto the cling distance moves the rig
 -- along the wall normal, and a wall may tilt up to `WallDetectMaxUpDot`, so
@@ -92,7 +101,7 @@ local function acceptDoubleJump(session: PlayerSession, constants: EffectiveMove
 	)
 end
 
--- A DoubleJump/WallBoost claim the server finally refused (Studio only): the
+-- A DoubleJump/WallBoost/Vault claim the server finally refused (Studio only): the
 -- client still performs the move, so the vertical ceiling will object next.
 local function reportRejectedClaim(session: PlayerSession, claim: string)
 	if not (DebugFlags.SPEED_SANITY_DEBUG_LOGGING or RunService:IsStudio()) then
@@ -157,6 +166,63 @@ local function acceptWallBoost(session: PlayerSession, constants: EffectiveMovem
 		session,
 		TraversalMath.BallisticRise(constants.WallBoostUpwardForce, Workspace.Gravity),
 		TraversalMath.TimeToApex(constants.WallBoostUpwardForce, Workspace.Gravity)
+	)
+end
+
+-- Shared acceptance bookkeeping for a Vault, first attempt or a buffered
+-- retry (docs/MovementSystem.md §8.4). The client mantles up and across onto
+-- the ledge over at most VaultMantleSeconds, then launches along its camera, which the
+-- server can't see, so everything here is a bound from constants: the rise
+-- (mantle plus launch), the launch's horizontal magnitude from the fastest the
+-- character could have been moving (`capBefore`), and the mantle's horizontal
+-- move. The launch comes up to a mantle after the client's entry, so the
+-- windows that cover it run that much longer.
+local function acceptVault(
+	session: PlayerSession,
+	constants: EffectiveMovementConstants,
+	capBefore: number,
+	bufferedFor: number?
+)
+	local now = os.clock()
+	local gravity = Workspace.Gravity
+	session.vaultStartedAt = now
+	session.lastVaultAt = now - (bufferedFor or 0)
+	session.pendingVaultClaimUntil = nil
+	session.ledgeQuery = nil
+
+	local maxUpward = TraversalMath.VaultMaxUpwardSpeed(
+		constants.VaultUpwardSpeed,
+		constants.VaultMaxMomentumUpward
+	)
+	local mantle = constants.VaultMantleSeconds
+	VerticalCeiling.Raise(
+		session,
+		TraversalMath.VaultMaxRise(
+			MovementConstants.VaultMaxLedgeHeight + MovementConstants.VaultMantleClearance,
+			maxUpward,
+			gravity
+		),
+		mantle + TraversalMath.TimeToApex(maxUpward, gravity)
+	)
+	local lag = ClaimTiming.ClaimLagSeconds(session)
+	session.vaultLaunchUntil = now + lag + mantle
+
+	local maxHorizontal = TraversalMath.VaultMaxHorizontalSpeed(
+		constants.VaultForwardSpeed,
+		constants.VaultHorizontalMomentumKeep,
+		capBefore + session.floorSpeed
+	)
+	if maxHorizontal > SpeedCaps.EffectiveMaxSpeed(session, constants) then
+		session.airborneAllowedSpeed = maxHorizontal
+		session.airborneAllowanceExpiresAt = nil
+	end
+	-- The mantle's horizontal leg: at most the wall cast's reach plus the inset
+	-- past the face (SpatialQueries.QueryLedge), which can run faster than the
+	-- cap for a short mantle.
+	SpeedCheck.CreditDisplacement(
+		session,
+		MovementConstants.VaultReach + MovementConstants.VaultTopInset,
+		now + lag + mantle
 	)
 end
 
@@ -344,6 +410,29 @@ function TraversalClaims.RetryBuffered(session: PlayerSession)
 		end
 	end
 
+	-- Vault (docs/MovementSystem.md §8.4): retried while the mirror is still
+	-- somewhere Vault is reachable from. Runs after the cling/boost retries so
+	-- a buffered cling it depends on lands first. Each retry re-probes, which
+	-- also walks back through the root history.
+	if session.pendingVaultClaimUntil then
+		current = session.fsm.current
+		if now >= session.pendingVaultClaimUntil or not table.find(VAULT_SOURCES, current) then
+			session.pendingVaultClaimUntil = nil
+			reportRejectedClaim(session, "Vault")
+		else
+			Probes.UpdateLedgeQuery(session)
+			local context = Context.Build(session)
+			local capBefore = SpeedCaps.EffectiveMaxSpeed(session, context.constants)
+			local waited = ClaimTiming.BufferedFor(session.pendingVaultClaimUntil)
+			if session.fsm:RequestTransition(MovementStates.Vault, context) then
+				acceptVault(session, context.constants, capBefore, waited)
+				ClaimTiming.CreditClaimLatency(session, capBefore, context.constants, waited)
+			else
+				session.ledgeQuery = nil
+			end
+		end
+	end
+
 	-- DoubleJump waiting for the touchdown that refreshes it to show up in
 	-- the position stream (see `pendingDoubleJumpClaimUntil`). The mirror may
 	-- pass through a landing on the way, so only expiry abandons it.
@@ -409,6 +498,9 @@ function TraversalClaims.OnClaim(player: Player, claim: Network.ClaimableTravers
 	Probes.UpdateSupport(session)
 	Probes.UpdateWallRunQuery(session, true)
 	Probes.UpdateWallClingQuery(session, true)
+	if claim == "Vault" then
+		Probes.UpdateLedgeQuery(session)
+	end
 	Mirror.PassiveTransitions(session)
 
 	local claimedState = if claim == "DoubleJump"
@@ -417,6 +509,7 @@ function TraversalClaims.OnClaim(player: Player, claim: Network.ClaimableTravers
 		elseif claim == "WallLeap" then MovementStates.WallLeap
 		elseif claim == "WallCling" then MovementStates.WallCling
 		elseif claim == "WallBoost" then MovementStates.WallBoost
+		elseif claim == "Vault" then MovementStates.Vault
 		else nil
 	if not claimedState then
 		return
@@ -436,10 +529,13 @@ function TraversalClaims.OnClaim(player: Player, claim: Network.ClaimableTravers
 			acceptWallClingEntry(session)
 		elseif claimedState == MovementStates.WallBoost then
 			acceptWallBoost(session, constants)
+		elseif claimedState == MovementStates.Vault then
+			acceptVault(session, constants, capBefore)
 		end
 		ClaimTiming.CreditClaimLatency(session, capBefore, constants)
 		return
 	end
+	session.ledgeQuery = nil
 
 	-- Claim-buffering (2026-09-19 playtest fix -- see `WallRunClaimBufferSeconds`'s
 	-- own comment for the full root-cause reasoning): a rejection here can
@@ -467,6 +563,11 @@ function TraversalClaims.OnClaim(player: Player, claim: Network.ClaimableTravers
 	elseif claimedState == MovementStates.DoubleJump then
 		session.pendingDoubleJumpClaimUntil = os.clock()
 			+ MovementConstants.WallRunClaimBufferSeconds
+		return
+	elseif claimedState == MovementStates.Vault then
+		-- Claims lead the position stream, so the ledge (or the cling the
+		-- vault leaves from) may not be visible yet. Same window as the rest.
+		session.pendingVaultClaimUntil = os.clock() + MovementConstants.WallRunClaimBufferSeconds
 		return
 	elseif
 		claimedState == MovementStates.WallBoost

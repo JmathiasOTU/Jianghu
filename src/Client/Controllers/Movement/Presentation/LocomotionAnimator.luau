@@ -265,6 +265,9 @@ function LocomotionAnimator.new(
 	-- name and deliberately left alone when WallRun/WallLeap shipped.
 	self._tracks.WallCling = loadTrack(animator, ANIMATIONS_ROOT, "WallCling", self._trove, true)
 	self._tracks.WallBoost = loadTrack(animator, ANIMATIONS_ROOT, "WallBoost", self._trove, false)
+	-- Vault (docs/MovementSystem.md §4.8): a one-shot mantle that lasts
+	-- VaultDurationSeconds, observed directly like WallBoost.
+	self._tracks.Vault = loadTrack(animator, ANIMATIONS_ROOT, "Vault", self._trove, false)
 
 	-- Belt-and-suspenders against anything else that plays a track on this
 	-- Animator (playtest bug 2026-09-18: "basic Roblox animations fighting
@@ -480,6 +483,8 @@ function LocomotionAnimator:_update()
 		key = "WallCling"
 	elseif state == MovementStates.WallBoost then
 		key = "WallBoost"
+	elseif state == MovementStates.Vault then
+		key = "Vault"
 	end
 	-- Walk with no move direction this frame: key stays nil, fading out
 	-- whatever was last playing.

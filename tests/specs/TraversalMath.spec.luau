@@ -195,4 +195,146 @@ return function(t)
 			t.expect(launchSpeed(maxCorrection)).toBeCloseTo(bound, float32Slack)
 		end)
 	end)
+
+	t.describe("Vault", function()
+		local forward = MovementConstants.VaultForwardSpeed
+		local upward = MovementConstants.VaultUpwardSpeed
+		local horizontalKeep = MovementConstants.VaultHorizontalMomentumKeep
+		local verticalKeep = MovementConstants.VaultVerticalMomentumKeep
+		local maxMomentum = MovementConstants.VaultMaxMomentumUpward
+		local maxUpward = TraversalMath.VaultMaxUpwardSpeed(upward, maxMomentum)
+
+		local function launch(direction: any, velocity: any): any
+			return TraversalMath.VaultLaunchVelocity(
+				direction,
+				velocity,
+				forward,
+				upward,
+				horizontalKeep,
+				verticalKeep,
+				maxMomentum
+			)
+		end
+
+		t.it("probes often enough to catch a boost rising through the window", function()
+			local window = MovementConstants.VaultMaxLedgeHeight
+				- MovementConstants.VaultMinLedgeHeight
+			local samples = MovementConstants.VaultAutoProbeSamplesPerWindow
+			local rise = MovementConstants.WallBoostUpwardForce
+			local interval = TraversalMath.VaultAutoProbeInterval(window, rise, samples)
+			t.expect(rise * interval * samples).toBeAtMost(window + 1e-9)
+			t.expect(TraversalMath.VaultAutoProbeInterval(window, 0, samples)).toBe(0)
+		end)
+
+		t.describe("mantle path", function()
+			local start = Vector3.new(0, 0, 0)
+			local target = Vector3.new(0, 6.5, -4)
+			local duration = 0.2
+
+			t.it("starts at the root and ends on the ledge", function()
+				local first = TraversalMath.VaultMantlePoint(start, target, 0, duration)
+				t.expect((first - start).Magnitude).toBeCloseTo(0, 1e-5)
+				local last = TraversalMath.VaultMantlePoint(start, target, duration, duration)
+				t.expect((last - target).Magnitude).toBeCloseTo(0, 1e-5)
+			end)
+
+			t.it("rises straight up before crossing, never above the target", function()
+				for step = 0, 40 do
+					local point = TraversalMath.VaultMantlePoint(
+						start,
+						target,
+						duration * step / 40,
+						duration
+					)
+					t.expect(point.Y).toBeAtMost(target.Y + 1e-5)
+					if point.Y < target.Y - 1e-4 then
+						t.expect(point.Z).toBeCloseTo(start.Z, 1e-5)
+					end
+				end
+			end)
+
+			t.it("keeps a faster rise instead of braking into the mantle", function()
+				local length = target.Y + math.abs(target.Z)
+				t.expect(TraversalMath.VaultMantleDuration(start, target, duration, 0))
+					.toBe(duration)
+				t.expect(TraversalMath.VaultMantleDuration(start, target, duration, 10))
+					.toBe(duration)
+				t.expect(TraversalMath.VaultMantleDuration(start, target, duration, 100))
+					.toBeCloseTo(length / 100, 1e-6)
+				t.expect(TraversalMath.VaultMantleDuration(start, target, duration, -80))
+					.toBe(duration)
+			end)
+
+			t.it("moves at one constant speed for the whole duration", function()
+				local speed = (target.Y + math.abs(target.Z)) / duration
+				for _, elapsed in ipairs({ 0, 0.05, 0.15, 0.199 }) do
+					local velocity =
+						TraversalMath.VaultMantleVelocity(start, target, elapsed, duration)
+					t.expect(velocity.Magnitude).toBeCloseTo(speed, 1e-3)
+				end
+				t.expect(
+					TraversalMath.VaultMantleVelocity(start, target, duration, duration).Magnitude
+				)
+					.toBe(0)
+			end)
+		end)
+
+		t.it("steers along the flattened camera look", function()
+			local direction =
+				TraversalMath.VaultLaunchDirection(Vector3.new(3, -4, 0), Vector3.new(0, 0, 1))
+			t.expect(direction.X).toBeCloseTo(1)
+			t.expect(direction.Y).toBe(0)
+		end)
+
+		t.it("falls back to the ledge direction for a vertical camera", function()
+			local direction =
+				TraversalMath.VaultLaunchDirection(Vector3.new(0, -1, 0), Vector3.new(0, 0, 2))
+			t.expect(direction.Z).toBeCloseTo(1)
+		end)
+
+		-- Falls, rises and entry speeds up to the WallLeap allowance, in every
+		-- direction the camera can steer.
+		t.it("never launches faster than its bounds", function()
+			local maxEntry = 170
+			local slack = 1e-4
+			for angle = 0, 350, 10 do
+				local direction =
+					Vector3.new(math.cos(math.rad(angle)), 0, math.sin(math.rad(angle)))
+				for entry = 0, maxEntry, 10 do
+					for vy = -300, 300, 25 do
+						local velocity = launch(direction, Vector3.new(entry, vy, 0))
+						t.expect(velocity.Y).toBeAtMost(maxUpward + slack)
+						t.expect(Vector3.new(velocity.X, 0, velocity.Z).Magnitude).toBeAtMost(
+							TraversalMath.VaultMaxHorizontalSpeed(forward, horizontalKeep, entry)
+								+ slack
+						)
+					end
+				end
+			end
+		end)
+
+		t.it("gives a fast fall more lift, up to the cap", function()
+			local still = launch(Vector3.new(1, 0, 0), Vector3.zero)
+			local falling = launch(Vector3.new(1, 0, 0), Vector3.new(0, -30, 0))
+			local plummeting = launch(Vector3.new(1, 0, 0), Vector3.new(0, -600, 0))
+			t.expect(still.Y).toBeCloseTo(upward)
+			t.expect(falling.Y).toBeCloseTo(upward + 30 * verticalKeep, 1e-4)
+			t.expect(plummeting.Y).toBeCloseTo(maxUpward)
+		end)
+
+		-- The mantle lifts the root by up to VaultMaxLedgeHeight plus the
+		-- clearance, then the launch flies ballistically from there.
+		t.it("bounds the mantle plus the launch", function()
+			local ledge = MovementConstants.VaultMaxLedgeHeight
+				+ MovementConstants.VaultMantleClearance
+			local apexY = TraversalMath.VaultMaxRise(ledge, maxUpward, GRAVITY)
+			local apexAt = TraversalMath.TimeToApex(maxUpward, GRAVITY)
+			for step = 0, 400 do
+				local time = step / 100
+				local y = ledge + maxUpward * time - GRAVITY * time * time / 2
+				t.expect(y)
+					.toBeAtMost(TraversalMath.DescentCeiling(apexY, apexAt, time, GRAVITY) + 1e-9)
+			end
+		end)
+	end)
 end

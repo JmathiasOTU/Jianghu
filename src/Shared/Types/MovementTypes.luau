@@ -119,8 +119,15 @@ export type MoveIntent = {
 -- `wallClingElapsed` is how long the current cling has lasted, from each
 -- side's own cling entry (nil when not clinging); `CanEnter[WallBoost]`
 -- requires `WallBoostMinClingSeconds` of it (docs/MovementSystem.md §4.6).
--- `qinggong` (§0/§3) is the resource gate Vault (and any future Qinggong
--- move) reads --
+-- `ledge` (docs/MovementSystem.md §4.8) is the Vault probe
+-- (SpatialQueries.QueryLedge), filled by each side from its own cast before
+-- calling into StateRules, like `wallClingQuery`. The client probes on the
+-- Space press; the server at claim time, falling back to its recent root
+-- history because the client's mantle onto the ledge can replicate first.
+-- `lastVaultAt` is each side's own time of its last Vault entry (server-owned
+-- cooldown, ARCHITECTURE §3); nil when there hasn't been one this life.
+-- `qinggong` (§0/§3) is the resource gate any future Qinggong move
+-- reads --
 -- still an open design decision (is this the same Qi pool combat will spend,
 -- or a separate movement-only pool?) per the roadmap's own risk register, so
 -- both sides default it to "always available" (`math.huge`) until that
@@ -159,6 +166,8 @@ export type MovementContext = {
 	wallClingBoostUsed: boolean?,
 	wallClingElapsed: number?,
 	lastWallLeapWall: BasePart?,
+	ledge: SpatialQueries.LedgeHit?,
+	lastVaultAt: number?,
 	qinggong: number,
 	cameraLocked: boolean,
 	constants: MovementTuning.EffectiveMovementConstants,

@@ -267,4 +267,144 @@ function TraversalMath.WallLeapVelocity(
 	return Vector3.new(forward.X + pushOff.X, upwardForce, forward.Z + pushOff.Z)
 end
 
+-- Vault's launch direction (docs/MovementSystem.md §4.8): the camera's look,
+-- flattened, so the player steers the vault. `fallback` (the ledge probe's
+-- direction) covers a camera pointing straight up or down.
+function TraversalMath.VaultLaunchDirection(cameraLook: Vector3, fallback: Vector3): Vector3
+	local flat = Vector3.new(cameraLook.X, 0, cameraLook.Z)
+	if flat.Magnitude < EPSILON then
+		flat = Vector3.new(fallback.X, 0, fallback.Z)
+		if flat.Magnitude < EPSILON then
+			return Vector3.zero
+		end
+	end
+	return flat.Unit
+end
+
+-- Vault's launch (Sorcery's formula, minus health scaling): `forwardSpeed`
+-- along the flat `direction`, `upwardSpeed` up, plus a share of the entry
+-- velocity. The vertical share uses |vy|, so a fall lifts you too, capped at
+-- `maxMomentumUpward` so the rise stays bounded (`VaultMaxRise`).
+function TraversalMath.VaultLaunchVelocity(
+	direction: Vector3,
+	velocity: Vector3,
+	forwardSpeed: number,
+	upwardSpeed: number,
+	horizontalKeep: number,
+	verticalKeep: number,
+	maxMomentumUpward: number
+): Vector3
+	local horizontal = direction * forwardSpeed
+		+ Vector3.new(velocity.X, 0, velocity.Z) * horizontalKeep
+	local upward = upwardSpeed + math.min(math.abs(velocity.Y) * verticalKeep, maxMomentumUpward)
+	return Vector3.new(horizontal.X, upward, horizontal.Z)
+end
+
+-- How often to probe for a ledge while rising at `riseSpeed` so that at least
+-- `samples` probes land while a lip is inside the `windowHeight`-tall vault
+-- window. Zero (every frame) for a non-positive rise speed.
+function TraversalMath.VaultAutoProbeInterval(
+	windowHeight: number,
+	riseSpeed: number,
+	samples: number
+): number
+	if riseSpeed <= 0 or samples <= 0 then
+		return 0
+	end
+	return windowHeight / (riseSpeed * samples)
+end
+
+-- Vault's mantle path (docs/MovementSystem.md §4.8): straight up from
+-- `start` to `target`'s height, then straight across to `target`, at one
+-- constant speed so the whole path takes `duration`. Rising first keeps the
+-- body clear of the lip: it goes up the wall face and crosses above the top.
+-- Returns where the root should be `elapsed` seconds in.
+function TraversalMath.VaultMantlePoint(
+	start: Vector3,
+	target: Vector3,
+	elapsed: number,
+	duration: number
+): Vector3
+	local rise = math.max(target.Y - start.Y, 0)
+	local corner = start + Vector3.new(0, rise, 0)
+	local across = target - corner
+	local length = rise + across.Magnitude
+	if length <= 0 or duration <= 0 or elapsed >= duration then
+		return target
+	end
+	local travelled = length * math.max(elapsed, 0) / duration
+	if travelled <= rise then
+		return start + Vector3.new(0, travelled, 0)
+	end
+	return corner + across.Unit * (travelled - rise)
+end
+
+-- How long the mantle takes: `maxDuration`, or less so it never moves slower
+-- than the character was already rising (`upwardSpeed`). A fast boost then
+-- carries straight over the lip instead of braking into a fixed-time mantle
+-- (2026-09-25 playtest); a slow entry keeps the full `maxDuration`.
+function TraversalMath.VaultMantleDuration(
+	start: Vector3,
+	target: Vector3,
+	maxDuration: number,
+	upwardSpeed: number
+): number
+	local rise = math.max(target.Y - start.Y, 0)
+	local length = rise + (target - (start + Vector3.new(0, rise, 0))).Magnitude
+	if upwardSpeed <= 0 or length <= 0 then
+		return maxDuration
+	end
+	return math.min(maxDuration, length / upwardSpeed)
+end
+
+-- The mantle's constant velocity at `elapsed`: up the first leg, across the
+-- second, zero once it's done.
+function TraversalMath.VaultMantleVelocity(
+	start: Vector3,
+	target: Vector3,
+	elapsed: number,
+	duration: number
+): Vector3
+	local rise = math.max(target.Y - start.Y, 0)
+	local corner = start + Vector3.new(0, rise, 0)
+	local across = target - corner
+	local length = rise + across.Magnitude
+	if length <= 0 or duration <= 0 or elapsed >= duration then
+		return Vector3.zero
+	end
+	local speed = length / duration
+	if speed * math.max(elapsed, 0) < rise then
+		return Vector3.new(0, speed, 0)
+	end
+	return across.Unit * speed
+end
+
+-- The fastest upward launch a vault can produce.
+function TraversalMath.VaultMaxUpwardSpeed(upwardSpeed: number, maxMomentumUpward: number): number
+	return upwardSpeed + maxMomentumUpward
+end
+
+-- Upper bound on a vault's rise above where it started (audit M-001): the
+-- mantle lifts the root by at most `maxMantleRise` (the tallest ledge plus the
+-- clearance), then the launch replaces vertical velocity with at most
+-- `maxUpwardSpeed`.
+function TraversalMath.VaultMaxRise(
+	maxMantleRise: number,
+	maxUpwardSpeed: number,
+	gravity: number
+): number
+	return maxMantleRise + TraversalMath.BallisticRise(maxUpwardSpeed, gravity)
+end
+
+-- Upper bound on a vault's horizontal launch speed, given the fastest the
+-- character could have been moving when it vaulted. The direction is the
+-- camera's, which the server can't see, so only the magnitude is bounded.
+function TraversalMath.VaultMaxHorizontalSpeed(
+	forwardSpeed: number,
+	horizontalKeep: number,
+	maxEntrySpeed: number
+): number
+	return forwardSpeed + horizontalKeep * maxEntrySpeed
+end
+
 return TraversalMath

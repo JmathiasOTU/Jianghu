@@ -15,6 +15,23 @@ local MovementConstants = require(ReplicatedStorage.Shared.Constants.MovementCon
 -- pattern shows up.
 local WALLCLING_DEBUG_LOGGING = false
 
+-- Temporary capture for the 2026-09-25 "boost never auto-vaults" report:
+-- prints which QueryLedge gate rejected, with the measured distances, each
+-- time the reason changes. Flip back to false once diagnosed.
+local VAULT_DEBUG_LOGGING = false
+-- Debug only: how far to look for the wall when the real cast misses, so
+-- the print can say how far out of reach it was.
+local VAULT_DEBUG_WALL_SEARCH_DISTANCE = 12
+local lastVaultDebugReason: string? = nil
+
+local function vaultDebug(reason: string, detail: string)
+	if not VAULT_DEBUG_LOGGING or reason == lastVaultDebugReason then
+		return
+	end
+	lastVaultDebugReason = reason
+	print(string.format("[VaultProbe] %s %s", reason, detail))
+end
+
 -- Pure geometry reads (docs/MovementSystem.md §2) -- called identically by
 -- client prediction (via `CharacterMover:QueryGround`) and server
 -- resimulation (`MovementValidationService`), so both sides can only ever
@@ -389,6 +406,161 @@ function SpatialQueries.castClingWall(rootPart: BasePart, filterInstance: Instan
 		position = result.Position,
 		normal = result.Normal,
 		distance = result.Distance,
+	}
+end
+
+export type LedgeHit = {
+	-- The wall face the vault goes over.
+	instance: BasePart,
+	wallPoint: Vector3,
+	normal: Vector3,
+	-- Where the feet land: the measured top of the ledge, VaultTopInset past
+	-- the face.
+	topPoint: Vector3,
+	-- The flattened look the casts ran along; CanEnter[Vault]'s facing check
+	-- reads this rather than live facing, so a probe of an older root
+	-- position is judged by the facing it had then.
+	direction: Vector3,
+}
+
+local function castDown(from: Vector3, distance: number, params: RaycastParams): RaycastResult?
+	return Workspace:Raycast(from, Vector3.new(0, -distance, 0), params)
+end
+
+-- Vault's probe (docs/MovementSystem.md §4.8): a head-on wall whose top is
+-- between VaultMinLedgeHeight and VaultMaxLedgeHeight above the feet, with a
+-- standable, deep enough top and room to stand on it. Takes the root's CFrame,
+-- not the part, so the server can also probe where the root recently was.
+-- Collidable, anchored walls only, like castClingWall.
+function SpatialQueries.QueryLedge(rootCFrame: CFrame, filterInstance: Instance): LedgeHit?
+	local params = excluding(supportParams, filterInstance)
+
+	local lookVector = rootCFrame.LookVector
+	local flatLook = Vector3.new(lookVector.X, 0, lookVector.Z)
+	if flatLook.Magnitude < MovementConstants.DirectionEpsilon then
+		return nil
+	end
+	flatLook = flatLook.Unit
+
+	local reach = flatLook * MovementConstants.VaultReach
+	local feet = rootCFrame.Position - Vector3.new(0, MovementConstants.RigRootHeightAboveFeet, 0)
+	local minHeight = Vector3.new(0, MovementConstants.VaultMinLedgeHeight, 0)
+	local maxHeight = Vector3.new(0, MovementConstants.VaultMaxLedgeHeight, 0)
+
+	local wallHit = Workspace:Raycast(feet + minHeight, reach, params)
+	if not wallHit then
+		if VAULT_DEBUG_LOGGING then
+			local far = Workspace:Raycast(
+				feet + minHeight,
+				flatLook * VAULT_DEBUG_WALL_SEARCH_DISTANCE,
+				params
+			)
+			vaultDebug(
+				"no wall at knee height within reach",
+				if far
+					then string.format(
+						"(nearest wall ahead %.2f studs, reach %.2f)",
+						far.Distance,
+						MovementConstants.VaultReach
+					)
+					else "(nothing ahead at all -- above the wall, or facing away?)"
+			)
+		end
+		return nil
+	end
+	local wall = wallHit.Instance
+	if not wall:IsA("BasePart") or not wall.Anchored then
+		vaultDebug("wall not anchored", wall:GetFullName())
+		return nil
+	end
+	local normal = wallHit.Normal
+	if math.abs(normal.Y) > MovementConstants.VaultMaxNormalUpDot then
+		vaultDebug("wall face too sloped", string.format("normal.Y=%.2f", normal.Y))
+		return nil
+	end
+	local flatInward = Vector3.new(-normal.X, 0, -normal.Z)
+	if flatInward.Magnitude < MovementConstants.DirectionEpsilon then
+		return nil
+	end
+	flatInward = flatInward.Unit
+
+	-- The wall has to end within reach, or it's a climb (WallCling).
+	local clearanceHit = Workspace:Raycast(feet + maxHeight, reach, params)
+	if clearanceHit then
+		vaultDebug(
+			"lip still above head height",
+			string.format("(wall %.2f studs away, still there at 6 above feet)", wallHit.Distance)
+		)
+		return nil
+	end
+
+	local probeDistance = MovementConstants.VaultMaxLedgeHeight
+		- MovementConstants.VaultMinLedgeHeight
+	local topStart = Vector3.new(wallHit.Position.X, feet.Y, wallHit.Position.Z)
+		+ flatInward * MovementConstants.VaultTopInset
+		+ maxHeight
+	local topHit = castDown(topStart, probeDistance, params)
+	if not topHit then
+		vaultDebug(
+			"no top 1.25 studs past the face",
+			"(wall thinner than VaultTopInset, or top outside 1.5-6 above feet)"
+		)
+		return nil
+	end
+	if topHit.Normal.Y < MovementConstants.VaultMinTopNormalY then
+		vaultDebug("top too steep", string.format("normal.Y=%.2f", topHit.Normal.Y))
+		return nil
+	end
+
+	local depthHit =
+		castDown(topStart + flatInward * MovementConstants.VaultMinTopDepth, probeDistance, params)
+	if
+		not depthHit
+		or math.abs(depthHit.Position.Y - topHit.Position.Y)
+			> MovementConstants.VaultTopDepthTolerance
+	then
+		vaultDebug(
+			"top not deep enough",
+			string.format(
+				"(no matching surface %.2f studs past the face; wall top %.2f above feet)",
+				MovementConstants.VaultTopInset + MovementConstants.VaultMinTopDepth,
+				topHit.Position.Y - feet.Y
+			)
+		)
+		return nil
+	end
+
+	-- The leg footprint swept up from just above the top (a shapecast ignores
+	-- the ledge it would start inside), so a pillar beside the landing spot
+	-- counts, not only what's straight overhead.
+	local footprintHeight = MovementConstants.GroundSupportFootprint.Y
+	local headroomStart = topHit.Position + Vector3.new(0, footprintHeight, 0)
+	if
+		Workspace:Blockcast(
+			CFrame.lookAt(headroomStart, headroomStart + flatInward),
+			MovementConstants.GroundSupportFootprint,
+			Vector3.new(0, MovementConstants.VaultHeadroom - footprintHeight, 0),
+			params
+		)
+	then
+		vaultDebug("no headroom above the top", "")
+		return nil
+	end
+
+	vaultDebug(
+		"LEDGE FOUND",
+		string.format(
+			"(wall %.2f away, top %.2f above feet)",
+			wallHit.Distance,
+			topHit.Position.Y - feet.Y
+		)
+	)
+	return {
+		instance = wall,
+		wallPoint = wallHit.Position,
+		normal = normal,
+		topPoint = topHit.Position,
+		direction = flatLook,
 	}
 end
 

@@ -8,6 +8,7 @@ local MovementTuning = require(ReplicatedStorage.Shared.Movement.MovementTuning)
 local SpatialQueries = require(ReplicatedStorage.Shared.Movement.SpatialQueries)
 
 local Sessions = require(script.Parent.Sessions)
+local ClaimTiming = require(script.Parent.ClaimTiming)
 
 type EffectiveMovementConstants = MovementTuning.EffectiveMovementConstants
 type PlayerSession = Sessions.PlayerSession
@@ -17,6 +18,11 @@ type PlayerSession = Sessions.PlayerSession
 -- floor's velocity it can vouch for, and the throttled fall-height, slide
 -- ground and wall probes. Never anything the client reports.
 local Probes = {}
+
+-- Root history slots (see `PlayerSession.rootHistory`): enough to cover the
+-- longest claim lag (one speed window, `ClaimTiming.ClaimLagSeconds`) at up to
+-- 128 Heartbeats a second.
+Probes.ROOT_HISTORY_CAPACITY = 64
 
 local function isGrounded(state: Enum.HumanoidStateType): boolean
 	return state == Enum.HumanoidStateType.Running
@@ -214,6 +220,44 @@ function Probes.UpdateWallClingQuery(session: PlayerSession, force: boolean?)
 	session.wallClingQueryAt = now
 	session.wallClingQuery =
 		SpatialQueries.castClingWall(session.rootPart, session.humanoid.Parent :: Instance)
+end
+
+-- Once per Heartbeat, after the support probe.
+function Probes.RecordRootHistory(session: PlayerSession)
+	local index = session.rootHistoryNext
+	session.rootHistory[index] = session.rootPart.CFrame
+	session.rootHistoryAt[index] = os.clock()
+	session.rootHistoryNext = index % Probes.ROOT_HISTORY_CAPACITY + 1
+end
+
+-- Vault's probe, server side (docs/MovementSystem.md §8.4): the current root
+-- first, then each recorded root back through one claim lag, newest first.
+-- The client mantles onto the ledge the moment it vaults, so by the time the
+-- claim is judged the replicated root can already be on top, where no wall
+-- is in front of it any more. Every candidate is a real position this root
+-- held within the claim-lag window, and each is judged by the full probe.
+function Probes.UpdateLedgeQuery(session: PlayerSession)
+	if Probes.IsGrounded(session) then
+		session.ledgeQuery = nil
+		return
+	end
+	local character = session.humanoid.Parent :: Instance
+	local hit = SpatialQueries.QueryLedge(session.rootPart.CFrame, character)
+	if not hit then
+		local oldest = os.clock() - ClaimTiming.ClaimLagSeconds(session)
+		local index = session.rootHistoryNext
+		for _ = 1, Probes.ROOT_HISTORY_CAPACITY do
+			index = (index - 2) % Probes.ROOT_HISTORY_CAPACITY + 1
+			if session.rootHistoryAt[index] < oldest then
+				break
+			end
+			hit = SpatialQueries.QueryLedge(session.rootHistory[index], character)
+			if hit then
+				break
+			end
+		end
+	end
+	session.ledgeQuery = hit
 end
 
 return Probes

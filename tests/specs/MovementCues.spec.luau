@@ -12,6 +12,7 @@ local KNOWN_FIELDS = {
 	TargetFOV = "number",
 	HoldsFOV = "boolean",
 	CameraShake = "string",
+	FOVKick = "string",
 	Replication = "string",
 }
 
@@ -80,6 +81,12 @@ return function(t)
 				end
 			end)
 
+			t.it(`{name}: names an existing FOV kick profile`, function()
+				if cue.FOVKick then
+					t.expect(PresentationConstants.FOVKickProfiles[cue.FOVKick] ~= nil).toBeTruthy()
+				end
+			end)
+
 			t.it(`{name}: replicates only something a bystander can perceive`, function()
 				local replication = cue.Replication
 				if replication ~= nil then
@@ -96,6 +103,18 @@ return function(t)
 		t.it("has a valid base FOV", function()
 			t.expect(PresentationConstants.BaseFOV).toBeAtLeast(MIN_FOV)
 			t.expect(PresentationConstants.BaseFOV).toBeAtMost(MAX_FOV)
+		end)
+
+		t.it("has positive FOV kicks that stay in Camera.FieldOfView's range", function()
+			for _, profile in pairs(PresentationConstants.FOVKickProfiles) do
+				t.expect(profile.Amount > 0).toBeTruthy()
+				t.expect(profile.DurationSeconds > 0).toBeTruthy()
+				for _, cue in pairs(MovementCues) do
+					if cue.TargetFOV then
+						t.expect(cue.TargetFOV + profile.Amount).toBeAtMost(MAX_FOV)
+					end
+				end
+			end
 		end)
 
 		t.it("has positive shake profiles", function()

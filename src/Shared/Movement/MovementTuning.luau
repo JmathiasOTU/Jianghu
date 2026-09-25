@@ -57,6 +57,16 @@ export type TunableConstantName =
 	| "WallBoostSeparationSpeed"
 	| "WallBoostStateDuration"
 	| "WallBoostMinClingSeconds"
+	| "VaultForwardSpeed"
+	| "VaultUpwardSpeed"
+	| "VaultHorizontalMomentumKeep"
+	| "VaultVerticalMomentumKeep"
+	| "VaultMaxMomentumUpward"
+	| "VaultDurationSeconds"
+	| "VaultMantleSeconds"
+	| "VaultMaxFacingAngleDegrees"
+	| "VaultCooldownSeconds"
+	| "VaultDoubleJumpBlockSeconds"
 
 -- A named-field record (not a `{ [TunableConstantName]: number }` indexer
 -- type) specifically so consumers get plain dot-access
@@ -113,6 +123,16 @@ export type EffectiveMovementConstants = {
 	WallBoostSeparationSpeed: number,
 	WallBoostStateDuration: number,
 	WallBoostMinClingSeconds: number,
+	VaultForwardSpeed: number,
+	VaultUpwardSpeed: number,
+	VaultHorizontalMomentumKeep: number,
+	VaultVerticalMomentumKeep: number,
+	VaultMaxMomentumUpward: number,
+	VaultDurationSeconds: number,
+	VaultMantleSeconds: number,
+	VaultMaxFacingAngleDegrees: number,
+	VaultCooldownSeconds: number,
+	VaultDoubleJumpBlockSeconds: number,
 }
 
 -- Iteration order for the overlay's Tuning tab and for anything else that
@@ -164,6 +184,16 @@ local TUNABLE_NAMES: { TunableConstantName } = {
 	"WallBoostSeparationSpeed",
 	"WallBoostStateDuration",
 	"WallBoostMinClingSeconds",
+	"VaultForwardSpeed",
+	"VaultUpwardSpeed",
+	"VaultHorizontalMomentumKeep",
+	"VaultVerticalMomentumKeep",
+	"VaultMaxMomentumUpward",
+	"VaultDurationSeconds",
+	"VaultMantleSeconds",
+	"VaultMaxFacingAngleDegrees",
+	"VaultCooldownSeconds",
+	"VaultDoubleJumpBlockSeconds",
 }
 
 -- Sanity bounds for RequestSetTuning (Server/Services/MovementTuningService.luau)
@@ -233,6 +263,16 @@ local VALID_RANGES: { [TunableConstantName]: { min: number, max: number } } = {
 	-- always at least register on a real Heartbeat.
 	WallBoostStateDuration = { min = 0.02, max = 5 },
 	WallBoostMinClingSeconds = { min = 0, max = 5 },
+	VaultForwardSpeed = { min = 0, max = 200 },
+	VaultUpwardSpeed = { min = 0, max = 200 },
+	VaultHorizontalMomentumKeep = { min = 0, max = 1 },
+	VaultVerticalMomentumKeep = { min = 0, max = 1 },
+	VaultMaxMomentumUpward = { min = 0, max = 200 },
+	VaultDurationSeconds = { min = 0.02, max = 5 },
+	VaultMantleSeconds = { min = 0.02, max = 2 },
+	VaultMaxFacingAngleDegrees = { min = 0, max = 89 },
+	VaultCooldownSeconds = { min = 0, max = 10 },
+	VaultDoubleJumpBlockSeconds = { min = 0, max = 5 },
 }
 
 local MovementTuning = {}

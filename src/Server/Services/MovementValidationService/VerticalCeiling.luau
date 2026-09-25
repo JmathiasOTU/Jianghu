@@ -80,8 +80,19 @@ function VerticalCeiling.Anchor(
 	constants: EffectiveMovementConstants,
 	now: number
 )
-	local jumpSpeed = math.max(constants.JumpPower, session.groundLaunchSpeed or 0)
-		+ session.floorRiseSpeed
+	local launchSpeed = math.max(constants.JumpPower, session.groundLaunchSpeed or 0)
+	-- A vault's mantle sets the feet just above the ledge and its launch leaves from
+	-- there (see `vaultLaunchUntil`).
+	if session.vaultLaunchUntil and now <= session.vaultLaunchUntil then
+		launchSpeed = math.max(
+			launchSpeed,
+			TraversalMath.VaultMaxUpwardSpeed(
+				constants.VaultUpwardSpeed,
+				constants.VaultMaxMomentumUpward
+			)
+		)
+	end
+	local jumpSpeed = launchSpeed + session.floorRiseSpeed
 	session.verticalCeilingY = session.rootPart.Position.Y
 		+ TraversalMath.BallisticRise(jumpSpeed, Workspace.Gravity)
 	session.verticalApexAt = now + TraversalMath.TimeToApex(jumpSpeed, Workspace.Gravity)

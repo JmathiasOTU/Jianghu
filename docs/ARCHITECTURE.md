@@ -112,7 +112,7 @@ Jianghu is a Roblox parry-combat/movement RPG. Read this file and [`CONTRIBUTING
 - `src/Shared/` — Constants, FSM primitives, types, and pure movement math/geometry (`StateRules`, `TraversalMath`, `SpatialQueries`), called identically by client and server.
 - `Assets/` — Studio-authored instance trees (animations, UI) synced by Rojo.
 - `tests/` — Lune specs for the pure shared modules.
-- `docs/` — this file, `MovementSystem.md`, and `MOVEMENT_POLISH_ARCHITECTURE.md` (VFX/SFX/camera; purely visual).
+- `docs/` — this file, `MovementSystem.md`, `MOVEMENT_POLISH_ARCHITECTURE.md` (VFX/SFX/camera; purely visual), and `VaultMechanic.md` (the Sorcery reference Vault was built from, and why ours differs).
 
 **Before starting a task:** skim `src/Shared/Types/MovementTypes.luau` (the shared context shape) and the relevant state files. Existing comments often record *why* a decision was made and whether a constant is still unmeasured; read them before "fixing" something flagged as intentional. How that fits §7's one-line comment rule is an open question (see `MovementSystem.md` §14).
 

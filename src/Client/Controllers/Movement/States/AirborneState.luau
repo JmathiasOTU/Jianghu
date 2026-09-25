@@ -36,9 +36,10 @@ end
 -- wrapper (not `LandingResolution.Resolve` directly), so the effect fires
 -- from every real landing edge without being duplicated per call site.
 function AirborneState.ResolveLandingTarget(
-	context: ClientMovementContext
+	context: ClientMovementContext,
+	allowResume: boolean?
 ): MovementStates.MovementState
-	local target = LandingResolution.Resolve(context)
+	local target = LandingResolution.Resolve(context, allowResume)
 	local isMedium = target ~= MovementStates.HardLanding
 		and context.fallHeight ~= nil
 		and (context.fallHeight :: number) >= context.constants.MediumLandingHeightThreshold

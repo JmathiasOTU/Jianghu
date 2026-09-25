@@ -29,6 +29,26 @@ return function(t)
 			local targets = StateRules.Transitions[MovementStates.WallRun]
 			t.expect(table.find(targets, MovementStates.HardLanding) ~= nil).toBeTruthy()
 		end)
+
+		t.it("reaches Vault from the air, a cling and a boost, never a wall run", function()
+			for _, source in ipairs({
+				MovementStates.Airborne,
+				MovementStates.DoubleJump,
+				MovementStates.WallCling,
+				MovementStates.WallBoost,
+			}) do
+				local targets = StateRules.Transitions[source]
+				t.expect(table.find(targets, MovementStates.Vault) ~= nil).toBeTruthy()
+			end
+			local fromWallRun = StateRules.Transitions[MovementStates.WallRun]
+			t.expect(table.find(fromWallRun, MovementStates.Vault)).toBe(nil)
+		end)
+
+		t.it("never leaves Vault into Run or Sprint", function()
+			local fromVault = StateRules.Transitions[MovementStates.Vault]
+			t.expect(table.find(fromVault, MovementStates.Run)).toBe(nil)
+			t.expect(table.find(fromVault, MovementStates.Sprint)).toBe(nil)
+		end)
 	end)
 
 	t.describe("CanEnter[WallRun]", function()
@@ -113,6 +133,49 @@ return function(t)
 		end)
 	end)
 
+	t.describe("CanEnter[Vault]", function()
+		local cooldown = Fixtures.context().constants.VaultCooldownSeconds
+		local headOn = {
+			grounded = false,
+			ledge = {
+				instance = Fixtures.wall("A"),
+				wallPoint = Vector3.zero,
+				normal = Vector3.new(0, 0, 1),
+				topPoint = Vector3.new(0, 4, -1.25),
+				direction = Vector3.new(0, 0, -1),
+			},
+		}
+
+		t.it("accepts a ledge ahead, in the air", function()
+			t.expect(canEnter(MovementStates.Vault, headOn)).toBeTruthy()
+		end)
+
+		t.it("needs a ledge", function()
+			t.expect(canEnter(MovementStates.Vault, { grounded = false })).toBeFalsy()
+		end)
+
+		t.it("rejects on the ground", function()
+			local overrides = table.clone(headOn)
+			overrides.grounded = true
+			t.expect(canEnter(MovementStates.Vault, overrides)).toBeFalsy()
+		end)
+
+		t.it("judges the facing the probe was cast along", function()
+			local overrides = table.clone(headOn)
+			overrides.ledge = table.clone(headOn.ledge)
+			overrides.ledge.direction = Vector3.new(1, 0, 0)
+			t.expect(canEnter(MovementStates.Vault, overrides)).toBeFalsy()
+		end)
+
+		t.it("waits out the cooldown", function()
+			local overrides = table.clone(headOn)
+			overrides.lastVaultAt = os.clock()
+			t.expect(canEnter(MovementStates.Vault, overrides)).toBeFalsy()
+			overrides.lastVaultAt = os.clock() - cooldown - 0.01
+			t.expect(canEnter(MovementStates.Vault, overrides)).toBeTruthy()
+		end)
+	end)
+
 	t.describe("CanEnter[Sprint]", function()
 		t.it("needs the full Run dwell", function()
 			t.expect(canEnter(MovementStates.Sprint, { runDuration = 0.5 })).toBeFalsy()
@@ -133,6 +196,18 @@ return function(t)
 				grounded = false,
 				doubleJumpUsed = true,
 			})).toBeFalsy()
+		end)
+
+		t.it("is blocked briefly after a vault", function()
+			local block = Fixtures.context().constants.VaultDoubleJumpBlockSeconds
+			t.expect(canEnter(MovementStates.DoubleJump, {
+				grounded = false,
+				lastVaultAt = os.clock(),
+			})).toBeFalsy()
+			t.expect(canEnter(MovementStates.DoubleJump, {
+				grounded = false,
+				lastVaultAt = os.clock() - block - 0.01,
+			})).toBeTruthy()
 		end)
 	end)
 

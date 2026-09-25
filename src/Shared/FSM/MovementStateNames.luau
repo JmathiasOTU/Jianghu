@@ -40,6 +40,7 @@ export type DebugStateName =
 	| "WallLeap"
 	| "WallCling"
 	| "WallBoost"
+	| "Vault"
 
 local DebugNames: { [MovementState]: DebugStateName } = {
 	[MovementStates.Idle] = "Idle",
@@ -57,6 +58,7 @@ local DebugNames: { [MovementState]: DebugStateName } = {
 	[MovementStates.WallLeap] = "WallLeap",
 	[MovementStates.WallCling] = "WallCling",
 	[MovementStates.WallBoost] = "WallBoost",
+	[MovementStates.Vault] = "Vault",
 }
 
 return {

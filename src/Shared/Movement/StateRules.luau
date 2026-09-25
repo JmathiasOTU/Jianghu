@@ -69,6 +69,7 @@ local Transitions: { [MovementState]: { MovementState } } = {
 		MovementStates.HardLanding,
 		MovementStates.WallRun,
 		MovementStates.WallCling,
+		MovementStates.Vault,
 	},
 	[MovementStates.CrouchIdle] = {
 		MovementStates.Idle,
@@ -107,6 +108,7 @@ local Transitions: { [MovementState]: { MovementState } } = {
 		MovementStates.CrouchIdle,
 		MovementStates.CrouchWalk,
 		MovementStates.HardLanding,
+		MovementStates.Vault,
 	},
 
 	-- HardLanding (docs/MovementSystem.md §4.4 rework): a real, timed lock state
@@ -187,6 +189,7 @@ local Transitions: { [MovementState]: { MovementState } } = {
 		MovementStates.CrouchIdle,
 		MovementStates.CrouchWalk,
 		MovementStates.HardLanding,
+		MovementStates.Vault,
 	},
 
 	-- WallBoost (docs/MovementSystem.md §4.6): usually a single edge back to
@@ -201,6 +204,22 @@ local Transitions: { [MovementState]: { MovementState } } = {
 		MovementStates.Walk,
 		MovementStates.Run,
 		MovementStates.Sprint,
+		MovementStates.CrouchIdle,
+		MovementStates.CrouchWalk,
+		MovementStates.HardLanding,
+		MovementStates.Vault,
+	},
+
+	-- Vault (docs/MovementSystem.md §4.8): reachable on Space from the
+	-- airborne family and from a cling or boost (Space does nothing else
+	-- there), never from WallRun (a ledge ahead is a different wall; leap off
+	-- first). Hands to Airborne after its window. No Run/Sprint: a vault never
+	-- lands you running (LandingResolution's `allowResume = false`), and a
+	-- double-tap W mid-vault mustn't start Run (2026-09-25 playtest).
+	[MovementStates.Vault] = {
+		MovementStates.Airborne,
+		MovementStates.Idle,
+		MovementStates.Walk,
 		MovementStates.CrouchIdle,
 		MovementStates.CrouchWalk,
 		MovementStates.HardLanding,
@@ -293,7 +312,14 @@ local CanEnter: { [MovementState]: (context: MovementContext) -> boolean } = {
 	-- timer, which was only there to compensate for that codebase having no
 	-- clean per-life reset hook.
 	[MovementStates.DoubleJump] = function(context: MovementContext): boolean
-		return not context.grounded and not context.doubleJumpUsed
+		if context.grounded or context.doubleJumpUsed then
+			return false
+		end
+		-- Sorcery's post-vault block: a quick second press right after a vault
+		-- doesn't double jump over the launch.
+		local lastVaultAt = context.lastVaultAt
+		return not lastVaultAt
+			or os.clock() - lastVaultAt >= context.constants.VaultDoubleJumpBlockSeconds
 	end,
 
 	-- Same shape as Idle's own predicate (docs/MovementSystem.md §4.4 rework) --
@@ -395,6 +421,26 @@ local CanEnter: { [MovementState]: (context: MovementContext) -> boolean } = {
 		end
 		local elapsed = context.wallClingElapsed
 		return elapsed ~= nil and elapsed >= context.constants.WallBoostMinClingSeconds
+	end,
+
+	-- Vault (docs/MovementSystem.md §4.8): airborne, a ledge in reach this
+	-- press, off cooldown, and facing it head-on. The facing is the probe's own
+	-- cast direction (`ledge.direction`), so a server probe of an older root
+	-- position is judged by the facing the root had then.
+	[MovementStates.Vault] = function(context: MovementContext): boolean
+		if context.grounded then
+			return false
+		end
+		local ledge = context.ledge
+		if not ledge then
+			return false
+		end
+		local lastVaultAt = context.lastVaultAt
+		if lastVaultAt and os.clock() - lastVaultAt < context.constants.VaultCooldownSeconds then
+			return false
+		end
+		local facingAngle = SpatialQueries.facingAngleToWallDegrees(ledge.direction, ledge.normal)
+		return facingAngle <= context.constants.VaultMaxFacingAngleDegrees
 	end,
 }
 

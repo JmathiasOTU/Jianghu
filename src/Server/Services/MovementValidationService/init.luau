@@ -129,6 +129,16 @@ local function createSession(player: Player, humanoid: Humanoid, rootPart: BaseP
 		wallClingEnteredAt = nil,
 		pendingWallBoostClaimUntil = nil,
 		pendingDoubleJumpClaimUntil = nil,
+		ledgeQuery = nil,
+		lastVaultAt = nil,
+		vaultStartedAt = nil,
+		pendingVaultClaimUntil = nil,
+		vaultLaunchUntil = nil,
+		rootHistory = table.create(Probes.ROOT_HISTORY_CAPACITY, rootPart.CFrame),
+		rootHistoryAt = table.create(Probes.ROOT_HISTORY_CAPACITY, os.clock()),
+		rootHistoryNext = 1,
+		displacementCredit = 0,
+		displacementCreditUntil = nil,
 	}
 
 	-- The speed window is deliberately NOT reset here (audit M-002): it used to
@@ -272,6 +282,7 @@ function MovementValidationService.Init()
 		for _, session in pairs(Sessions.ByPlayer) do
 			local constants = MovementTuningState.GetEffective(session.player)
 			Probes.UpdateSupport(session)
+			Probes.RecordRootHistory(session)
 			Probes.UpdatePeakHeight(session)
 			Probes.UpdateWallRunQuery(session)
 			Probes.UpdateWallClingQuery(session)

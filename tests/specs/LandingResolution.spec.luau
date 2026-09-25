@@ -42,6 +42,14 @@ return function(t)
 			})).toBe(MovementStates.Sprint)
 		end)
 
+		t.it("never resumes Run/Sprint when resume is off (Vault)", function()
+			local context = Fixtures.context({
+				moveIntent = forwardIntent,
+				preAirborneLocomotion = MovementStates.Sprint,
+			})
+			t.expect(LandingResolution.Resolve(context, false)).toBe(MovementStates.Walk)
+		end)
+
 		t.it("demotes to Walk when landing backward", function()
 			t.expect(resolve({
 				moveIntent = backwardIntent,

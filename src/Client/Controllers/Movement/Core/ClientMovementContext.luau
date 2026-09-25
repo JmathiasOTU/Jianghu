@@ -59,6 +59,9 @@ type MovementState = MovementStates.MovementState
 -- WallBoostState.Enter to compute the launch impulse, captured into context
 -- BEFORE WallClingState.Exit nils its own copy, same pre-Exit-snapshot
 -- pattern `wallRunEntryInstance` already established for the WallLeap edge.
+-- `cameraLook` (docs/MovementSystem.md §4.8) is the camera's look vector,
+-- which steers Vault's launch. Client-only: the server has no camera, so it
+-- bounds the launch's magnitude and never its direction.
 export type ClientMovementContext = MovementTypes.MovementContext & {
 	characterMover: CharacterMover.CharacterMover,
 	facingController: FacingController.FacingController,
@@ -69,6 +72,7 @@ export type ClientMovementContext = MovementTypes.MovementContext & {
 	wallRunEntryTangent: Vector3?,
 	wallRunEntryInstance: BasePart?,
 	wallClingNormal: Vector3?,
+	cameraLook: Vector3?,
 }
 
 return {}

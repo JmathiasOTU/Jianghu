@@ -396,6 +396,69 @@ local MovementConstants = {
 	-- cling entirely. Checked by the shared `CanEnter[WallBoost]`, timed on each
 	-- side from that side's own cling entry.
 	WallBoostMinClingSeconds = 0.6,
+
+	-- Vault (docs/MovementSystem.md §4.8, docs/VaultMechanic.md): a mantle
+	-- assist for a lip you almost cleared. Starting-point values derived from
+	-- that goal and Sorcery's reference, not measured.
+	--
+	-- Structural (SpatialQueries.QueryLedge), not live-tunable: the server's
+	-- mantle and rise bounds are built from them.
+	-- Forward reach of the ledge casts; matches WallClingDistance, so the
+	-- mantle never carries the character far sideways.
+	VaultReach = 3,
+	-- The ledge top must sit this high above the feet (knee height)...
+	VaultMinLedgeHeight = 1.5,
+	-- ...and no higher than this (just above the head). With
+	-- VaultMantleClearance, the most the mantle can lift the character.
+	VaultMaxLedgeHeight = 6,
+	-- Flatness gate for the wall face, same value as WallClingMaxNormalY.
+	VaultMaxNormalUpDot = 0.26,
+	-- How far past the wall face the top probe (and the snap) lands.
+	VaultTopInset = 1.25,
+	-- The top must continue at least this far past the inset, so rails and
+	-- thin walls don't count.
+	VaultMinTopDepth = 1.5,
+	-- ...and be within this height of the first top hit to count as one surface.
+	VaultTopDepthTolerance = 0.5,
+	-- A standable top (about 45 degrees at most).
+	VaultMinTopNormalY = 0.7,
+	-- Clear space above the top: the R6 rig's standing height.
+	VaultHeadroom = 5,
+	-- The mantle carries the feet this far above the top before crossing onto
+	-- it, so they clear the lip and the Humanoid doesn't read the top as floor
+	-- mid-mantle. Part of the server's rise bound, so not tunable.
+	VaultMantleClearance = 0.5,
+	-- During WallBoost the vault fires on its own (designer, 2026-09-25). A
+	-- boost rises through the 4.5-stud height window in a few hundredths of a
+	-- second, so the probe interval is derived from the rise speed to land at
+	-- least this many probes inside the window (TraversalMath.VaultAutoProbeInterval).
+	VaultAutoProbeSamplesPerWindow = 2,
+
+	-- Feel (live-tunable). Sorcery's launch: 15 forward along the camera, 35 up
+	-- (~3.1 studs of rise at default gravity), plus part of the entry momentum.
+	VaultForwardSpeed = 70,
+	VaultUpwardSpeed = 50,
+	VaultHorizontalMomentumKeep = 0.4,
+	-- Sorcery adds |vy| / 3, so a fast fall lifts you higher; capped here so
+	-- the server's ceiling has a finite bound. 35 + 20 = JumpPower: a vault
+	-- never out-launches a plain jump.
+	VaultVerticalMomentumKeep = 1 / 3,
+	VaultMaxMomentumUpward = 20,
+	-- The whole Vault state, mantle then launch, before handing to Airborne:
+	-- the Vault clip's length (designer, 2026-09-25).
+	VaultDurationSeconds = 0.32,
+	-- The longest the mantle takes: up the wall face, then across onto the top
+	-- (replaced a one-frame snap, 2026-09-25 playtest: "you just snap"). An
+	-- entry already rising faster mantles at its own speed instead
+	-- (TraversalMath.VaultMantleDuration). The launch fires when it ends.
+	-- Starting point, not measured.
+	VaultMantleSeconds = 0.2,
+	-- Head-on gate, same as WallClingMaxFacingAngleDegrees.
+	VaultMaxFacingAngleDegrees = 35,
+	-- Server-owned cooldown between vaults (Sorcery: 0.5 s).
+	VaultCooldownSeconds = 0.5,
+	-- No DoubleJump this soon after a vault (Sorcery's 0.25 s block).
+	VaultDoubleJumpBlockSeconds = 0.25,
 }
 
 return MovementConstants

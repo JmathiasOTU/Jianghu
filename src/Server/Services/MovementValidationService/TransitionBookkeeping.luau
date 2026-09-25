@@ -66,6 +66,12 @@ function TransitionBookkeeping.OnChanged(
 		session.airborneAllowedSpeed = nil
 	end
 
+	-- A vault never lands you back into Run/Sprint (docs/MovementSystem.md
+	-- §4.8), mirroring the client's `fsm.changed` handler.
+	if next == MovementStates.Vault then
+		session.preAirborneLocomotion = nil
+	end
+
 	-- Post-boost re-grab cooldown, server-owned (audit M-038): the client
 	-- applies it on WallBoost's own Exit, so the server applies it on the
 	-- same edge of its own mirror.
@@ -85,6 +91,7 @@ function TransitionBookkeeping.OnChanged(
 			and previous ~= MovementStates.WallLeap
 			and previous ~= MovementStates.WallCling
 			and previous ~= MovementStates.WallBoost
+			and previous ~= MovementStates.Vault
 		then
 			session.peakHeight = rootPart.Position.Y
 		end

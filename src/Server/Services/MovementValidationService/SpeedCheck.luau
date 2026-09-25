@@ -65,6 +65,15 @@ function SpeedCheck.ResetWindow(session: PlayerSession)
 	session.speedBudgetAt = now
 end
 
+-- Allows a known, instant horizontal move of up to `distance` studs (the vault
+-- snap) in every window that starts by `untilAt`: the snap can replicate just
+-- before or after the accept that grants it, and the window can roll over in
+-- between. Not scaled by the tolerance -- it's an exact bound, not a speed.
+function SpeedCheck.CreditDisplacement(session: PlayerSession, distance: number, untilAt: number)
+	session.displacementCredit = distance
+	session.displacementCreditUntil = untilAt
+end
+
 -- Every server position correction lands here (audit M-008): moves the rig
 -- (rotation kept) and kills its velocity, so a cheat snapped back doesn't just
 -- resume at full speed the next frame, then restarts the speed window from
@@ -120,7 +129,16 @@ function SpeedCheck.Enforce(session: PlayerSession, constants: EffectiveMovement
 	local position = session.rootPart.Position
 	local previous = session.speedCheckPosition
 	local flatDelta = Vector3.new(position.X - previous.X, 0, position.Z - previous.Z)
-	local maxDistance = session.speedBudget * MovementConstants.SpeedToleranceMultiplier
+	local credit = 0
+	local creditUntil = session.displacementCreditUntil
+	if creditUntil then
+		if session.speedCheckAt <= creditUntil then
+			credit = session.displacementCredit
+		else
+			session.displacementCreditUntil = nil
+		end
+	end
+	local maxDistance = session.speedBudget * MovementConstants.SpeedToleranceMultiplier + credit
 
 	if DebugFlags.SPEED_RATIO_CAPTURE then
 		recordSpeedRatio(flatDelta.Magnitude, session.speedBudget)

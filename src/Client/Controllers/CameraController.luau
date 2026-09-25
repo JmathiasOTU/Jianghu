@@ -13,6 +13,7 @@ local MovementLife = require(script.Parent.Parent.State.MovementLife)
 
 type MovementState = MovementStates.MovementState
 type ShakeProfile = PresentationConstants.ShakeProfile
+type FOVKickProfile = PresentationConstants.FOVKickProfile
 
 local SHIFT_LOCK_KEYS: { [Enum.KeyCode]: boolean } = {
 	[Enum.KeyCode.LeftShift] = true,
@@ -46,6 +47,8 @@ local shiftLocked = false
 local head: BasePart? = nil
 local activeShake: { profile: ShakeProfile, startedAt: number }? = nil
 local shakeDebounce = CueDebounce.new()
+local activeKick: { profile: FOVKickProfile, startedAt: number }? = nil
+local kickDebounce = CueDebounce.new()
 
 -- Our own shift lock, replacing Roblox's default mouse lock (disabled via
 -- StarterPlayer.EnableMouseLockOption in default.project.json), whose offset
@@ -86,6 +89,30 @@ local function sampleShake(now: number): Vector3
 	return random:NextUnitVector() * shake.profile.Magnitude * (1 - progress) ^ 2
 end
 
+-- An FOVKick cue: an instant punch that eases back out (quadratic, like
+-- Sorcery's Quad tween). Added on top of the spring rather than pushed into
+-- it, so the state's own FOV goal is untouched underneath.
+local function startFOVKick(name: string)
+	local profile = PresentationConstants.FOVKickProfiles[name]
+	if not profile or not kickDebounce:TryFire(name) then
+		return
+	end
+	activeKick = { profile = profile, startedAt = os.clock() }
+end
+
+local function sampleFOVKick(now: number): number
+	local kick = activeKick
+	if not kick then
+		return 0
+	end
+	local progress = (now - kick.startedAt) / kick.profile.DurationSeconds
+	if progress >= 1 then
+		activeKick = nil
+		return 0
+	end
+	return kick.profile.Amount * (1 - progress) ^ 2
+end
+
 -- A shoulder offset in first person would push the camera out of the head.
 local function isFirstPerson(camera: Camera): boolean
 	if not head then
@@ -105,6 +132,9 @@ local function followLife(life: MovementLife.Life)
 		local cue = MovementCues[next]
 		if cue and cue.CameraShake then
 			startShake(cue.CameraShake)
+		end
+		if cue and cue.FOVKick then
+			startFOVKick(cue.FOVKick)
 		end
 	end)
 	life.trove:Add(function()
@@ -132,7 +162,7 @@ local function update(dt: number)
 			fovSpring:SetGoal(PresentationConstants.BaseFOV)
 		end
 	end
-	camera.FieldOfView = fovSpring:Update(dt)
+	camera.FieldOfView = fovSpring:Update(dt) + sampleFOVKick(os.clock())
 
 	-- The default camera script can release the mouse on its own (e.g. after a
 	-- right-drag); keep it locked while shift lock is on.

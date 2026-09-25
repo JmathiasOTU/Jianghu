@@ -147,6 +147,13 @@
       "Properties": {
         "AnimationId": "rbxassetid://136022644832167"
       }
+    },
+    {
+      "Name": "Vault",
+      "ClassName": "Animation",
+      "Properties": {
+        "AnimationId": "rbxassetid://129429037256731"
+      }
     }
   ]
 }

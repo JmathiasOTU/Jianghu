@@ -20,7 +20,7 @@ How movement gets its juice: sounds, particles, camera FOV, camera shake and a s
 | Smoothing | A small in-repo damped spring, `Shared/Util/Spring.luau`, not a Wally dependency. It's a spring rather than `TweenService` so a goal that changes mid-blend (Sprint → Slide → Sprint in under a second) carries its velocity instead of popping (§4.1). |
 | Footsteps | Driven by distance travelled, not by state entry. The cue table supplies the sound and stride per state (§3.2). |
 | Live-tunable in the F4 overlay? | **No.** That pipeline exists for exploit-relevant physics numbers the server validates (MovementSystem §10). Polish numbers live in `PresentationConstants.luau` and are retuned by editing it. |
-| Who sees what | The mover sees and hears every cue. Bystanders get only `"Nearby"` one-shots. Loops, FOV and camera shake are never replicated. |
+| Who sees what | The mover sees and hears every cue. Bystanders get only `"Nearby"` one-shots. Loops, FOV, FOV kicks and camera shake are never replicated. |
 
 ---
 
@@ -45,6 +45,7 @@ export type MovementCueDefinition = {
 	TargetFOV: number?, -- FOV spring goal while current; nil = BaseFOV unless HoldsFOV
 	HoldsFOV: boolean?, -- keep the previous goal (mid-air states)
 	CameraShake: string?, -- PresentationConstants.ShakeProfiles key, on entry
+	FOVKick: string?, -- PresentationConstants.FOVKickProfiles key, on entry
 
 	Replication: ("Local" | "Nearby")?, -- nil = "Local"
 }
@@ -52,7 +53,7 @@ export type MovementCueDefinition = {
 
 A state with no row is silent, with base FOV and no shake. Every controller treats that as the correct default, so rows only exist for states that want polish.
 
-**Mid-air FOV.** Airborne, DoubleJump, SlideJump and WallLeap set `HoldsFOV`. Without it, every sprint jump would dip FOV back to base mid-air and pump it up again on landing. With it, a jump keeps the FOV it took off with, and a leap off a wall run keeps the wall run's FOV until landing.
+**Mid-air FOV.** Airborne, DoubleJump, SlideJump, WallLeap and Vault set `HoldsFOV`. Without it, every sprint jump would dip FOV back to base mid-air and pump it up again on landing. With it, a jump keeps the FOV it took off with, and a leap off a wall run keeps the wall run's FOV until landing.
 
 **Adding polish to a state:** add or extend its row, and author any new named `Sound`/`ParticleEmitter` in the rig template (§2). No controller changes. `tests/specs/MovementCues.spec.luau` checks every row (fields, strides, FOV range, shake profile names, replication values).
 
@@ -76,8 +77,8 @@ The template syncs to `ReplicatedStorage.Assets.FX.Movement` and mirrors the R6 
 ```
 Movement/
     HumanoidRootPart/
-        RootAttachment/        HardLandingThud, WallLeapBurst, SlideScrape, WallRunWind (Sounds)
-                               HardLandingDust, WallLeapBurst, WallRunTrail (ParticleEmitters)
+        RootAttachment/        HardLandingThud, WallLeapBurst, SlideScrape, WallRunWind, VaultWhoosh (Sounds)
+                               HardLandingDust, WallLeapBurst, WallRunTrail, VaultDust (ParticleEmitters)
     Left Leg/
         LeftFootAttachment/    Footstep/ (pack: Plastic, Grass, Metal, Wood, Concrete, Fabric, Sand, Glass)
                                SlideDust (ParticleEmitter)
@@ -175,6 +176,7 @@ Both constructors share one implementation (numbers and `Vector3`s support the s
 ### 4.2 FOV and shake
 
 - **FOV:** every frame, the goal is the current row's `TargetFOV`, else unchanged if it `HoldsFOV`, else `BaseFOV`, and the spring's value is written to `Camera.FieldOfView`. The default camera scripts never touch FOV.
+- **FOV kick:** an `FOVKick` cue (fired from `fsm.changed`, debounced) adds `PresentationConstants.FOVKickProfiles[name].Amount` degrees at once, easing back to zero over its duration with the square of the time left (Sorcery's Quad tween). It's added to the spring's output, not pushed into its goal, so the state's own FOV underneath is untouched and the kick can't fight a `HoldsFOV`. Vault uses it (+10 over 0.5 s; Sorcery's is +20, but ours starts from an already raised sprint or wall-run FOV).
 - **Shake:** a `CameraShake` cue (fired from `fsm.changed`, debounced) starts a short random offset from `PresentationConstants.ShakeProfiles[name]` that decays with the square of the time left. It's a pure translation in camera space, so it doesn't need undoing: the default camera script rebuilds its position from the focus every frame and reads only the camera's *direction*, which a translation doesn't change. A rotating shake would drift the camera and would need undoing before the camera script's next update.
 - Shake is a decaying random impulse, not a goal-seeking spring, so it isn't built on `Spring`.
 - FOV, shift-lock offset and shake all run in one render step at `RenderPriority.Camera + 1`, right after the default camera script.
@@ -211,8 +213,8 @@ event PlayMovementCue = {
 }
 ```
 
-- **Server-driven:** the server's own mirror decides HardLanding (from its fall height) and WallLeap (on an accepted claim), so bystanders only see moves the server accepted. There's no client request to validate or rate-limit, and no second cue enum to keep in step with the table: the server filters with the same `MovementCues` rows.
-- **The payload is the state, not a cue name.** The receiver plays that row's `EnterSound` and `EnterParticle`. It never plays `CameraShake`: another player's landing doesn't shake your camera.
+- **Server-driven:** the server's own mirror decides HardLanding (from its fall height), WallLeap and Vault (on an accepted claim), so bystanders only see moves the server accepted. There's no client request to validate or rate-limit, and no second cue enum to keep in step with the table: the server filters with the same `MovementCues` rows.
+- **The payload is the state, not a cue name.** The receiver plays that row's `EnterSound` and `EnterParticle`. It never plays `CameraShake` or `FOVKick`: another player's landing doesn't move your camera.
 - **Excluding the mover:** `FireExcept(player, ...)`, because the mover already played the cue locally. As a backstop, the receiver also ignores events about `Players.LocalPlayer`.
 - **Receiver** (`Movement/Presentation/NearbyCuePlayer.luau`, callback set once in `MovementController.Init`, so it works while the local player is dead): skips silently if `player.Character` hasn't streamed in (ARCHITECTURE §14) or the named instance isn't there, and skips rows that aren't `"Nearby"`. It finds the instances with `CharacterFX.Scan`, a one-off lookup using the same `MovementCue` tag rule as the per-life index; cues are rare enough that no live index per remote character is needed.
 - **Enum parity:** `tests/specs/MovementStateNames.spec.luau` checks that network.zap's `MovementStateName` enum and `Shared/FSM/MovementStateNames.luau` list the same states.
@@ -230,7 +232,7 @@ event PlayMovementCue = {
 |---|---|
 | Cues | `MinCueRetriggerSeconds`, `DefaultEmitCount`, the `CueAttribute`/`SoundGroupAttribute`/`MountedAttribute` names shared by the mount and the index |
 | SFX | `FootstepPitchJitter`, `NearbyRollOffMaxDistance` |
-| Camera | `BaseFOV`, `FOVDampingRatio`, `FOVFrequency`, `ShakeProfiles: { [string]: { Magnitude, DurationSeconds } }` (more fields once the shake is built) |
+| Camera | `BaseFOV`, `FOVDampingRatio`, `FOVFrequency`, `ShakeProfiles: { [string]: { Magnitude, DurationSeconds } }`, `FOVKickProfiles: { [string]: { Amount, DurationSeconds } }` |
 | Shift lock | `ShiftLockOffset`, `ShiftLockDampingRatio`, `ShiftLockIn/OutFrequency`, `ShiftLockMouseIcon`, `FirstPersonHeadTransparency`, `FirstPersonHeadDistance` |
 
 All values are starting points, not tuned. Retune from playtests.
@@ -283,6 +285,7 @@ Not built until a real caller needs it: a pool for effects that aren't attached 
 - **Camera clipping with shift lock:** the shoulder offset is applied after Roblox's occlusion handling (Poppercam), so against a wall the offset camera can clip into it. The reference behaves the same way. If it shows up in playtests, cast from the focus to the offset position and shorten the offset.
 - **Smooth facing in shift lock:** the reference turns the character toward the camera gradually; `FacingController` snaps. Adding it would be a `FacingController` change, and the server's backpedal check compares facing to movement (MovementSystem §8.1), so a lagging turn would need checking against it first.
 - Cue rows for `WallCling`, `WallBoost`, `DoubleJump`, `SlideJump`, `Airborne`: empty until someone wants them.
+- **Vault sounds and particles:** its row names `VaultWhoosh` and `VaultDust` (played locally and to Nearby players), not authored yet, like the other impact cues. Build them into `RootAttachment` in the template (§2). A light `CameraShake` on the vault is one more row field if the kick alone feels flat.
 - Other players' footsteps (useful for positional awareness). They could be derived on each client from replicated velocity with no network cost; decide separately.
 - A volume slider (the `SoundGroup`s are ready) and an effects-quality or reduced-motion setting (skip loop particles, zero shake). Both are new product scope; controllers already gate on the cue table, so each is one more check at the same points. Needs a persisted preference (ProfileStore, ARCHITECTURE §13).
 - As more effect files land, extend `FootstepPack.spec.luau`'s approach into a spec checking that every name in `MovementCues` is mounted somewhere in the template.

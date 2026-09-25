@@ -75,7 +75,14 @@ local LandingResolution = {}
 -- cleared (see Movement/init.luau's `peakHeight` bookkeeping), so this same
 -- function re-run from there falls straight through to the normal branches
 -- below -- no separate "already handled" flag needed.
-function LandingResolution.Resolve(context: MovementContext): MovementStates.MovementState
+--
+-- `allowResume = false` never resumes Run/Sprint: Vault's landings (a mantle
+-- lands you on the ledge walking, 2026-09-25 playtest), which lets Vault's
+-- topology leave Run/Sprint out entirely.
+function LandingResolution.Resolve(
+	context: MovementContext,
+	allowResume: boolean?
+): MovementStates.MovementState
 	if
 		context.fallHeight
 		and context.fallHeight >= context.constants.HardLandingHeightThreshold
@@ -88,7 +95,7 @@ function LandingResolution.Resolve(context: MovementContext): MovementStates.Mov
 	elseif hasInput then
 		local reallyForward = context.moveIntent.forward
 			or (not context.cameraLocked and not context.moveIntent.backward)
-		if reallyForward and context.preAirborneLocomotion then
+		if reallyForward and context.preAirborneLocomotion and allowResume ~= false then
 			return context.preAirborneLocomotion :: MovementStates.MovementState
 		end
 		return MovementStates.Walk
@@ -110,17 +117,27 @@ local RESOLVE_TARGETS = {
 	MovementStates.HardLanding,
 }
 
-local LANDING_CALLERS = {
-	MovementStates.Airborne,
-	MovementStates.DoubleJump,
-	MovementStates.WallRun,
-	MovementStates.WallCling,
-	MovementStates.WallBoost,
+local RESUME_TARGETS = {
+	[MovementStates.Run] = true,
+	[MovementStates.Sprint] = true,
 }
 
-for _, caller in ipairs(LANDING_CALLERS) do
+-- Caller -> whether its landing branch lets Resolve resume Run/Sprint.
+local LANDING_CALLERS = {
+	[MovementStates.Airborne] = true,
+	[MovementStates.DoubleJump] = true,
+	[MovementStates.WallRun] = true,
+	[MovementStates.WallCling] = true,
+	[MovementStates.WallBoost] = true,
+	[MovementStates.Vault] = false,
+}
+
+for caller, allowsResume in pairs(LANDING_CALLERS) do
 	local edges = StateRules.Transitions[caller]
 	for _, target in ipairs(RESOLVE_TARGETS) do
+		if RESUME_TARGETS[target] and not allowsResume then
+			continue
+		end
 		assert(
 			table.find(edges, target) ~= nil,
 			`StateRules.Transitions[{tostring(caller)}] is missing landing target {tostring(target)}`

@@ -288,6 +288,26 @@ function Mirror.PassiveTransitions(session: PlayerSession)
 		return
 	end
 
+	-- Vault (docs/MovementSystem.md §8.4): the same short-window shape as
+	-- WallBoost, timed from its own accept.
+	-- Landing is only checked once the window ends, as on the client, and
+	-- never resumes Run/Sprint.
+	if current == MovementStates.Vault then
+		local startedAt = session.vaultStartedAt or session.lastTransitionAt
+		if os.clock() - startedAt < context.constants.VaultDurationSeconds then
+			return
+		end
+		if not context.grounded then
+			session.fsm:RequestTransition(MovementStates.Airborne, context)
+		elseif
+			session.fsm:RequestTransition(LandingResolution.Resolve(context, false), context)
+		then
+			session.doubleJumpUsed = false
+			session.preAirborneLocomotion = nil
+		end
+		return
+	end
+
 	-- HardLanding (docs/MovementSystem.md §4.4 rework): mirrors `HardLandingState.
 	-- Update` client-side exactly -- losing the ground mid-lock is involuntary
 	-- and takes priority over the lock timer (nothing left to lock the player

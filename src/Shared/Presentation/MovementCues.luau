@@ -30,6 +30,9 @@ export type MovementCueDefinition = {
 	HoldsFOV: boolean?,
 	-- PresentationConstants.ShakeProfiles key
 	CameraShake: string?,
+	-- PresentationConstants.FOVKickProfiles key: a one-shot punch on entry,
+	-- added on top of whatever FOV goal is current.
+	FOVKick: string?,
 
 	-- nil = "Local". Only EnterSound/EnterParticle are ever broadcast.
 	Replication: CueReplication?,
@@ -72,6 +75,13 @@ local MovementCues: { [MovementState]: MovementCueDefinition } = {
 	},
 	[MovementStates.SlideJump] = {
 		HoldsFOV = true,
+	},
+	[MovementStates.Vault] = {
+		EnterSound = "VaultWhoosh",
+		EnterParticle = "VaultDust",
+		HoldsFOV = true,
+		FOVKick = "Vault",
+		Replication = "Nearby",
 	},
 	[MovementStates.HardLanding] = {
 		EnterSound = "HardLandingThud",

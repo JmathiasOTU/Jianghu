@@ -346,6 +346,32 @@ export type PlayerSession = {
 	-- and mashing Space). Retried every Heartbeat for
 	-- `WallRunClaimBufferSeconds`, the measured claim/position ordering window.
 	pendingDoubleJumpClaimUntil: number?,
+	-- Vault (docs/MovementSystem.md §4.8, §8.4). `ledgeQuery` is the server's
+	-- own QueryLedge, taken only at claim time and on buffered retries (a
+	-- vault has no sustain check to keep fresh).
+	ledgeQuery: SpatialQueries.LedgeHit?,
+	-- Server-owned cooldown clock: the accept time, moved back by however
+	-- long the claim sat in the claim buffer (like `wallClingEnteredAt`).
+	lastVaultAt: number?,
+	-- Times the mirror's Vault window (`VaultDurationSeconds`).
+	vaultStartedAt: number?,
+	pendingVaultClaimUntil: number?,
+	-- Until then, a ground anchor allows the vault's launch instead of only a
+	-- jump: the mantle ends with the feet just above the ledge, so the launch
+	-- leaves from ground the support probe can see (`VerticalCeiling.Anchor`).
+	vaultLaunchUntil: number?,
+	-- Recent root CFrames, a ring buffer written every Heartbeat
+	-- (`Probes.RecordRootHistory`). The vault mantle moves the root onto the
+	-- ledge, and those positions can replicate before the claim is judged; a
+	-- probe of where the root was a moment earlier still finds the ledge.
+	rootHistory: { CFrame },
+	rootHistoryAt: { number },
+	rootHistoryNext: number,
+	-- A known horizontal move (the vault mantle's leg across) the speed window
+	-- allows on top of its budget, for every window that starts by
+	-- `displacementCreditUntil` (`SpeedCheck.CreditDisplacement`).
+	displacementCredit: number,
+	displacementCreditUntil: number?,
 }
 
 Sessions.ByPlayer = {} :: { [Player]: PlayerSession }

@@ -21,6 +21,7 @@ local MovementStates: { [string]: MovementState } = {
 	WallLeap = Symbol("WallLeap"),
 	WallCling = Symbol("WallCling"),
 	WallBoost = Symbol("WallBoost"),
+	Vault = Symbol("Vault"),
 }
 
 return MovementStates

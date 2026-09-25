@@ -138,6 +138,10 @@ local function maxSpeedForState(
 		-- boost's horizontal part (`WallBoostSeparationSpeed`) sits under this
 		-- cap, and its vertical part is enforced by the vertical ceiling.
 		return constants.SprintSpeed
+	elseif state == MovementStates.Vault then
+		-- One-shot launch too; a launch faster than this raises
+		-- `airborneAllowedSpeed` at the accept (TraversalClaims).
+		return constants.SprintSpeed
 	elseif state == MovementStates.CrouchIdle or state == MovementStates.CrouchWalk then
 		return constants.CrouchSpeed
 	elseif state == MovementStates.HardLanding then

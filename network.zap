@@ -83,7 +83,10 @@ event ClaimTraversalMove = {
 -- of only ever showing the client's own (self-reported, untrustworthy) view. Only
 -- ever fired to the one player it describes (`Fire(player, data)`), never
 -- FireAll -- see docs/MovementSystem.md.
-type DebugMovementState = enum {
+--
+-- `MovementStateName` is every movement state by name (Shared/FSM/
+-- MovementStateNames.luau); PlayMovementCue below reuses it.
+type MovementStateName = enum {
 	"Idle",
 	"Walk",
 	"Run",
@@ -120,7 +123,7 @@ event MovementDebugState = {
 	type: Unreliable,
 	call: SingleSync,
 	data: struct {
-		state: DebugMovementState,
+		state: MovementStateName,
 		runDuration: f32?,
 		violationCount: u16,
 		violations: MovementViolationEntry[0..5],
@@ -230,7 +233,7 @@ event TuningState = {
 -- Per-session toggle, server-authorized like every other dev tool here.
 -- Collision is disabled server-side (CanCollide replicates natively); the
 -- actual fly movement is driven client-side by
--- Client/Controllers/Movement/NoclipController.luau, since the player's own
+-- Client/Controllers/Movement/DevTools/NoclipController.luau, since the player's own
 -- character is already network-owned by that client for ordinary movement.
 -- MovementValidationService.enforceSpeedSanity exempts an active session via
 -- Server/State/NoclipState.luau rather than trusting a client-reported flag.
@@ -265,4 +268,21 @@ event RequestSetDebugOverlayOpen = {
 	type: Reliable,
 	call: SingleAsync,
 	data: boolean,
+}
+
+-- Movement polish (docs/MOVEMENT_POLISH_ARCHITECTURE.md §5) ------------------
+--
+-- Server -> every client except the mover: another player entered a state
+-- whose cue row is "Nearby" (a hard landing, a wall leap), so play that row's
+-- one-shot sound and particle on their character. Driven by the server's own
+-- mirrored FSM, never by a client request, so there's no client -> server
+-- remote to rate-limit. Cosmetic, so Unreliable: a dropped thud is invisible.
+event PlayMovementCue = {
+	from: Server,
+	type: Unreliable,
+	call: SingleSync,
+	data: struct {
+		player: Instance.Player,
+		state: MovementStateName,
+	},
 }

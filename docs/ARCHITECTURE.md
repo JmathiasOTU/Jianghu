@@ -2,7 +2,7 @@
 
 This document is the standing set of design rules for Jianghu. It applies to every system in this repository — movement, combat, UI wiring, and persistence alike. Pull requests that violate these rules should be rejected in review regardless of whether the feature "works."
 
-Sections 1–14 are the rules; code comments cite them as `ARCHITECTURE §N`, so their numbers don't change. §15 covers the stack, layout and workflow. How the movement system itself works is in [`MovementSystem.md`](MovementSystem.md).
+Sections 1–14 are the rules; code comments cite them as `ARCHITECTURE §N`, so their numbers don't change. §15 covers the stack, layout and workflow. How the movement system itself works is in [`MovementSystem.md`](MovementSystem.md); its visual polish is in [`MOVEMENT_POLISH_ARCHITECTURE.md`](MOVEMENT_POLISH_ARCHITECTURE.md).
 
 ## 1. Project Identity
 
@@ -105,13 +105,14 @@ Jianghu is a Roblox parry-combat/movement RPG. Read this file and [`CONTRIBUTING
 **Stack:** Rojo + Luau (`--!strict`) + Wally. Signals: LemonSignal. Cleanup: Trove. Networking: Zap (`network.zap` → generated `network.luau`). Persistence: ProfileStore. Lint/format: Selene + StyLua. Tests: Lune. R6 only. Tool versions are pinned in `aftman.toml`.
 
 **Layout:**
-- `src/Client/Controllers/` — client controllers. `Movement/` is the FSM-driven movement system: one file per state under `States/`, with `init.luau` as the per-life orchestrator.
-- `src/Server/Services/` — server services. `MovementValidationService.luau` mirrors each player's movement FSM independently and never trusts a client-claimed state or value.
+- `src/Client/Controllers/` — client controllers. `Movement/` is the FSM-driven movement system: `init.luau` is the per-life orchestrator, with `Core/` (input, `CharacterMover`, context), `States/` (one file per state), `Presentation/` (facing, animation, sounds, particles) and `DevTools/` (noclip).
+- `src/Client/State/` — shared client state modules (`MovementLife`, `TuningSnapshot`, `DebugSnapshot`). This is how controllers share data without reaching into each other (§2).
+- `src/Server/Services/` — server services. `MovementValidationService/` mirrors each player's movement FSM independently and never trusts a client-claimed state or value; its `init.luau` owns sessions and the Heartbeat order, with one module per check.
 - `src/Server/State/`, `src/Server/Events/` — per-player server records; server-to-server signals.
 - `src/Shared/` — Constants, FSM primitives, types, and pure movement math/geometry (`StateRules`, `TraversalMath`, `SpatialQueries`), called identically by client and server.
 - `Assets/` — Studio-authored instance trees (animations, UI) synced by Rojo.
 - `tests/` — Lune specs for the pure shared modules.
-- `docs/` — this file and `MovementSystem.md`.
+- `docs/` — this file, `MovementSystem.md`, and `MOVEMENT_POLISH_ARCHITECTURE.md` (VFX/SFX/camera; purely visual).
 
 **Before starting a task:** skim `src/Shared/Types/MovementTypes.luau` (the shared context shape) and the relevant state files. Existing comments often record *why* a decision was made and whether a constant is still unmeasured; read them before "fixing" something flagged as intentional. How that fits §7's one-line comment rule is an open question (see `MovementSystem.md` §14).
 

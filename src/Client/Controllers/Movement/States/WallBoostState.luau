@@ -7,7 +7,7 @@ local TraversalMath = require(ReplicatedStorage.Shared.Movement.TraversalMath)
 
 local AirborneState = require(script.Parent.AirborneState)
 
-local ClientMovementContextModule = require(script.Parent.Parent.ClientMovementContext)
+local ClientMovementContextModule = require(script.Parent.Parent.Core.ClientMovementContext)
 type ClientMovementContext = ClientMovementContextModule.ClientMovementContext
 
 -- Instant impulse out of WallCling (docs/MovementSystem.md §4.6): a single

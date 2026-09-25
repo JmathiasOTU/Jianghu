@@ -1,0 +1,16 @@
+{
+  "ClassName": "Folder",
+  "attributes": {
+    "SoundGroup": "Footsteps"
+  },
+  "Children": [
+    { "Name": "Plastic", "ClassName": "Sound", "Properties": { "SoundId": "rbxassetid://7326203155", "Volume": 0.5 } },
+    { "Name": "Grass", "ClassName": "Sound", "Properties": { "SoundId": "rbxassetid://507863105", "Volume": 0.5 } },
+    { "Name": "Metal", "ClassName": "Sound", "Properties": { "SoundId": "rbxassetid://6876957898", "Volume": 0.5 } },
+    { "Name": "Wood", "ClassName": "Sound", "Properties": { "SoundId": "rbxassetid://507863457", "Volume": 0.5 } },
+    { "Name": "Concrete", "ClassName": "Sound", "Properties": { "SoundId": "rbxassetid://5761648082", "Volume": 0.5 } },
+    { "Name": "Fabric", "ClassName": "Sound", "Properties": { "SoundId": "rbxassetid://6240702531", "Volume": 0.5 } },
+    { "Name": "Sand", "ClassName": "Sound", "Properties": { "SoundId": "rbxassetid://265653329", "Volume": 0.5 } },
+    { "Name": "Glass", "ClassName": "Sound", "Properties": { "SoundId": "rbxassetid://9117949159", "Volume": 0.5 } }
+  ]
+}

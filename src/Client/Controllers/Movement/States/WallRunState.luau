@@ -8,7 +8,7 @@ local SpatialQueries = require(ReplicatedStorage.Shared.Movement.SpatialQueries)
 
 local AirborneState = require(script.Parent.AirborneState)
 
-local ClientMovementContextModule = require(script.Parent.Parent.ClientMovementContext)
+local ClientMovementContextModule = require(script.Parent.Parent.Core.ClientMovementContext)
 type ClientMovementContext = ClientMovementContextModule.ClientMovementContext
 
 -- Locked-tangent skim along a wall (docs/MovementSystem.md §4.5) --

@@ -9,9 +9,9 @@ local MovementStates = require(ReplicatedStorage.Shared.FSM.MovementStates)
 local MovementTypes = require(ReplicatedStorage.Shared.Types.MovementTypes)
 local MovementConstants = require(ReplicatedStorage.Shared.Constants.MovementConstants)
 
-local InputController = require(script.Parent.Parent.InputController)
-local CharacterMover = require(script.Parent.Parent.CharacterMover)
-local TuningSnapshot = require(script.Parent.Parent.TuningSnapshot)
+local InputController = require(script.Parent.Parent.Core.InputController)
+local CharacterMover = require(script.Parent.Parent.Core.CharacterMover)
+local TuningSnapshot = require(script.Parent.Parent.Parent.Parent.State.TuningSnapshot)
 
 type MovementState = MovementStates.MovementState
 type MovementContext = MovementTypes.MovementContext

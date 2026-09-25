@@ -34,7 +34,7 @@ local LandingResolution = {}
 --
 -- Hardened 2026-09-18 (real playtest bug: plain sprint + jump + land,
 -- SERVER mirror kept resolving to Walk while the client correctly resumed
--- Sprint, triggering a `enforceSpeedSanity` rubber-band every ~0.5s): while
+-- Sprint, triggering a `SpeedCheck.Enforce` rubber-band every ~0.5s): while
 -- unlocked, `context.moveIntent.forward` is `classifyMoveIntent`'s
 -- facing-vs-MoveDirection geometric approximation on the SERVER (the client's
 -- own `forward` is a raw held-key read with no such lag), and

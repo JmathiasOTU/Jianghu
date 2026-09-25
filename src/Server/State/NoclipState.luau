@@ -2,9 +2,9 @@
 
 -- Server-only shared state, same reasoning as MovementTuningState.luau
 -- alongside it: DevToolsService.luau owns writing here (the only place
--- RequestSetNoclip is handled); MovementValidationService.luau only ever
+-- RequestSetNoclip is handled); MovementValidationService only ever
 -- reads, via IsActive, to exempt a noclipping session from
--- enforceSpeedSanity (docs/MovementSystem.md §10) -- never trusting a
+-- SpeedCheck.Enforce (docs/MovementSystem.md §10) -- never trusting a
 -- client-reported "I'm noclipping" flag for that exemption, only this
 -- server-authorized record of who DevToolsService itself granted it to.
 local NoclipState = {}

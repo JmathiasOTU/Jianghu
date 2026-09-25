@@ -8,7 +8,7 @@ type MovementState = MovementStates.MovementState
 -- Grounded-family states (docs/MovementSystem.md §4.4 rework) -- unified here during
 -- the 2026-09-15 cleanup pass; previously hand-duplicated identically as
 -- `GROUNDED_STATES` in both Client/Controllers/Movement/init.luau and
--- Server/Services/MovementValidationService.luau. Deliberately a plain set,
+-- Server/Services/MovementValidationService. Deliberately a plain set,
 -- not derived from StateRules.Transitions -- "which states count as
 -- grounded" and "which states can reach which" are different questions that
 -- happen to share some membership. Landing into any of these is what resets

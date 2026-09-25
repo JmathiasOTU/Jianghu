@@ -8,7 +8,7 @@ local MovementConstants = require(ReplicatedStorage.Shared.Constants.MovementCon
 
 local AirborneState = require(script.Parent.AirborneState)
 
-local ClientMovementContextModule = require(script.Parent.Parent.ClientMovementContext)
+local ClientMovementContextModule = require(script.Parent.Parent.Core.ClientMovementContext)
 type ClientMovementContext = ClientMovementContextModule.ClientMovementContext
 type WallClingExitReason = WallClingExitReasons.WallClingExitReason
 

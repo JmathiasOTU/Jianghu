@@ -5,7 +5,7 @@ local MovementStates = require(ReplicatedStorage.Shared.FSM.MovementStates)
 local MovementConstants = require(ReplicatedStorage.Shared.Constants.MovementConstants)
 local StateRules = require(ReplicatedStorage.Shared.Movement.StateRules)
 
-local ClientMovementContextModule = require(script.Parent.Parent.ClientMovementContext)
+local ClientMovementContextModule = require(script.Parent.Parent.Core.ClientMovementContext)
 type ClientMovementContext = ClientMovementContextModule.ClientMovementContext
 
 -- SlideJump's own duration is intentionally one frame -- it's not a parallel

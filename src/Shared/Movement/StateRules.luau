@@ -114,7 +114,7 @@ local Transitions: { [MovementState]: { MovementState } } = {
 	-- enough (see `AirborneState.ResolveLandingTarget`'s `fallHeight` check).
 	-- Resolves back out to whichever grounded state the held input actually
 	-- calls for once its own lock duration elapses (`HardLandingState.Update`,
-	-- and the server's matching `mirrorPassiveTransitions` branch, both just
+	-- and the server's matching `Mirror.PassiveTransitions` branch, both just
 	-- re-run `ResolveLandingTarget` at that point) -- so every ordinary
 	-- grounded target is a legal edge out of it. `Airborne` is included too,
 	-- same defensive "ground can vanish out from under a locked player" edge
@@ -170,7 +170,7 @@ local Transitions: { [MovementState]: { MovementState } } = {
 	-- same "topology says WHERE, CanEnter says WHEN" split every other state
 	-- here already follows. The grounded targets alongside Airborne/WallBoost
 	-- cover the mid-cling-landing case -- same reason WallRun's own table
-	-- carries them (`mirrorPassiveTransitions`'s landing branch calls
+	-- carries them (`Mirror.PassiveTransitions`'s landing branch calls
 	-- `LandingResolution.Resolve`, which returns a GROUNDED state directly,
 	-- never `Airborne` -- omitting these left the server's mirror unable to
 	-- ever leave WallCling on a real landing, found 2026-09-19: the mirror
@@ -287,7 +287,7 @@ local CanEnter: { [MovementState]: (context: MovementContext) -> boolean } = {
 	-- not yet spent this life (docs/MovementSystem.md §5) -- `doubleJumpUsed` is
 	-- reset the instant the character actually lands (see
 	-- Client/Controllers/Movement/init.luau and
-	-- Server/Services/MovementValidationService.luau, both of which reset it
+	-- Server/Services/MovementValidationService, both of which reset it
 	-- on the same "entered a grounded state" edge), mirroring the reference
 	-- controller's "resets once grounded" behavior without its raw 5-second
 	-- timer, which was only there to compensate for that codebase having no

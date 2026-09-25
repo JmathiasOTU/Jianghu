@@ -4,7 +4,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local MovementStates = require(ReplicatedStorage.Shared.FSM.MovementStates)
 local TraversalMath = require(ReplicatedStorage.Shared.Movement.TraversalMath)
 
-local ClientMovementContextModule = require(script.Parent.Parent.ClientMovementContext)
+local ClientMovementContextModule = require(script.Parent.Parent.Core.ClientMovementContext)
 type ClientMovementContext = ClientMovementContextModule.ClientMovementContext
 
 -- Single-frame launch out of WallRun (docs/MovementSystem.md §4.5) -- same shape as

@@ -56,11 +56,13 @@ Each client state module (`Client/Controllers/Movement/States/*.luau`) exposes `
 | `Shared/Types/MovementTypes.luau` | `MovementContext` and friends |
 | `Shared/Util/RateLimiter.luau`, `ViolationTracker.luau` | Remote rate limits; bounded violation history |
 | `Client/Controllers/Movement/init.luau` | Per-life orchestrator: FSM, trove, input wiring, context, claims |
-| `Client/Controllers/Movement/InputController.luau` | Keys to intents (double-tap, crouch toggle, jump edge, boost) |
-| `Client/Controllers/Movement/CharacterMover.luau` | The only thing that touches the Humanoid/root part |
+| `Client/Controllers/Movement/Core/InputController.luau` | Keys to intents (double-tap, crouch toggle, jump edge, boost) |
+| `Client/Controllers/Movement/Core/CharacterMover.luau` | The only thing that touches the Humanoid/root part |
+| `Client/Controllers/Movement/Core/ClientMovementContext.luau` | The client's `MovementContext` (adds client-only accessors) |
 | `Client/Controllers/Movement/Presentation/FacingController.luau`, `LocomotionAnimator.luau` | Facing and animation; read the FSM, never write it |
-| `Client/Controllers/Movement/NoclipController.luau`, `DebugSnapshot.luau`; `Client/Controllers/DebugOverlayController.luau` | Dev tools (§10) |
-| `Server/Services/MovementValidationService.luau` | Server mirror and every enforcement check (§8) |
+| `Client/Controllers/Movement/DevTools/NoclipController.luau`; `Client/State/DebugSnapshot.luau`; `Client/Controllers/DebugOverlayController.luau` | Dev tools (§10) |
+| `Client/State/TuningSnapshot.luau` | This session's effective tuning, as last sent by the server (§10) |
+| `Server/Services/MovementValidationService/` | Server mirror and every enforcement check (§8); `init.luau` owns sessions and the Heartbeat order, one module per check (see §8) |
 | `Server/Services/MovementTuningService.luau`, `DevToolsService.luau` | Live tuning; teleport/noclip/overlay remotes |
 | `Server/State/*.luau` | Per-player tuning overrides, noclip, overlay-open records |
 | `Server/Events/*.luau` | Server-to-server signals: `CharacterTeleported`, `VerticalAllowanceGranted`, `MovementViolation` |
@@ -250,13 +252,28 @@ All remotes are in `network.zap` (regenerate with `zap network.zap`); every clie
 
 ## 8. Server validation
 
-All in `MovementValidationService.luau`, one `PlayerSession` per character life (own `Trove`, destroyed on death, removal, respawn or leave). The Heartbeat order matters and is documented at the loop: support probe → fall height → wall probes → passive mirror → buffered claim retries → slide ground → speed check → vertical ceiling → debug broadcast.
+`Server/Services/MovementValidationService/`, one `PlayerSession` per character life (own `Trove`, destroyed on death, removal, respawn or leave). The Heartbeat order matters and is documented at the loop in `init.luau`: support probe → fall height → wall probes → passive mirror → buffered claim retries → slide ground → speed check → vertical ceiling → debug broadcast.
+
+| Module | Role |
+|---|---|
+| `init.luau` | Session create/destroy, player lifecycle, remote wiring, the Heartbeat order |
+| `Sessions` | The `PlayerSession` record and the live sessions by player |
+| `Probes` | Support (ground truth, §8.1), floor-velocity trust, fall height, slide-ground and wall probes |
+| `Context` | Move-intent classification; the server's `MovementContext` |
+| `Mirror` | Passive transitions and wall/HardLanding force-exits (§8.1, §8.4, §8.5) |
+| `TransitionBookkeeping` | Per-transition session bookkeeping; fires `MirrorStateChanged` |
+| `SpeedCaps` / `SpeedCheck` | Per-state caps and allowances / the windowed budget and corrections (§8.2) |
+| `VerticalCeiling` | Anchor, raise, descent and correction; `VerticalAllowanceGranted` grants (§8.3) |
+| `ClaimTiming` | Claim lag, buffer wait, latency credit (§8.2-§8.4) |
+| `TraversalClaims` / `TransitionClaims` | `ClaimTraversalMove` / `RequestMovementTransition` and their claim buffers (§8.4, §8.1) |
+| `Violations` | Violation trackers and `MovementViolation` (§8.7) |
+| `DebugBroadcast`, `DebugFlags` | The F4 overlay broadcast; every capture/logging switch (§10) |
 
 ### 8.1 Mirror and "grounded"
 
 - **The mirror** is built from the same `StateRules`. Passive transitions (Idle/Walk/Airborne, landings, slide decay, crouch states, Sprint→Run demotion) are decided by the server itself every Heartbeat. Claims are checked with the same `CanEnter`, against the server's own context.
 - **Support probe** (`SpatialQueries.QuerySupport`): the R6 leg footprint (2×1, turned with the rig's yaw) swept 4 studs down from the root, collidable non-water geometry only. It's the server's ground truth.
-- **Grounded for the mirror** (`isSessionGrounded`) = support **and** a grounded Humanoid label, or support that has lasted a full 0.5 s window while labelled airborne. A client can't fake a landing mid-air (DoubleJump refresh, fall height) or claim to be airborne while standing to keep air caps.
+- **Grounded for the mirror** (`Probes.IsGrounded`) = support **and** a grounded Humanoid label, or support that has lasted a full 0.5 s window while labelled airborne. A client can't fake a landing mid-air (DoubleJump refresh, fall height) or claim to be airborne while standing to keep air caps.
 - **Intent:** `classifyMoveIntent` rebuilds forward/backward/strafe from `rootPart.CFrame` vs `MoveDirection`. Both are client-written, so they only choose mirror tiers; every tier they unlock is still enforced against real displacement.
 - **Sprint:** the server times Run itself, backdated by half the measured ping (capped at half the threshold). A Sprint claim that lands milliseconds short of the dwell is buffered and retried. Backpedal demotion only runs while the camera is locked (from the `CameraLocked` level claim), because unlocked, facing deliberately lags movement.
 
@@ -299,21 +316,21 @@ The highest Y the character can legally be at, from server-known impulses only.
 - **Descent:** while unsupported, after the apex time the ceiling falls from rest under gravity (`TraversalMath.DescentCeiling`), so the character can't hover or float down.
   - WallRun/WallCling (server-mirrored, wall-probed, time-limited) and verified climbing hold the apex time at "now".
   - Climbing lets the ceiling rise at no more than the speed cap, never more than one jump above the real position.
-- **Ordering:** a claim and the positions it explains arrive separately. `claimLagSeconds` = one-way ping + `WallRunClaimBufferSeconds`, capped at 0.5 s. The descent curve starts that much late, and an excess must outlast it before it's corrected.
+- **Ordering:** a claim and the positions it explains arrive separately. `ClaimTiming.ClaimLagSeconds` = one-way ping + `WallRunClaimBufferSeconds`, capped at 0.5 s. The descent curve starts that much late, and an excess must outlast it before it's corrected.
 - **Correction:** snap down to the ceiling, never below standing height on the floor underneath (`QueryFloorBelow`), and kill upward velocity. Report `VerticalCeiling`.
 - **Tested:** the bounds are simulated against the client's real motion in `tests/specs/TraversalMath.spec.luau` (jump, WallLeap, WallBoost, DoubleJump at 20-240 fps).
 
 ### 8.4 Traversal claims
 
 - **Claims are re-mirrored first:** a claim arrives between Heartbeats, so the handler first refreshes support, the wall probes and the passive mirror from the freshest replicated state, then runs the real `CanEnter`/topology check.
-- **Buffering:** a rejected WallRun, WallLeap or WallCling claim is retried every Heartbeat for `WallRunClaimBufferSeconds` (0.25 s, sized from playtests of this exact ordering). It stays alive while the mirror is still in DoubleJump, and is dropped if the mirror goes anywhere else. A WallBoost claim rejected while the mirror is still clinging is buffered the same way, and so is every rejected DoubleJump: claims lead the position stream like the Humanoid label does, so on a quick hop the DoubleJump arrives before the touchdown that refreshes it. The cling and boost claims share one reliable stream, so the server's cling clock differs from the client's only by jitter, but mashing F lands right on the 0.6 s boundary. The server's cling clock starts at its own accept, backdated by any time the cling claim spent buffered. A raise accepted while the positions still show the ground (the claim arriving before the takeoff) is kept and re-applied by each ground anchor until lift-off, for up to `claimLagSeconds`.
+- **Buffering:** a rejected WallRun, WallLeap or WallCling claim is retried every Heartbeat for `WallRunClaimBufferSeconds` (0.25 s, sized from playtests of this exact ordering). It stays alive while the mirror is still in DoubleJump, and is dropped if the mirror goes anywhere else. A WallBoost claim rejected while the mirror is still clinging is buffered the same way, and so is every rejected DoubleJump: claims lead the position stream like the Humanoid label does, so on a quick hop the DoubleJump arrives before the touchdown that refreshes it. The cling and boost claims share one reliable stream, so the server's cling clock differs from the client's only by jitter, but mashing F lands right on the 0.6 s boundary. The server's cling clock starts at its own accept, backdated by any time the cling claim spent buffered. A raise accepted while the positions still show the ground (the claim arriving before the takeoff) is kept and re-applied by each ground anchor until lift-off, for up to `ClaimTiming.ClaimLagSeconds`.
 - **Wall states on the server:** the server runs the same probes (throttled at 0.1 s, forced fresh at claim time) and force-exits the mirror when the wall is lost, a corner exceeds the deviation, or the duration cap passes.
   - The server's timers always start at its own accept, so they end no earlier than the client's.
   - Cling lockouts and the post-boost cooldown are server-owned. The drop lockout stays client-only: the server can't tell a drop from a lost wall, and a drop gains no height.
 
 ### 8.5 HardLanding
 
-Entered by the mirror's own landing resolution from its own fall height. During the lock only the server's support probe can end it early (the floor vanished → Airborne). Losing support while more than 1 stud above the lock position is a jump-out: `HardLandingEscape`, snap back to the lock position. The lock's last `claimLagSeconds` is exempt, because the client's lock started when *it* landed and ends first.
+Entered by the mirror's own landing resolution from its own fall height. During the lock only the server's support probe can end it early (the floor vanished → Airborne). Losing support while more than 1 stud above the lock position is a jump-out: `HardLandingEscape`, snap back to the lock position. The lock's last `ClaimTiming.ClaimLagSeconds` is exempt, because the client's lock started when *it* landed and ends first.
 
 ### 8.6 Exemptions and hooks
 
@@ -324,7 +341,7 @@ Entered by the mirror's own landing resolution from its own fall height. During 
 
 ### 8.7 Violations
 
-Every correction goes through `reportViolation`: recorded per kind (`Speed`, `VerticalCeiling`, `HardLandingEscape`) in a `ViolationTracker`, and fired on `Server/Events/MovementViolation (player, kind, detail, count)`. There is **no kick/flag policy** (designer decision): a future moderation system subscribes. Every correction also zeroes the relevant velocity. In Studio each one prints `[MovementViolation] <player> <kind> state=<mirror> <detail>`.
+Every correction goes through `Violations.Report`: recorded per kind (`Speed`, `VerticalCeiling`, `HardLandingEscape`) in a `ViolationTracker`, and fired on `Server/Events/MovementViolation (player, kind, detail, count)`. There is **no kick/flag policy** (designer decision): a future moderation system subscribes. Every correction also zeroes the relevant velocity. In Studio each one prints `[MovementViolation] <player> <kind> state=<mirror> <detail>`.
 
 ---
 
@@ -336,7 +353,7 @@ ARCHITECTURE §9: a tolerance exists only for a specific, measured, documented c
 |---|---|---|
 | `LANDING_MOMENTUM_GRACE_SECONDS` = 1 s | Measured 2026-09-14 | 4 captured Airborne→Walk landings: every first check fired at 0.500-0.517 s, none needed a second window |
 | `WallRunClaimBufferSeconds` = 0.25 s | Measured 2026-09-19 | Claim-vs-position replication ordering in wall-run/cling playtests; reused wherever the same ordering applies |
-| `claimLagSeconds` (vertical, HardLanding) | Derived | One-way ping (server-measured) + the claim buffer above, capped at one window |
+| `ClaimTiming.ClaimLagSeconds` (vertical, HardLanding) | Derived | One-way ping (server-measured) + the claim buffer above, capped at one window |
 | Claim latency credit | Derived | Cap difference × (one-way ping + buffered time), capped at one window |
 | `SlideJumpUpwardSpeed` = 63 | Measured 2026-09-24, then fixed by design | `JUMP_LAUNCH_CAPTURE` on a flat baseplate: Idle jumps 56.0-56.9 st/s, Run 56.6-58.2, SlideJump 61.9-63.7 (JumpPower 55). The slide added about 7 st/s (likely the slide pose pushing off the floor, not confirmed). The designer kept the height; the client now sets 63 explicitly |
 | Plain jump launch (56-58 vs `JumpPower` 55) | Measured, no tolerance added | The Humanoid's own jump runs slightly above `JumpPower`; the excess lasts less than the claim-lag window, so nothing is corrected. Revisit if higher-speed jumps start printing violations |
@@ -362,11 +379,11 @@ ARCHITECTURE §9: a tolerance exists only for a specific, measured, documented c
 
 | Flag | File | Prints |
 |---|---|---|
-| `SPEED_RATIO_CAPTURE` | MVS | p50/p99/p99.9/max of displacement ÷ budget every 200 windows, plus `zeroBudgetDriftMax` |
-| `VERTICAL_CEILING_DEBUG_LOGGING` | MVS | Every frame above the ceiling: y, ceiling, apex, excess, lag |
-| `JUMP_LAUNCH_CAPTURE` | MVS | Per landing: from-state, peak, time to peak, implied launch speed |
-| `SPEED_SANITY_DEBUG_LOGGING` | MVS | Cap changes, rate-limited claims, Sprint dwell overshoot, rejected claims |
-| `WALL_TRAVERSAL_DEBUG_LOGGING` | MVS | Rejected WallRun/WallLeap claims, WallRun force-exits |
+| `SPEED_RATIO_CAPTURE` | Validation `DebugFlags` | p50/p99/p99.9/max of displacement ÷ budget every 200 windows, plus `zeroBudgetDriftMax` |
+| `VERTICAL_CEILING_DEBUG_LOGGING` | Validation `DebugFlags` | Every frame above the ceiling: y, ceiling, apex, excess, lag |
+| `JUMP_LAUNCH_CAPTURE` | Validation `DebugFlags` | Per landing: from-state, peak, time to peak, implied launch speed |
+| `SPEED_SANITY_DEBUG_LOGGING` | Validation `DebugFlags` | Cap changes, rate-limited claims, Sprint dwell overshoot, rejected claims |
+| `WALL_TRAVERSAL_DEBUG_LOGGING` | Validation `DebugFlags` | Rejected WallRun/WallLeap claims, WallRun force-exits |
 | `WALLCLING_DEBUG_LOGGING` | SpatialQueries | Why a cling cast was rejected |
 | `WALLRUN_DEBUG_LOGGING`, `WALLCLING_TRACE_LOGGING` | Client `Movement/init.luau` | Client-side wall probe traces |
 | `ANIMATION_LOAD_DEBUG_LOGGING` | LocomotionAnimator | Clip loading |

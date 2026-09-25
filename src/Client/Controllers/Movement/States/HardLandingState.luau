@@ -6,7 +6,7 @@ local StateRules = require(ReplicatedStorage.Shared.Movement.StateRules)
 
 local AirborneState = require(script.Parent.AirborneState)
 
-local ClientMovementContextModule = require(script.Parent.Parent.ClientMovementContext)
+local ClientMovementContextModule = require(script.Parent.Parent.Core.ClientMovementContext)
 type ClientMovementContext = ClientMovementContextModule.ClientMovementContext
 
 -- Real, timed movement lock (docs/MovementSystem.md §4.4 rework) -- entered instead
@@ -18,7 +18,7 @@ type ClientMovementContext = ClientMovementContextModule.ClientMovementContext
 -- "LandHard" for as long as it's `fsm.current`, no one-shot animation-hold
 -- hack needed.
 --
--- Enforced server-side too (audit M-010): `mirrorPassiveTransitions`'s
+-- Enforced server-side too (audit M-010): `Mirror.PassiveTransitions`'s
 -- HardLanding branch holds the lock off the server's own ground probe and
 -- snaps a jump-out back to the lock position, and `maxSpeedForState` caps
 -- horizontal movement -- same "never trust the client" standard as every

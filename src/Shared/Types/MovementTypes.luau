@@ -128,7 +128,7 @@ export type MoveIntent = {
 -- a real source later without a rewrite" treatment the roadmap calls for.
 -- `cameraLocked` (landing-resume fix, hardened 2026-09-18) is `Humanoid.
 -- AutoRotate == false` -- a plain replicated property both sides already
--- trust elsewhere (`mirrorPassiveTransitions`'s own Sprint-demotion branch
+-- trust elsewhere (`Mirror.PassiveTransitions`'s own Sprint-demotion branch
 -- reads it directly for the identical reason this field exists). Needed
 -- because `moveIntent.forward` means two different things depending on this:
 -- while LOCKED (Shift Lock/first-person), `FacingController` snaps facing to

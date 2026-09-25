@@ -6,7 +6,7 @@ local RunService = game:GetService("RunService")
 -- deliberately a plain, checked-in table, not anything player- or
 -- client-controlled.
 local DEVELOPER_USER_IDS: { [number]: boolean } = {
-	-- [123456789] = true,
+	[10837572668] = true,
 }
 
 local DeveloperAllowlist = {}

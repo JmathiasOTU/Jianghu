@@ -7,7 +7,7 @@ local LemonSignal = require(ReplicatedStorage.Packages.LemonSignal)
 local Trove = require(ReplicatedStorage.Packages.Trove)
 local MovementTypes = require(ReplicatedStorage.Shared.Types.MovementTypes)
 
-local TuningSnapshot = require(script.Parent.TuningSnapshot)
+local TuningSnapshot = require(script.Parent.Parent.Parent.Parent.State.TuningSnapshot)
 
 type MoveIntent = MovementTypes.MoveIntent
 

@@ -7,7 +7,7 @@ local TraversalMath = require(ReplicatedStorage.Shared.Movement.TraversalMath)
 
 local AirborneState = require(script.Parent.AirborneState)
 
-local ClientMovementContextModule = require(script.Parent.Parent.ClientMovementContext)
+local ClientMovementContextModule = require(script.Parent.Parent.Core.ClientMovementContext)
 type ClientMovementContext = ClientMovementContextModule.ClientMovementContext
 
 -- Simplest of the five traversal moves (docs/MovementSystem.md §4): a

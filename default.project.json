@@ -17,7 +17,49 @@
           "Movement": {
             "$path": "Assets/Animations/Movement.model.json"
           }
+        },
+        "FX": {
+          "$className": "Folder",
+          "Movement": {
+            "$className": "Folder",
+            "HumanoidRootPart": {
+              "$className": "Folder",
+              "RootAttachment": {
+                "$className": "Folder"
+              }
+            },
+            "Left Leg": {
+              "$className": "Folder",
+              "LeftFootAttachment": {
+                "$className": "Folder",
+                "Footstep": {
+                  "$path": "Assets/FX/Footsteps.model.json"
+                }
+              }
+            },
+            "Right Leg": {
+              "$className": "Folder",
+              "RightFootAttachment": {
+                "$className": "Folder",
+                "Footstep": {
+                  "$path": "Assets/FX/Footsteps.model.json"
+                }
+              }
+            }
+          }
         }
+      }
+    },
+    "SoundService": {
+      "$className": "SoundService",
+      "Footsteps": {
+        "$className": "SoundGroup"
+      },
+      "Loops": {
+        "$className": "SoundGroup"
+      },
+      "Impacts": {
+        "$className": "SoundGroup"
       }
     },
     "ServerScriptService": {
@@ -37,6 +79,9 @@
     },
     "StarterPlayer": {
       "$className": "StarterPlayer",
+      "$properties": {
+        "EnableMouseLockOption": false
+      },
       "StarterPlayerScripts": {
         "$className": "StarterPlayerScripts",
         "Client": {

@@ -5,7 +5,7 @@ local UserInputService = game:GetService("UserInputService")
 
 local Trove = require(ReplicatedStorage.Packages.Trove)
 
-local InputControllerModule = require(script.Parent.InputController)
+local InputControllerModule = require(script.Parent.Parent.Core.InputController)
 type InputController = InputControllerModule.InputController
 
 -- Scouting-tool constant, not a gameplay tunable -- not part of

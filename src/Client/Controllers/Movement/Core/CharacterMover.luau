@@ -150,7 +150,7 @@ end
 -- actually moving" (the raw vector, needed once Slide drives a real
 -- `LinearVelocity` instead of just a WalkSpeed magnitude) -- residual-
 -- momentum transients included, same `AssemblyLinearVelocity`-flattening
--- DebugSnapshot/enforceSpeedSanity already use elsewhere for the same reason.
+-- DebugSnapshot/SpeedCheck.Enforce already use elsewhere for the same reason.
 function CharacterMover:GetHorizontalVelocity(): Vector3
 	local rootPart = self._humanoid.RootPart
 	if not rootPart then

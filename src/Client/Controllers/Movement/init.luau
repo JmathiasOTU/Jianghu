@@ -1,4 +1,5 @@
 --!strict
+local ContentProvider = game:GetService("ContentProvider")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
@@ -15,16 +16,22 @@ local MovementConstants = require(ReplicatedStorage.Shared.Constants.MovementCon
 local TraversalMath = require(ReplicatedStorage.Shared.Movement.TraversalMath)
 local MovementTuning = require(ReplicatedStorage.Shared.Movement.MovementTuning)
 
-local CharacterMover = require(script.CharacterMover)
-local InputController = require(script.InputController)
-local ClientMovementContextModule = require(script.ClientMovementContext)
-local DebugSnapshot = require(script.DebugSnapshot)
-local TuningSnapshot = require(script.TuningSnapshot)
-local NoclipController = require(script.NoclipController)
+local DebugSnapshot = require(script.Parent.Parent.State.DebugSnapshot)
+local TuningSnapshot = require(script.Parent.Parent.State.TuningSnapshot)
+local MovementLife = require(script.Parent.Parent.State.MovementLife)
 local Network = require(script.Parent.Parent.Network.network)
+
+local CharacterMover = require(script.Core.CharacterMover)
+local InputController = require(script.Core.InputController)
+local ClientMovementContextModule = require(script.Core.ClientMovementContext)
+local NoclipController = require(script.DevTools.NoclipController)
 
 local FacingController = require(script.Presentation.FacingController)
 local LocomotionAnimator = require(script.Presentation.LocomotionAnimator)
+local CharacterFX = require(script.Presentation.CharacterFX)
+local SFXController = require(script.Presentation.SFXController)
+local VFXController = require(script.Presentation.VFXController)
+local NearbyCuePlayer = require(script.Presentation.NearbyCuePlayer)
 
 local IdleState = require(script.States.IdleState)
 local WalkState = require(script.States.WalkState)
@@ -78,7 +85,7 @@ local States = {
 -- -- see the `input.CrouchChanged` connection below -- so they're deliberately
 -- NOT added here: unlike Run/Sprint, the client never claims "CrouchIdle"/
 -- "CrouchWalk"/"Slide" by name, it only tells the server whether Ctrl is held
--- and lets mirrorPassiveTransitions derive the rest, the same way it already
+-- and lets Mirror.PassiveTransitions derive the rest, the same way it already
 -- derives Idle<->Walk.
 local NETWORK_CLAIM_NAMES: { [MovementState]: "Run" | "Sprint" } = {
 	[MovementStates.Run] = "Run",
@@ -220,6 +227,19 @@ local function setupCharacter(
 			AirborneState.GetLastLandingWasMedium
 		)
 	)
+	-- Sounds and particles (docs/MOVEMENT_POLISH_ARCHITECTURE.md §3), played on
+	-- the FX the server mounted onto this character.
+	local characterFX = lifeTrove:Add(CharacterFX.new(character))
+	lifeTrove:Add(SFXController.new(humanoid, rootPart, fsm, characterMover, characterFX))
+	lifeTrove:Add(VFXController.new(fsm, characterFX))
+	-- Session-long presentation (CameraController) follows each life through
+	-- this, never by reaching into Movement (docs/MOVEMENT_POLISH_ARCHITECTURE.md §4.0).
+	MovementLife.Set({
+		humanoid = humanoid,
+		rootPart = rootPart,
+		fsm = fsm,
+		trove = lifeTrove,
+	})
 
 	-- Live tuning (docs/MovementSystem.md §10): pushes the server's effective-constants
 	-- broadcast into TuningSnapshot and re-applies JumpPower immediately, since
@@ -466,7 +486,7 @@ local function setupCharacter(
 		-- WallRun/WallLeap claims (docs/MovementSystem.md §8.4):
 		-- fired the same fire-and-forget way DoubleJump's already is, AFTER
 		-- `States[next].Enter` above has already applied this life's own
-		-- client-predicted physics -- the server's own `onClaimTraversalMove`
+		-- client-predicted physics -- the server's own `TraversalClaims.OnClaim`
 		-- resimulates legality independently off its own `wallRunQuery`/
 		-- `GetHorizontalVelocity`, never trusting this claim's mere arrival.
 		-- Neither touches `doubleJumpUsed` -- only an actual landing does,
@@ -587,7 +607,7 @@ local function setupCharacter(
 	-- press.
 	lifeTrove:Connect(input.JumpRequested, function()
 		-- Force a fresh probe here rather than reusing the throttled Heartbeat
-		-- cache -- same staleness fix as the server's `updateWallRunQuery(session, true)`.
+		-- cache -- same staleness fix as the server's `Probes.UpdateWallRunQuery(session, true)`.
 		local probed = fsm.current ~= MovementStates.WallRun and not characterMover:IsGrounded()
 		if probed then
 			wallRunQuery = characterMover:QueryWallRun()
@@ -665,7 +685,7 @@ local function setupCharacter(
 		if peakHeight then
 			-- Water breaks a fall: re-seeded while swimming so climbing out of
 			-- a dive isn't resolved as one huge drop (mirrored server-side in
-			-- `updatePeakHeight`, which also checks for real water).
+			-- `Probes.UpdatePeakHeight`, which also checks for real water).
 			if humanoid:GetState() == Enum.HumanoidStateType.Swimming then
 				peakHeight = rootPart.Position.Y
 			else
@@ -779,6 +799,17 @@ end
 
 function MovementController.Init()
 	input = InputController.new()
+
+	-- Once per session, not per life: the FX content never changes, and a
+	-- cue's first play shouldn't hitch while its sound/texture streams in
+	-- (docs/MOVEMENT_POLISH_ARCHITECTURE.md §2).
+	task.spawn(function()
+		local fxTemplate =
+			ReplicatedStorage:WaitForChild("Assets"):WaitForChild("FX"):WaitForChild("Movement")
+		ContentProvider:PreloadAsync({ fxTemplate })
+	end)
+	-- Other players' Nearby cues arrive whether or not this player is alive.
+	Network.PlayMovementCue.SetCallback(NearbyCuePlayer.Play)
 
 	local player = Players.LocalPlayer
 	local lifeTrove: Trove.Trove? = nil

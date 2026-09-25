@@ -10,7 +10,7 @@ type EffectiveMovementConstants = MovementTuning.EffectiveMovementConstants
 -- a plain module in a non-`Services/` folder so two services can share data
 -- WITHOUT reaching into each other's internals directly, per
 -- docs/ARCHITECTURE.md §2). MovementTuningService.luau owns writing here (the
--- only place RequestSetTuning is handled); MovementValidationService.luau only
+-- only place RequestSetTuning is handled); MovementValidationService only
 -- ever reads, via GetEffective, to build each session's context.constants
 -- (docs/MovementSystem.md §8/§10).
 --

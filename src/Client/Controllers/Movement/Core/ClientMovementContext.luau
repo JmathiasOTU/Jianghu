@@ -6,7 +6,7 @@ local MovementStates = require(ReplicatedStorage.Shared.FSM.MovementStates)
 local MovementTypes = require(ReplicatedStorage.Shared.Types.MovementTypes)
 
 local CharacterMover = require(script.Parent.CharacterMover)
-local FacingController = require(script.Parent.Presentation.FacingController)
+local FacingController = require(script.Parent.Parent.Presentation.FacingController)
 
 type MovementState = MovementStates.MovementState
 

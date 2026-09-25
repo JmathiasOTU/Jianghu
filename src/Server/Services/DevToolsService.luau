@@ -105,7 +105,7 @@ local onRequestDevTeleport = DevToolsService.RegisterDevOnly(
 
 -- Noclip/fly scouting tool (docs/MovementSystem.md §10). Collision is disabled here,
 -- server-side, on every BasePart of the character -- the actual fly movement
--- is driven client-side (Client/Controllers/Movement/NoclipController.luau)
+-- is driven client-side (Client/Controllers/Movement/DevTools/NoclipController.luau)
 -- since the player's own character is already network-owned by that client for
 -- ordinary movement, same as how a legitimate client already drives its own
 -- WalkSpeed-based motion. `NoclipState` (Server/State/NoclipState.luau) is the
@@ -143,7 +143,7 @@ local onRequestSetNoclip = DevToolsService.RegisterDevOnly(
 
 		if not enabled then
 			-- Same "reset the baseline, don't pad the tolerance" fix as the
-			-- teleport handler above: while noclipping, enforceSpeedSanity skips
+			-- teleport handler above: while noclipping, SpeedCheck.Enforce skips
 			-- this session entirely and its speed-check baseline goes stale, so
 			-- the moment collision/gravity resume, this avoids comparing the
 			-- discontinuous re-entry position against wherever the player was
@@ -156,7 +156,7 @@ local onRequestSetNoclip = DevToolsService.RegisterDevOnly(
 )
 
 -- F4 overlay open/close (docs/MovementSystem.md §4.4, `docs/MovementSystem.md` §4.4 cleanup).
--- `DebugOverlayState` is what `MovementValidationService. broadcastDebugState` gates its
+-- `DebugOverlayState` is what `MovementValidationService. DebugBroadcast.Send` gates its
 -- per-Heartbeat broadcast on -- without this, that broadcast runs unconditionally for every
 -- connected developer regardless of whether their panel is even visible.
 local onRequestSetDebugOverlayOpen = DevToolsService.RegisterDevOnly(

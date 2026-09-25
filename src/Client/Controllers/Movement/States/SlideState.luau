@@ -7,7 +7,7 @@ local TraversalMath = require(ReplicatedStorage.Shared.Movement.TraversalMath)
 local SpatialQueriesModule = require(ReplicatedStorage.Shared.Movement.SpatialQueries)
 type GroundQueryResult = SpatialQueriesModule.GroundQueryResult
 
-local ClientMovementContextModule = require(script.Parent.Parent.ClientMovementContext)
+local ClientMovementContextModule = require(script.Parent.Parent.Core.ClientMovementContext)
 type ClientMovementContext = ClientMovementContextModule.ClientMovementContext
 
 local SlideState = {}

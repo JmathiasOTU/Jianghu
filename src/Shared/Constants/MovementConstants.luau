@@ -239,7 +239,7 @@ local MovementConstants = {
 	-- bug: `CanEnter[WallRun]`'s SERVER-side evaluation kept rejecting a
 	-- claim the client had already legitimately earned -- confirmed via
 	-- `WALL_TRAVERSAL_DEBUG_LOGGING` to be a genuine geometry miss, not a
-	-- stale-cache issue, since `onClaimTraversalMove` already re-probes fresh
+	-- stale-cache issue, since `TraversalClaims.OnClaim` already re-probes fresh
 	-- immediately before evaluating the claim). Root cause: Roblox's own
 	-- replication cadence for a fast-moving, client-owned part is inherently
 	-- lower than the physics/render rate -- the server's view of the
@@ -264,7 +264,7 @@ local MovementConstants = {
 	-- yet to support it -- e.g. the player left the ground and reached the
 	-- wall in one fast, continuous gesture (a double jump chained straight
 	-- into a wall run), and the claim lands before Roblox has replicated
-	-- enough of the resulting position/CFrame change for `updateWallRunQuery`
+	-- enough of the resulting position/CFrame change for `Probes.UpdateWallRunQuery`
 	-- to see the wall, or even before the Humanoid state change that flips
 	-- `context.grounded` has replicated. Same root cause `WallRunSideCastDistance`'s
 	-- own widening (above) already diagnosed -- lag on a client-owned part
@@ -272,7 +272,7 @@ local MovementConstants = {
 	-- just arriving from the timing side instead of the distance side. Rather
 	-- than drop the claim after one failed attempt, it's buffered for this
 	-- long and retried every Heartbeat off progressively fresher server state
-	-- (`retryBufferedTraversalClaims`) -- the exact "input buffering" idiom
+	-- (`TraversalClaims.RetryBuffered`) -- the exact "input buffering" idiom
 	-- every jump-adjacent game already uses for "pressed a frame early".
 	-- Buffering changes nothing about what's LEGAL (every retry re-runs the
 	-- identical `CanEnter`/topology check against the server's own state),

@@ -22,7 +22,7 @@ local MovementTuningService = {}
 
 local rateLimiters: { [Player]: RateLimiter.RateLimiter } = {}
 
--- Exposed for MovementValidationService's own buildContext to read (via
+-- Exposed for MovementValidationService's Context.Build to read (via
 -- MovementTuningState.GetEffective directly, not through this service --
 -- see that module for why). Kept here too since the overlay's "Tuning" tab
 -- reset button and any other server-side caller conceptually wants "the

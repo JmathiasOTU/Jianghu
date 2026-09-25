@@ -12,8 +12,8 @@ local MovementTuning = require(ReplicatedStorage.Shared.Movement.MovementTuning)
 local ViolationTracker = require(ReplicatedStorage.Shared.Util.ViolationTracker)
 local Network = require(script.Parent.Parent.Network.network)
 
-local DebugSnapshot = require(script.Parent.Movement.DebugSnapshot)
-local TuningSnapshot = require(script.Parent.Movement.TuningSnapshot)
+local DebugSnapshot = require(script.Parent.Parent.State.DebugSnapshot)
+local TuningSnapshot = require(script.Parent.Parent.State.TuningSnapshot)
 
 type TunableConstantName = MovementTuning.TunableConstantName
 
@@ -278,7 +278,7 @@ function DebugOverlayController.Init()
 	-- `violations` (docs/MovementSystem.md §10) is ViolationTracker's bounded recent
 	-- history, not just `violationCount`'s running total.
 	local serverState: {
-		state: Network.DebugMovementState,
+		state: Network.MovementStateName,
 		runDuration: number?,
 		violationCount: number,
 		violations: { { flatDelta: number, maxDistance: number, elapsed: number, ageSeconds: number } },

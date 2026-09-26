@@ -496,7 +496,25 @@ function LocomotionAnimator:_playKey(key: string?)
 	if key == self._currentKey then
 		return
 	end
+	local previousKey = self._currentKey
 	self._currentKey = key
+
+	-- Walk direction change (playtest 2026-09-26: A<->D felt snappy): carry
+	-- the outgoing clip's gait phase into the incoming one instead of starting
+	-- it from frame 0, so the crossfade doesn't swap which foot is planted.
+	-- Read before the Stop loop below. Normalized, so clips of different
+	-- lengths still line up.
+	local walkPhase: number? = nil
+	local previousTrack = previousKey and self._tracks[previousKey]
+	if
+		previousTrack
+		and key
+		and string.sub(previousKey :: string, 1, 5) == "Walk_"
+		and string.sub(key, 1, 5) == "Walk_"
+		and previousTrack.Length > 0
+	then
+		walkPhase = (previousTrack.TimePosition / previousTrack.Length) % 1
+	end
 
 	-- Live-tunable (docs/MovementSystem.md §10, moved off a module-local constant in
 	-- the 2026-09-15 cleanup pass, same TuningSnapshot pipeline
@@ -514,6 +532,9 @@ function LocomotionAnimator:_playKey(key: string?)
 	local nextTrack = key and self._tracks[key]
 	if nextTrack and not nextTrack.IsPlaying then
 		nextTrack:Play(fadeTime)
+		if walkPhase and nextTrack.Length > 0 then
+			nextTrack.TimePosition = walkPhase * nextTrack.Length
+		end
 	end
 end
 

@@ -251,7 +251,7 @@ Every state that can land has an edge to every state `LandingResolution.Resolve`
   - `SetHorizontalVelocity`/`SetVerticalVelocity` are one-shot writes for launches that hand off in the same tick (SlideJump, WallLeap, WallBoost, Vault, cling drop). A constraint there would never get its `Exit` to clear it.
 - **Facing:** `FacingController` flips `Humanoid.AutoRotate` every frame: off plus face-the-camera while `MouseBehavior == LockCenter` (Shift Lock/first-person), on otherwise. States can set a lock direction (WallRun faces along the tangent); zero vectors mean "no lock".
 - **Animation:** `LocomotionAnimator` destroys the default `Animate` script, loads the clips from `Assets/Animations/Movement.model.json` (a blank `AnimationId` is skipped, not an error) and crossfades on state changes (`AnimationFadeTimeSeconds`).
-  - Walk has 8 directional clips when the camera is locked. Unlocked it always plays Forward, which avoids stutter while `AutoRotate` swings.
+  - Walk has 8 directional clips when the camera is locked. Switching direction starts the new clip at the old one's gait phase, so the crossfade doesn't swap feet. Unlocked it always plays Forward, which avoids stutter while `AutoRotate` swings.
   - Airborne plays Jump/Fall from the Humanoid state. Landing overlays `Land` for `LandingAnimationHoldSeconds`; HardLanding plays `LandHard` for its whole state.
   - One-tick states (SlideJump, WallLeap) are shown with a transient hold.
 - **Collision groups** (`CollisionGroups.luau`): `Character`, `CharacterCrouched` (CrouchIdle/CrouchWalk/Slide/SlideJump), `CrouchPassable`. Crouched characters don't collide with `CrouchPassable`, so level authors put low bars and vents in it.

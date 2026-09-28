@@ -7,6 +7,8 @@ local MovementTypes = require(ReplicatedStorage.Shared.Types.MovementTypes)
 local MovementTuningState = require(script.Parent.Parent.Parent.State.MovementTuningState)
 local Sessions = require(script.Parent.Sessions)
 local Probes = require(script.Parent.Probes)
+local Flow = require(script.Parent.Flow)
+local ClaimTiming = require(script.Parent.ClaimTiming)
 
 type MovementContext = MovementTypes.MovementContext
 type PlayerSession = Sessions.PlayerSession
@@ -58,6 +60,49 @@ local function classifyMoveIntent(
 		rightComponent > 0
 end
 
+local function classifySession(
+	session: PlayerSession,
+	deadzone: number
+): (boolean, boolean, boolean, boolean)
+	return classifyMoveIntent(
+		session.rootPart.CFrame.LookVector,
+		session.humanoid.MoveDirection,
+		deadzone
+	)
+end
+
+-- Once per Heartbeat, before the mirror (docs/MovementSystem.md §8.1).
+-- MoveDirection is a Humanoid property and reaches the server about
+-- 0.15-0.2 s ahead of the facing it pairs with, which rides the position
+-- stream (the same measured ordering as the state label, §9). A camera turn
+-- while holding W then briefly reads as a strafe: a 2026-09-28 capture showed
+-- one 0.46 reading demote a held Sprint to Run. So a forward reading counts
+-- for one `ClaimTiming.ClaimLagSeconds` after it was last seen, the window
+-- already sized for that ordering; a real strafe or backpedal outlasts it.
+function Context.RecordForward(session: PlayerSession)
+	local constants = MovementTuningState.GetEffective(session.player)
+	local forward = classifySession(session, constants.SprintForwardDeadzone)
+	if forward then
+		session.forwardSeenAt = os.clock()
+	end
+end
+
+-- The context a mirrored landing resolves with. A crouch level is a claim, and
+-- claims lead the position stream the landing is read from: a Ctrl press just
+-- after the client touched down (a quick hop into a slide) reached the server
+-- before its own landing and resolved CrouchWalk where the client had landed
+-- in Sprint, then slid (2026-09-28 capture). So a crouch change newer than
+-- one claim lag applies after the landing, on the next Heartbeat, not to it.
+function Context.ForLanding(session: PlayerSession, context: MovementContext): MovementContext
+	local changedAt = session.crouchChangedAt
+	if not changedAt or os.clock() - changedAt > ClaimTiming.ClaimLagSeconds(session) then
+		return context
+	end
+	local landing = table.clone(context)
+	landing.crouchHeld = session.crouchHeldBefore and not session.crouchSuppressed
+	return landing
+end
+
 -- `constants` is this session's EFFECTIVE tuning (docs/MovementSystem.md §10) --
 -- read fresh from MovementTuningState on every call rather than cached on the
 -- session, so a live override change is picked up on the very next Heartbeat
@@ -77,6 +122,14 @@ function Context.Build(session: PlayerSession): MovementContext
 	local facing = session.rootPart.CFrame.LookVector
 	local forward, backward, strafeLeft, strafeRight =
 		classifyMoveIntent(facing, moveDirection, constants.SprintForwardDeadzone)
+	local forwardSeenAt = session.forwardSeenAt
+	if
+		not forward
+		and forwardSeenAt
+		and os.clock() - forwardSeenAt <= ClaimTiming.ClaimLagSeconds(session)
+	then
+		forward = true
+	end
 
 	return {
 		moveIntent = {
@@ -132,6 +185,7 @@ function Context.Build(session: PlayerSession): MovementContext
 		-- landing path this used to take for everyone; the speed cap still
 		-- applies regardless.
 		cameraLocked = session.cameraLocked,
+		flowMultiplier = Flow.Multiplier(session, constants),
 		constants = constants,
 	}
 end

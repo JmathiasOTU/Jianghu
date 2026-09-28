@@ -44,10 +44,10 @@ return function(t)
 			t.expect(table.find(fromWallRun, MovementStates.Vault)).toBe(nil)
 		end)
 
-		t.it("never leaves Vault into Run or Sprint", function()
+		t.it("lands from Vault back into Run or Sprint", function()
 			local fromVault = StateRules.Transitions[MovementStates.Vault]
-			t.expect(table.find(fromVault, MovementStates.Run)).toBe(nil)
-			t.expect(table.find(fromVault, MovementStates.Sprint)).toBe(nil)
+			t.expect(table.find(fromVault, MovementStates.Run) ~= nil).toBeTruthy()
+			t.expect(table.find(fromVault, MovementStates.Sprint) ~= nil).toBeTruthy()
 		end)
 	end)
 

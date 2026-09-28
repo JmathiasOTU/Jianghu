@@ -7,6 +7,7 @@ local MovementTuning = require(ReplicatedStorage.Shared.Movement.MovementTuning)
 local TraversalMath = require(ReplicatedStorage.Shared.Movement.TraversalMath)
 
 local Sessions = require(script.Parent.Sessions)
+local Flow = require(script.Parent.Flow)
 
 type MovementState = MovementStates.MovementState
 type EffectiveMovementConstants = MovementTuning.EffectiveMovementConstants
@@ -35,9 +36,17 @@ local HARD_LANDING_RESIDUAL_SPEED_TOLERANCE = 6
 SpeedCaps.LANDING_MOMENTUM_GRACE_SECONDS = 2 * MovementConstants.SpeedCheckIntervalSeconds
 
 -- The fastest a slide or slide jump ever goes before slope amplification:
--- SlideState.Enter and SlideJumpState.Enter both clamp to it client-side.
-function SpeedCaps.SlideCeiling(constants: EffectiveMovementConstants): number
-	return constants.SprintSpeed * constants.SlideEntrySpeedMultiplier
+-- SlideState.Enter and SlideJumpState.Enter both clamp to it client-side. A
+-- slide's speed is fixed at entry, so it takes the held Flow multiplier.
+function SpeedCaps.SlideCeiling(
+	session: PlayerSession,
+	constants: EffectiveMovementConstants
+): number
+	return TraversalMath.SlideCeiling(
+		constants.SprintSpeed,
+		constants.SlideEntrySpeedMultiplier,
+		Flow.HeldMultiplier(session, constants)
+	)
 end
 
 -- Companion to the client's own slope-amplification read (SlideState.Update)
@@ -92,18 +101,26 @@ end
 -- `TraversalMath.SlideSlopeAmplification` grants the client, so a real slope-boosted slide doesn't
 -- rubber-band against a cap that only ever assumed flat ground. `slopeAmplification` defaults to 0
 -- for every call site that doesn't have a live ground read to pass.
+--
+-- Flow (docs/FLOW.md §4) only exists in a sprint chain, so it scales Sprint
+-- and WallRun by the live multiplier (the client re-applies it every frame)
+-- and the slide and airborne family by the held one (their speed was fixed at
+-- launch). Never Run or the slow tiers (Flow is always zero there), and never
+-- the launch allowances, which are built from already-raised speeds.
 local function maxSpeedForState(
+	session: PlayerSession,
 	state: MovementState,
 	constants: EffectiveMovementConstants,
 	slopeAmplification: number?
 ): number
 	if state == MovementStates.Run then
 		return constants.RunSpeed
+	elseif state == MovementStates.Sprint then
+		return constants.SprintSpeed * Flow.Multiplier(session, constants)
 	elseif state == MovementStates.Slide or state == MovementStates.SlideJump then
-		return SpeedCaps.SlideCeiling(constants) + (slopeAmplification or 0)
+		return SpeedCaps.SlideCeiling(session, constants) + (slopeAmplification or 0)
 	elseif
-		state == MovementStates.Sprint
-		or state == MovementStates.Airborne
+		state == MovementStates.Airborne
 		or state == MovementStates.DoubleJump
 		or state == MovementStates.WallLeap
 	then
@@ -116,7 +133,7 @@ local function maxSpeedForState(
 		-- matters for the `previousCap` grace snapshot right after one of
 		-- them; WallLeap's (and SlideJump's) real launch speed comes from
 		-- `airborneAllowedSpeed`.
-		return constants.SprintSpeed
+		return constants.SprintSpeed * Flow.HeldMultiplier(session, constants)
 	elseif state == MovementStates.WallRun then
 		-- Live-capped at the mechanic's OWN tuned speed (docs/MovementSystem.md §8.4),
 		-- deliberately NOT suspended like DoubleJump/WallLeap's one-shot
@@ -124,7 +141,7 @@ local function maxSpeedForState(
 		-- let a modified client fly at any speed for as long as it claims
 		-- WallRun. `SpeedCheck.Enforce` stays live throughout, just raised to
 		-- this cap instead of Airborne's lower SprintSpeed ceiling.
-		return constants.WallRunSpeed
+		return constants.WallRunSpeed * Flow.Multiplier(session, constants)
 	elseif state == MovementStates.WallCling then
 		-- No horizontal drift while clinging (docs/MovementSystem.md §8.2)
 		-- -- a fixed, non-tunable literal, not `constants.WallClingSpeedCeiling`
@@ -137,11 +154,11 @@ local function maxSpeedForState(
 		-- Same "one-shot impulse" shape as DoubleJump/WallLeap above: the
 		-- boost's horizontal part (`WallBoostSeparationSpeed`) sits under this
 		-- cap, and its vertical part is enforced by the vertical ceiling.
-		return constants.SprintSpeed
+		return constants.SprintSpeed * Flow.HeldMultiplier(session, constants)
 	elseif state == MovementStates.Vault then
 		-- One-shot launch too; a launch faster than this raises
 		-- `airborneAllowedSpeed` at the accept (TraversalClaims).
-		return constants.SprintSpeed
+		return constants.SprintSpeed * Flow.HeldMultiplier(session, constants)
 	elseif state == MovementStates.CrouchIdle or state == MovementStates.CrouchWalk then
 		return constants.CrouchSpeed
 	elseif state == MovementStates.HardLanding then
@@ -174,7 +191,7 @@ function SpeedCaps.CapForState(
 	constants: EffectiveMovementConstants
 ): number
 	local currentCap =
-		maxSpeedForState(state, constants, slideSlopeAmplification(session, constants))
+		maxSpeedForState(session, state, constants, slideSlopeAmplification(session, constants))
 
 	-- A fast launch's own computed ceiling (WallLeap, playtest fix 2026-09-18;
 	-- SlideJump) -- takes over from the ordinary Airborne/SprintSpeed cap for

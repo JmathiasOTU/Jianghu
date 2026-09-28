@@ -95,6 +95,11 @@ local PresentationConstants = {
 	FOVDampingRatio = 1,
 	FOVFrequency = 3,
 
+	-- Test-only Flow bar (FlowBarController): eases the fill toward the live
+	-- value with no overshoot, quick enough that each gain reads as a step.
+	FlowBarDampingRatio = 1,
+	FlowBarFrequency = 4,
+
 	ShakeProfiles = ShakeProfiles,
 	FOVKickProfiles = FOVKickProfiles,
 

@@ -3,6 +3,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local MovementStates = require(ReplicatedStorage.Shared.FSM.MovementStates)
 local MovementStateGroups = require(ReplicatedStorage.Shared.FSM.MovementStateGroups)
+local MovementStateNames = require(ReplicatedStorage.Shared.FSM.MovementStateNames)
 local CollisionGroups = require(ReplicatedStorage.Shared.Movement.CollisionGroups)
 
 local MirrorStateChanged = require(script.Parent.Parent.Parent.Events.MirrorStateChanged)
@@ -10,6 +11,9 @@ local MovementTuningState = require(script.Parent.Parent.Parent.State.MovementTu
 local Sessions = require(script.Parent.Sessions)
 local DebugFlags = require(script.Parent.DebugFlags)
 local SpeedCaps = require(script.Parent.SpeedCaps)
+local Flow = require(script.Parent.Flow)
+local Context = require(script.Parent.Context)
+local ClaimTiming = require(script.Parent.ClaimTiming)
 
 type MovementState = MovementStates.MovementState
 type PlayerSession = Sessions.PlayerSession
@@ -40,15 +44,49 @@ function TransitionBookkeeping.OnChanged(
 	local now = os.clock()
 	local constants = MovementTuningState.GetEffective(player)
 
+	if DebugFlags.LANDING_DEBUG_LOGGING then
+		local names = MovementStateNames.DebugNames
+		local context = Context.Build(session)
+		local pre = session.preAirborneLocomotion
+		print(
+			string.format(
+				"[Transition] server %s -> %s pre=%s fwd=%s back=%s locked=%s crouch=%s grounded=%s facingDotMove=%.2f",
+				names[previous],
+				names[next],
+				if pre then names[pre] else "nil",
+				tostring(context.moveIntent.forward),
+				tostring(context.moveIntent.backward),
+				tostring(context.cameraLocked),
+				tostring(context.crouchHeld),
+				tostring(context.grounded),
+				if context.moveIntent.direction.Magnitude > 0
+					then rootPart.CFrame.LookVector:Dot(context.moveIntent.direction.Unit)
+					else 0
+			)
+		)
+	end
+
 	-- The client enters a slide at its real speed x SlideEntrySpeedMultiplier,
 	-- clamped to `SpeedCaps.SlideCeiling` (SlideState.Enter). The server's bound on
 	-- that real speed is the effective cap it allowed in `previous`, grace
-	-- included, so it's read before this handler moves the grace on.
+	-- included, so it's read before this handler moves the grace on. Flow
+	-- raises the clamp like the client's (docs/FLOW.md §4).
 	if next == MovementStates.Slide then
+		session.slideEntryLocomotion = previous
 		session.slideEntrySpeed = math.min(
 			SpeedCaps.EffectiveCapFor(session, previous, constants),
-			constants.SprintSpeed
+			constants.SprintSpeed * Flow.Multiplier(session, constants)
 		) * constants.SlideEntrySpeedMultiplier
+	end
+
+	-- Every entry into Run restarts the dwell toward Sprint, as RunState.Enter
+	-- does client-side; a landing that resumes Run used to keep the stale
+	-- clock (2026-09-28 capture). The mirror sees that landing one claim lag
+	-- after the client did (0.13-0.42 s in the same capture), so its clock is
+	-- backdated by that much; the Sprint claim buffer covers the rest. A Run
+	-- claim then re-stamps it with its own ping backdate.
+	if next == MovementStates.Run then
+		session.runEnteredAt = now - ClaimTiming.ClaimLagSeconds(session)
 	end
 
 	-- Landing-momentum grace bookkeeping (see `SpeedCaps.EffectiveMaxSpeed`) --
@@ -58,18 +96,16 @@ function TransitionBookkeeping.OnChanged(
 	session.previousState = previous
 	session.lastTransitionAt = now
 
+	-- After the snapshot above, so the grace never records a Flow gain the
+	-- previous state didn't have.
+	Flow.OnTransition(session, next, constants)
+
 	-- WallRun and WallCling both replace the character's velocity outright
 	-- (full-force override), so a WallLeap allowance carried in from an
 	-- earlier leap no longer describes anything physical -- and left in
 	-- place it would lift WallCling's zero-drift cap to leap speed.
 	if next == MovementStates.WallRun or next == MovementStates.WallCling then
 		session.airborneAllowedSpeed = nil
-	end
-
-	-- A vault never lands you back into Run/Sprint (docs/MovementSystem.md
-	-- §4.8), mirroring the client's `fsm.changed` handler.
-	if next == MovementStates.Vault then
-		session.preAirborneLocomotion = nil
 	end
 
 	-- Post-boost re-grab cooldown, server-owned (audit M-038): the client

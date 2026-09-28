@@ -19,6 +19,7 @@ local ClaimTiming = require(script.Parent.ClaimTiming)
 local SpeedCheck = require(script.Parent.SpeedCheck)
 local VerticalCeiling = require(script.Parent.VerticalCeiling)
 local Mirror = require(script.Parent.Mirror)
+local Flow = require(script.Parent.Flow)
 
 type MovementContext = MovementTypes.MovementContext
 type EffectiveMovementConstants = MovementTuning.EffectiveMovementConstants
@@ -240,9 +241,12 @@ local function acceptWallLeapLaunch(session: PlayerSession, context: MovementCon
 	-- (audit M-003): the old version added the client's replicated velocity,
 	-- which a cheater could set to anything for one frame before the claim.
 	-- `SpeedCaps.EffectiveMaxSpeed` consults it; cleared on landing (`fsm.changed`).
+	-- The leap launches off WallRun's speed, which Flow raises; this leap's
+	-- own gain is already in, so the server's multiplier is at least the one
+	-- the client ran at (docs/FLOW.md §4).
 	session.airborneAllowanceExpiresAt = nil
 	session.airborneAllowedSpeed = TraversalMath.WallLeapMaxHorizontalSpeed(
-		constants.WallRunSpeed,
+		constants.WallRunSpeed * Flow.Multiplier(session, constants),
 		constants.WallRunClingMaxCorrectionSpeed,
 		constants.WallLeapBurstForce,
 		constants.WallLeapPushForce
@@ -295,6 +299,7 @@ function TraversalClaims.RetryBuffered(session: PlayerSession)
 	-- move entirely) means the gesture this claim wanted no longer applies.
 	local airborneFamily = current == MovementStates.Airborne
 		or current == MovementStates.DoubleJump
+		or current == MovementStates.Vault
 
 	-- A pending WallRun/WallCling claim means the client's DoubleJump is
 	-- already over: neither is reachable from DoubleJump, so the client went
@@ -304,8 +309,13 @@ function TraversalClaims.RetryBuffered(session: PlayerSession)
 	-- claim was dropped (2026-09-25 playtest). End it here instead. Ending a
 	-- DoubleJump early gains nothing: Airborne has the same cap, and the
 	-- jump's ceiling raise was applied at its accept.
+	-- Vault the same way: it only hands to Airborne, and the server's runs from
+	-- its own later accept, so a cling right after a vault reached a mirror
+	-- still in Vault and was dropped (2026-09-28 capture). Its ceiling raise and
+	-- displacement credit were applied at the accept, so ending it early gains
+	-- nothing either.
 	if
-		current == MovementStates.DoubleJump
+		(current == MovementStates.DoubleJump or current == MovementStates.Vault)
 		and (session.pendingWallRunClaimUntil or session.pendingWallClingClaimUntil)
 		and session.fsm:RequestTransition(MovementStates.Airborne, Context.Build(session))
 	then

@@ -26,6 +26,7 @@ export type MovementDebugSnapshot = {
 	velocity: Vector3,
 	rotVelocity: Vector3,
 	noclip: boolean,
+	flow: number,
 }
 
 local current: MovementDebugSnapshot = {
@@ -36,6 +37,7 @@ local current: MovementDebugSnapshot = {
 	velocity = Vector3.zero,
 	rotVelocity = Vector3.zero,
 	noclip = false,
+	flow = 0,
 }
 
 -- State-transition history (docs/MovementSystem.md §10): a bounded ring buffer of the

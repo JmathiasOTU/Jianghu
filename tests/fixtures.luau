@@ -45,6 +45,7 @@ function Fixtures.context(overrides: { [string]: any }?): any
 		lastVaultAt = nil,
 		qinggong = math.huge,
 		cameraLocked = false,
+		flowMultiplier = 1,
 		constants = MovementTuning.Defaults(),
 	}
 	for key, value in pairs(overrides or {}) do

@@ -17,7 +17,8 @@ local GROUNDED_STATES = {
 }
 
 export type CharacterMover = {
-	SetSpeed: (self: CharacterMover, speed: number) -> (),
+	SetSpeed: (self: CharacterMover, speed: number, flowScaled: boolean?) -> (),
+	SetFlowMultiplier: (self: CharacterMover, multiplier: number) -> (),
 	GetSpeed: (self: CharacterMover) -> number,
 	ApplyLandingSlow: (self: CharacterMover, multiplier: number, duration: number) -> (),
 	SetJumpPower: (self: CharacterMover, jumpPower: number) -> (),
@@ -112,6 +113,11 @@ function CharacterMover.new(humanoid: Humanoid, jumpPower: number): CharacterMov
 	-- re-applies `_baseSpeed * penalty` every Heartbeat instead of leaving the
 	-- discounted WalkSpeed stuck until the next unrelated transition.
 	self._baseSpeed = 0
+	-- Flow (docs/FLOW.md §5): pushed every frame by Movement/init.luau and
+	-- applied only to a speed set as Flow-scaled (Sprint), so the bonus
+	-- drains with Flow instead of sticking at whatever it was on Enter.
+	self._flowScaled = false
+	self._flowMultiplier = 1
 	self._speedPenaltyMultiplier = 1
 	self._speedPenaltyUntil = 0
 	self._trove:Connect(RunService.Heartbeat, function()
@@ -125,12 +131,18 @@ function CharacterMover:_applySpeed()
 	local multiplier = if os.clock() < self._speedPenaltyUntil
 		then self._speedPenaltyMultiplier
 		else 1
-	self._humanoid.WalkSpeed = self._baseSpeed * multiplier
+	local flow = if self._flowScaled then self._flowMultiplier else 1
+	self._humanoid.WalkSpeed = self._baseSpeed * multiplier * flow
 end
 
-function CharacterMover:SetSpeed(speed: number)
+function CharacterMover:SetSpeed(speed: number, flowScaled: boolean?)
 	self._baseSpeed = speed
+	self._flowScaled = flowScaled == true
 	self:_applySpeed()
+end
+
+function CharacterMover:SetFlowMultiplier(multiplier: number)
+	self._flowMultiplier = multiplier
 end
 
 -- MediumLanding (no FSM state of its own -- see

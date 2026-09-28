@@ -26,6 +26,9 @@ local TransitionBookkeeping = require(script.TransitionBookkeeping)
 local TraversalClaims = require(script.TraversalClaims)
 local TransitionClaims = require(script.TransitionClaims)
 local DebugBroadcast = require(script.DebugBroadcast)
+local Flow = require(script.Flow)
+local Context = require(script.Context)
+local ClaimTiming = require(script.ClaimTiming)
 
 type MovementState = MovementStates.MovementState
 type PlayerSession = Sessions.PlayerSession
@@ -67,6 +70,7 @@ local function createSession(player: Player, humanoid: Humanoid, rootPart: BaseP
 		levelRateLimiter = RateLimiter.new(LEVEL_CLAIMS_PER_SECOND, 1),
 		cameraLocked = false,
 		runEnteredAt = nil,
+		forwardSeenAt = nil,
 		speedCheckPosition = rootPart.Position,
 		speedCheckAt = os.clock(),
 		speedBudget = 0,
@@ -98,10 +102,17 @@ local function createSession(player: Player, humanoid: Humanoid, rootPart: BaseP
 		previousState = nil,
 		lastTransitionAt = os.clock(),
 		crouchHeld = false,
+		crouchHeldBefore = false,
+		crouchChangedAt = nil,
 		doubleJumpUsed = false,
 		doubleJumpLeftGround = false,
 		crouchSuppressed = false,
 		preAirborneLocomotion = nil,
+		slideEntryLocomotion = nil,
+		flowChain = false,
+		flow = 0,
+		lastFlowGainAt = nil,
+		heldFlowMultiplier = nil,
 		peakHeight = nil,
 		hardLandingLockUntil = nil,
 		traversalEntryAt = nil,
@@ -277,8 +288,10 @@ function MovementValidationService.Init()
 	-- buffered retry needs to see THIS frame's mirrored state (e.g. a landing
 	-- `Mirror.PassiveTransitions` just resolved), not last frame's. The vertical
 	-- ceiling runs after every claim path, so a rise accepted this frame is
-	-- already credited before it is measured.
-	RunService.Heartbeat:Connect(function()
+	-- already credited before it is measured. Flow decays here and nowhere
+	-- else: claim handlers re-run the mirror between Heartbeats, and a decay
+	-- there would drain extra on every claim (docs/FLOW.md §3).
+	RunService.Heartbeat:Connect(function(dt: number)
 		for _, session in pairs(Sessions.ByPlayer) do
 			local constants = MovementTuningState.GetEffective(session.player)
 			Probes.UpdateSupport(session)
@@ -286,10 +299,12 @@ function MovementValidationService.Init()
 			Probes.UpdatePeakHeight(session)
 			Probes.UpdateWallRunQuery(session)
 			Probes.UpdateWallClingQuery(session)
+			Context.RecordForward(session)
 			Mirror.PassiveTransitions(session)
 			TraversalClaims.RetryBuffered(session)
 			TransitionClaims.RetryBufferedSprint(session)
 			Probes.UpdateSlideGroundQuery(session, constants)
+			Flow.Decay(session, constants, dt, ClaimTiming.ClaimLagSeconds(session))
 			SpeedCheck.Enforce(session, constants)
 			VerticalCeiling.Enforce(session, constants)
 			DebugBroadcast.Send(session)

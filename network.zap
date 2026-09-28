@@ -126,6 +126,8 @@ event MovementDebugState = {
 		runDuration: f32?,
 		violationCount: u16,
 		violations: MovementViolationEntry[0..5],
+		-- The server's own Flow, 0-1 (docs/FLOW.md), shown next to the client's.
+		flow: f32,
 	},
 }
 
@@ -205,6 +207,10 @@ type TunableConstantName = enum {
 	"VaultMaxFacingAngleDegrees",
 	"VaultCooldownSeconds",
 	"VaultDoubleJumpBlockSeconds",
+	"FlowGainPerMove",
+	"FlowMaxSpeedBonus",
+	"FlowDecayDelaySeconds",
+	"FlowDecayRate",
 }
 
 event RequestSetTuning = {

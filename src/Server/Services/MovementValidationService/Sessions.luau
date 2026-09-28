@@ -42,6 +42,11 @@ export type PlayerSession = {
 	-- Shift Lock/first-person, from the client's level claims (audit M-020).
 	cameraLocked: boolean,
 	runEnteredAt: number?,
+	-- The last Heartbeat `classifyMoveIntent` read forward (`Context.RecordForward`).
+	-- MoveDirection (a Humanoid property) reaches the server ahead of the
+	-- facing it pairs with (the position stream), so a camera turn briefly
+	-- reads as a strafe; forward counts for one claim lag after it was seen.
+	forwardSeenAt: number?,
 	-- Horizontal speed window (audit M-002): the position/time the current
 	-- window opened at, plus a distance budget accumulated EVERY Heartbeat at
 	-- whatever cap applied during that Heartbeat. Transitions never reset the
@@ -122,6 +127,10 @@ export type PlayerSession = {
 	-- mirrored passively off this flag by `Mirror.PassiveTransitions`, the same
 	-- way Idle<->Walk already is off `moveIntent`.
 	crouchHeld: boolean,
+	-- The crouch level before its latest change, and when that change arrived:
+	-- a landing uses the older level for one claim lag (`Context.ForLanding`).
+	crouchHeldBefore: boolean,
+	crouchChangedAt: number?,
 	-- DoubleJump per-life flag (docs/MovementSystem.md §5/§8) -- mirrors the
 	-- client's own flag 1:1: set on an accepted "DoubleJump" claim, reset the
 	-- instant this session's mirror lands (same "Airborne -> grounded" edge
@@ -152,8 +161,21 @@ export type PlayerSession = {
 	-- instant it left the ground, nil otherwise. Set in
 	-- `Mirror.PassiveTransitions`'s own "not grounded -> Airborne" branch
 	-- (off `current`, the state about to be left, same source the client
-	-- reads via `previous`), cleared the instant a landing resolves.
+	-- reads via `previous`), or to `slideEntryLocomotion` when the ground is
+	-- left from Slide/SlideJump; cleared the instant a landing resolves.
 	preAirborneLocomotion: MovementState?,
+	-- The Run/Sprint tier this session's mirror entered the current slide
+	-- from (`TransitionBookkeeping`); the mirror's SlideJump hands it to
+	-- `preAirborneLocomotion`, mirroring the client's `slideEntryLocomotion`.
+	slideEntryLocomotion: MovementState?,
+	-- Flow (docs/FLOW.md, `Flow.luau`): whether the mirror is in a sprint
+	-- chain (`FlowRules`), the server's own 0-1 value, when it last gained, and
+	-- the multiplier held since the current flight or slide began (nil once
+	-- grounded).
+	flowChain: boolean,
+	flow: number,
+	lastFlowGainAt: number?,
+	heldFlowMultiplier: number?,
 	-- HardLanding fall-height tracking (docs/MovementSystem.md §4.4 rework) -- mirrors
 	-- the client's own `peakHeight` 1:1, off this session's OWN
 	-- `rootPart.Position.Y` (server-trusted, never anything the client

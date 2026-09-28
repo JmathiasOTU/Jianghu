@@ -4,6 +4,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local MovementStates = require(ReplicatedStorage.Shared.FSM.MovementStates)
 local MovementConstants = require(ReplicatedStorage.Shared.Constants.MovementConstants)
 local StateRules = require(ReplicatedStorage.Shared.Movement.StateRules)
+local TraversalMath = require(ReplicatedStorage.Shared.Movement.TraversalMath)
 
 local ClientMovementContextModule = require(script.Parent.Parent.Core.ClientMovementContext)
 type ClientMovementContext = ClientMovementContextModule.ClientMovementContext
@@ -50,7 +51,16 @@ SlideJumpState.CanEnter = StateRules.CanEnter[MovementStates.SlideJump]
 -- carries into the jump" carry-through every other jump-off already gets.
 function SlideJumpState.Enter(context: ClientMovementContext)
 	local entrySpeed = context.slideSpeed or context.constants.CrouchSpeed
-	local ceiling = context.constants.SprintSpeed * context.constants.SlideEntrySpeedMultiplier
+	-- Flow may have drained since the slide began; the jump never drops below
+	-- the slide's own speed, which the server's held-Flow ceiling still covers.
+	local ceiling = math.max(
+		TraversalMath.SlideCeiling(
+			context.constants.SprintSpeed,
+			context.constants.SlideEntrySpeedMultiplier,
+			context.flowMultiplier
+		),
+		entrySpeed
+	)
 	local boosted = math.min(entrySpeed + context.constants.SlideJumpBoostAmount, ceiling)
 	local direction = context.slideDirection or Vector3.zero
 

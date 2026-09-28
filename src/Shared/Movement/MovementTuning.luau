@@ -67,6 +67,10 @@ export type TunableConstantName =
 	| "VaultMaxFacingAngleDegrees"
 	| "VaultCooldownSeconds"
 	| "VaultDoubleJumpBlockSeconds"
+	| "FlowGainPerMove"
+	| "FlowMaxSpeedBonus"
+	| "FlowDecayDelaySeconds"
+	| "FlowDecayRate"
 
 -- A named-field record (not a `{ [TunableConstantName]: number }` indexer
 -- type) specifically so consumers get plain dot-access
@@ -133,6 +137,10 @@ export type EffectiveMovementConstants = {
 	VaultMaxFacingAngleDegrees: number,
 	VaultCooldownSeconds: number,
 	VaultDoubleJumpBlockSeconds: number,
+	FlowGainPerMove: number,
+	FlowMaxSpeedBonus: number,
+	FlowDecayDelaySeconds: number,
+	FlowDecayRate: number,
 }
 
 -- Iteration order for the overlay's Tuning tab and for anything else that
@@ -194,6 +202,10 @@ local TUNABLE_NAMES: { TunableConstantName } = {
 	"VaultMaxFacingAngleDegrees",
 	"VaultCooldownSeconds",
 	"VaultDoubleJumpBlockSeconds",
+	"FlowGainPerMove",
+	"FlowMaxSpeedBonus",
+	"FlowDecayDelaySeconds",
+	"FlowDecayRate",
 }
 
 -- Sanity bounds for RequestSetTuning (Server/Services/MovementTuningService.luau)
@@ -273,6 +285,11 @@ local VALID_RANGES: { [TunableConstantName]: { min: number, max: number } } = {
 	VaultMaxFacingAngleDegrees = { min = 0, max = 89 },
 	VaultCooldownSeconds = { min = 0, max = 10 },
 	VaultDoubleJumpBlockSeconds = { min = 0, max = 5 },
+	FlowGainPerMove = { min = 0, max = 1 },
+	FlowMaxSpeedBonus = { min = 0, max = 2 },
+	FlowDecayDelaySeconds = { min = 0, max = 10 },
+	-- 0 holds Flow indefinitely, for testing a full bonus.
+	FlowDecayRate = { min = 0, max = 10 },
 }
 
 local MovementTuning = {}

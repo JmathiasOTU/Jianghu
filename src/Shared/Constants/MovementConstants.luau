@@ -7,9 +7,9 @@ local MovementConstants = {
 	RunDoubleTapWindowSeconds = 0.3,
 	SprintThresholdSeconds = 3,
 
-	WalkSpeed = 10,
-	RunSpeed = 22,
-	SprintSpeed = 30,
+	WalkSpeed = 18,
+	RunSpeed = 28,
+	SprintSpeed = 40,
 	JumpPower = 55,
 
 	-- MovementValidationService's server-side speed/delta-position sanity check
@@ -33,7 +33,7 @@ local MovementConstants = {
 	--
 	-- Half of WalkSpeed -- crouched movement should read as clearly slower than
 	-- upright walking, not just a cosmetic pose change.
-	CrouchSpeed = 5,
+	CrouchSpeed = 9,
 	-- LINEAR decay (studs/s lost per second), not exponential: chosen because it
 	-- gives a slide a FIXED, predictable duration for a given entry speed
 	-- (duration = (entrySpeed - CrouchSpeed) / SlideDecayRate) -- a level
@@ -384,7 +384,7 @@ local MovementConstants = {
 	-- Instant upward impulse (locked design: free, instant, then back to
 	-- Airborne) -- ~36.7 studs of rise at default gravity (120^2 / (2 * 196.2),
 	-- see TraversalMath.BallisticRise); recompute if gravity is customized.
-	WallBoostUpwardForce = 100,
+	WallBoostUpwardForce = 120,
 	-- Small push away from the wall so the character doesn't snag on friction
 	-- while rising -- set to 0 if it feels wrong in playtest.
 	WallBoostSeparationSpeed = 12,
@@ -446,7 +446,7 @@ local MovementConstants = {
 	VaultMaxMomentumUpward = 20,
 	-- The whole Vault state, mantle then launch, before handing to Airborne:
 	-- the Vault clip's length (designer, 2026-09-25).
-	VaultDurationSeconds = 0.32,
+	VaultDurationSeconds = 0.4,
 	-- The longest the mantle takes: up the wall face, then across onto the top
 	-- (replaced a one-frame snap, 2026-09-25 playtest: "you just snap"). An
 	-- entry already rising faster mantles at its own speed instead
@@ -459,6 +459,18 @@ local MovementConstants = {
 	VaultCooldownSeconds = 0.5,
 	-- No DoubleJump this soon after a vault (Sorcery's 0.25 s block).
 	VaultDoubleJumpBlockSeconds = 0.25,
+
+	-- Flow (docs/FLOW.md): a 0-1 resource built by chaining traversal moves
+	-- that raises the fast tiers' real speed cap. All four are starting
+	-- points, not playtested (live-tunable).
+	-- Added per qualifying move (MovementStateGroups.FlowBuilding), clamped at 1.
+	FlowGainPerMove = 0.2,
+	-- Extra horizontal speed at full Flow: +50%.
+	FlowMaxSpeedBonus = 0.5,
+	-- No drain until this long after the last gain.
+	FlowDecayDelaySeconds = 1.5,
+	-- Linear drain per second once the delay has passed: full to zero in ~3 s.
+	FlowDecayRate = 0.33,
 }
 
 return MovementConstants

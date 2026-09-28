@@ -49,12 +49,15 @@ function Mirror.PassiveTransitions(session: PlayerSession)
 			-- session's mirror enters SlideJump, same edge the client's own
 			-- `crouchSuppressed` arms on -- see the PlayerSession field comment.
 			session.crouchSuppressed = true
+			-- Slide-jump landing resume: lands back in the tier the slide was
+			-- entered from, like the client's SlideJump -> Airborne edge.
+			session.preAirborneLocomotion = session.slideEntryLocomotion
 			-- SlideJumpState.Enter launches at up to `SpeedCaps.SlideCeiling`, above the
 			-- Airborne cap, and nothing slows it in the air, so the flight
 			-- keeps that allowance until it ends (2026-09-24 fix: it used to
 			-- get only the 1s landing grace, which a long jump outlasts).
 			-- Set before the hand-off so the landing grace snapshot sees it.
-			session.airborneAllowedSpeed = SpeedCaps.SlideCeiling(context.constants)
+			session.airborneAllowedSpeed = SpeedCaps.SlideCeiling(session, context.constants)
 			session.airborneAllowanceExpiresAt = nil
 			-- SlideJumpState launches upward at SlideJumpUpwardSpeed, faster
 			-- than the Humanoid's JumpPower. Still on the ground as far as the
@@ -88,7 +91,8 @@ function Mirror.PassiveTransitions(session: PlayerSession)
 			-- Landing while Ctrl is held goes to the crouch-variant instead of
 			-- Idle/Walk (docs/MovementSystem.md §4.2) -- a single-tick decision, same
 			-- as AirborneState.Update's own client-side landing logic.
-			if session.fsm:RequestTransition(LandingResolution.Resolve(context), context) then
+			local landing = Context.ForLanding(session, context)
+			if session.fsm:RequestTransition(LandingResolution.Resolve(landing), landing) then
 				-- DoubleJump reset (docs/MovementSystem.md §5): mirrors the
 				-- client's own reset on the identical "landed" edge.
 				session.doubleJumpUsed = false
@@ -117,7 +121,8 @@ function Mirror.PassiveTransitions(session: PlayerSession)
 	-- own DoubleJumpState.Update.
 	if current == MovementStates.DoubleJump then
 		if context.grounded then
-			if session.fsm:RequestTransition(LandingResolution.Resolve(context), context) then
+			local landing = Context.ForLanding(session, context)
+			if session.fsm:RequestTransition(LandingResolution.Resolve(landing), landing) then
 				session.doubleJumpUsed = false
 				-- Landing-resume fix: same consume-on-landing edge as the
 				-- Airborne branch above -- `preAirborneLocomotion` survives the
@@ -148,7 +153,8 @@ function Mirror.PassiveTransitions(session: PlayerSession)
 	-- branch above already established.
 	if current == MovementStates.WallRun then
 		if context.grounded then
-			if session.fsm:RequestTransition(LandingResolution.Resolve(context), context) then
+			local landing = Context.ForLanding(session, context)
+			if session.fsm:RequestTransition(LandingResolution.Resolve(landing), landing) then
 				session.doubleJumpUsed = false
 				session.preAirborneLocomotion = nil
 			end
@@ -243,7 +249,8 @@ function Mirror.PassiveTransitions(session: PlayerSession)
 	-- airborne-family state here already establishes.
 	if current == MovementStates.WallCling then
 		if context.grounded then
-			if session.fsm:RequestTransition(LandingResolution.Resolve(context), context) then
+			local landing = Context.ForLanding(session, context)
+			if session.fsm:RequestTransition(LandingResolution.Resolve(landing), landing) then
 				session.doubleJumpUsed = false
 				session.preAirborneLocomotion = nil
 			end
@@ -274,7 +281,8 @@ function Mirror.PassiveTransitions(session: PlayerSession)
 	-- what actually keeps this window honest, not a corner/wall recheck.
 	if current == MovementStates.WallBoost then
 		if context.grounded then
-			if session.fsm:RequestTransition(LandingResolution.Resolve(context), context) then
+			local landing = Context.ForLanding(session, context)
+			if session.fsm:RequestTransition(LandingResolution.Resolve(landing), landing) then
 				session.doubleJumpUsed = false
 				session.preAirborneLocomotion = nil
 			end
@@ -290,8 +298,7 @@ function Mirror.PassiveTransitions(session: PlayerSession)
 
 	-- Vault (docs/MovementSystem.md §8.4): the same short-window shape as
 	-- WallBoost, timed from its own accept.
-	-- Landing is only checked once the window ends, as on the client, and
-	-- never resumes Run/Sprint.
+	-- Landing is only checked once the window ends, as on the client.
 	if current == MovementStates.Vault then
 		local startedAt = session.vaultStartedAt or session.lastTransitionAt
 		if os.clock() - startedAt < context.constants.VaultDurationSeconds then
@@ -299,9 +306,10 @@ function Mirror.PassiveTransitions(session: PlayerSession)
 		end
 		if not context.grounded then
 			session.fsm:RequestTransition(MovementStates.Airborne, context)
-		elseif
-			session.fsm:RequestTransition(LandingResolution.Resolve(context, false), context)
-		then
+			return
+		end
+		local landing = Context.ForLanding(session, context)
+		if session.fsm:RequestTransition(LandingResolution.Resolve(landing), landing) then
 			session.doubleJumpUsed = false
 			session.preAirborneLocomotion = nil
 		end
@@ -375,6 +383,9 @@ function Mirror.PassiveTransitions(session: PlayerSession)
 		-- transition instead of from the edge's own callback args.
 		if current == MovementStates.Run or current == MovementStates.Sprint then
 			session.preAirborneLocomotion = current
+		elseif current == MovementStates.Slide then
+			-- Also covers a slide jump whose `jumping` frame this mirror missed.
+			session.preAirborneLocomotion = session.slideEntryLocomotion
 		end
 		session.fsm:RequestTransition(MovementStates.Airborne, context)
 		return

@@ -407,4 +407,40 @@ function TraversalMath.VaultMaxHorizontalSpeed(
 	return forwardSpeed + horizontalKeep * maxEntrySpeed
 end
 
+-- The fastest a slide or slide jump goes before slope amplification: the
+-- Sprint tier (raised by Flow) times the slide's entry boost. SlideState and
+-- SlideJumpState clamp to it; the server caps Slide/SlideJump at it.
+function TraversalMath.SlideCeiling(
+	sprintSpeed: number,
+	entrySpeedMultiplier: number,
+	flowMultiplier: number
+): number
+	return sprintSpeed * flowMultiplier * entrySpeedMultiplier
+end
+
+-- Flow (docs/FLOW.md): one qualifying move's gain, clamped to the 0-1 range.
+function TraversalMath.FlowAfterGain(flow: number, gainPerMove: number): number
+	return math.min(1, flow + gainPerMove)
+end
+
+-- One frame of Flow decay: untouched until `delaySeconds` after the last gain,
+-- then a linear drain at `rate` per second down to zero.
+function TraversalMath.FlowAfterDecay(
+	flow: number,
+	sinceLastGain: number,
+	dt: number,
+	delaySeconds: number,
+	rate: number
+): number
+	if sinceLastGain < delaySeconds then
+		return flow
+	end
+	return math.max(0, flow - rate * dt)
+end
+
+-- The factor Flow applies to the fast states' horizontal speeds.
+function TraversalMath.FlowMultiplier(flow: number, maxSpeedBonus: number): number
+	return 1 + flow * maxSpeedBonus
+end
+
 return TraversalMath

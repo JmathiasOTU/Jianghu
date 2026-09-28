@@ -75,10 +75,14 @@ end
 function SlideState.Enter(context: ClientMovementContext)
 	local velocity = context.characterMover:GetHorizontalVelocity()
 	-- Clamped to the same ceiling SlideJump and the server's Slide cap use
-	-- (SprintSpeed * SlideEntrySpeedMultiplier): residual momentum above
-	-- SprintSpeed (a landing, a slope) must not boost the slide past the cap.
-	currentSpeed = math.min(velocity.Magnitude, context.constants.SprintSpeed)
-		* context.constants.SlideEntrySpeedMultiplier
+	-- (TraversalMath.SlideCeiling): residual momentum above SprintSpeed (a
+	-- landing, a slope) must not boost the slide past the cap. Flow raises
+	-- only the clamp: the entry velocity already carries it, so scaling the
+	-- output too would count it twice (docs/FLOW.md §5).
+	currentSpeed = math.min(
+		velocity.Magnitude,
+		context.constants.SprintSpeed * context.flowMultiplier
+	) * context.constants.SlideEntrySpeedMultiplier
 	currentDirection = if velocity.Magnitude > 0 then velocity.Unit else Vector3.zero
 	raycastAccumulator = 0
 	cachedGroundQuery = context.characterMover:QueryGround()

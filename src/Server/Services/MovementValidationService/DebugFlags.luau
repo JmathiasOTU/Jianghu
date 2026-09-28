@@ -47,4 +47,10 @@ DebugFlags.SPEED_SANITY_DEBUG_LOGGING = false
 -- new, rather than guessing at a second patch on top of the first.
 DebugFlags.WALL_TRAVERSAL_DEBUG_LOGGING = false
 
+-- Temporary capture for the 2026-09-28 "sprint, wall run, leap, land: the
+-- server mirrors Walk" report: prints every mirrored transition with the
+-- inputs the landing decision reads, to diff against the client's matching
+-- `[Transition] client` lines (Movement/init.luau).
+DebugFlags.LANDING_DEBUG_LOGGING = false
+
 return DebugFlags

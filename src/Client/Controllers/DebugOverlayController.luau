@@ -77,6 +77,14 @@ local function formatSpeed(speed: number?): string
 	return string.format("%.1f studs/s", speed)
 end
 
+-- Flow's 0-1 value (docs/FLOW.md).
+local function formatFlow(flow: number?): string
+	if not flow then
+		return "—"
+	end
+	return string.format("%.2f", flow)
+end
+
 local function formatVector(vector3: Vector3?): string
 	if not vector3 then
 		return "—"
@@ -190,6 +198,7 @@ function DebugOverlayController.Init()
 		clientSection:WaitForChild("RowVelocity"):WaitForChild("Value") :: TextLabel
 	local clientRotVelocityValue =
 		clientSection:WaitForChild("RowRotVelocity"):WaitForChild("Value") :: TextLabel
+	local clientFlowValue = clientSection:WaitForChild("RowFlow"):WaitForChild("Value") :: TextLabel
 
 	local stateHistoryList = movementTab:WaitForChild("StateHistorySection"):WaitForChild("List")
 	local stateHistoryRows: { TextLabel } = {}
@@ -204,6 +213,7 @@ function DebugOverlayController.Init()
 		serverSection:WaitForChild("RowRunDuration"):WaitForChild("Value") :: TextLabel
 	local serverViolationsValue =
 		serverSection:WaitForChild("RowViolations"):WaitForChild("Value") :: TextLabel
+	local serverFlowValue = serverSection:WaitForChild("RowFlow"):WaitForChild("Value") :: TextLabel
 	local mismatchFlag = serverSection:WaitForChild("MismatchFlag") :: TextLabel
 
 	local violationHistoryList =
@@ -624,11 +634,13 @@ function DebugOverlayController.Init()
 		clientSpeedValue.Text = formatSpeed(client.speed)
 		clientVelocityValue.Text = formatVector(client.velocity)
 		clientRotVelocityValue.Text = formatVector(client.rotVelocity)
+		clientFlowValue.Text = formatFlow(client.flow)
 		renderStateHistory()
 
 		if serverState then
 			serverRunDurationValue.Text = formatDuration(serverState.runDuration)
 			serverViolationsValue.Text = tostring(serverState.violationCount)
+			serverFlowValue.Text = formatFlow(serverState.flow)
 			serverViolationsValue.TextColor3 = if serverState.violationCount > 0
 				then TEXT_ALARM
 				else TEXT_PRIMARY
@@ -641,6 +653,7 @@ function DebugOverlayController.Init()
 			serverStateValue.Text = "—"
 			serverRunDurationValue.Text = "—"
 			serverViolationsValue.Text = "—"
+			serverFlowValue.Text = "—"
 			mismatchFlag.Visible = false
 		end
 		renderViolationHistory()

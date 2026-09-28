@@ -49,7 +49,8 @@ export type MoveIntent = {
 -- `preAirborneLocomotion` (landing-resume fix) is Run/Sprint if that's the
 -- tier this life was in the instant it left the ground, nil otherwise --
 -- same per-life tracked-not-derived treatment as `doubleJumpUsed`: set on the
--- Run/Sprint -> Airborne edge, carried through an Airborne<->DoubleJump hop,
+-- Run/Sprint -> Airborne edge (or, leaving the ground from Slide/SlideJump,
+-- to the tier the slide was entered from), carried through an Airborne<->DoubleJump hop,
 -- cleared the instant a landing actually resolves. `AirborneState.
 -- ResolveLandingTarget` (and its server mirror) reads this to land straight
 -- back into the SAME tier when forward is still held, instead of always
@@ -170,6 +171,8 @@ export type MovementContext = {
 	lastVaultAt: number?,
 	qinggong: number,
 	cameraLocked: boolean,
+	-- Flow's live speed factor (docs/FLOW.md), each side from its own Flow value.
+	flowMultiplier: number,
 	constants: MovementTuning.EffectiveMovementConstants,
 }
 

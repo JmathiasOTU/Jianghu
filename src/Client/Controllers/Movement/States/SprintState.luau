@@ -12,7 +12,7 @@ local SprintState = {}
 SprintState.CanEnter = StateRules.CanEnter[MovementStates.Sprint]
 
 function SprintState.Enter(context: ClientMovementContext)
-	context.characterMover:SetSpeed(context.constants.SprintSpeed)
+	context.characterMover:SetSpeed(context.constants.SprintSpeed, true)
 end
 
 -- Sprint vs. strafing (resolved 2026-09-13, docs/MovementSystem.md §3): tolerates

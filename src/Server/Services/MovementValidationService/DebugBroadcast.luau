@@ -69,6 +69,7 @@ function DebugBroadcast.Send(session: PlayerSession)
 		runDuration = if context.runDuration then context.runDuration :: number else nil,
 		violationCount = if violation then violation.count else 0,
 		violations = violationEntries,
+		flow = session.flow,
 	})
 end
 

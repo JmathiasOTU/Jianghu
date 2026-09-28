@@ -139,12 +139,12 @@ function VaultState.Update(dt: number, context: ClientMovementContext)
 	-- pass just above the ledge, so a mid-vault read could resolve a landing
 	-- (often a resumed Run) instead of handing to Airborne. The launch has
 	-- the character rising when the window ends, so this is Airborne in
-	-- practice; a landing here never resumes Run/Sprint.
+	-- practice; a landing here resumes Run/Sprint like any other.
 	if elapsed < constants.VaultDurationSeconds then
 		return
 	end
 	if context.grounded then
-		context.fsm:RequestTransition(AirborneState.ResolveLandingTarget(context, false), context)
+		context.fsm:RequestTransition(AirborneState.ResolveLandingTarget(context), context)
 	else
 		context.fsm:RequestTransition(MovementStates.Airborne, context)
 	end

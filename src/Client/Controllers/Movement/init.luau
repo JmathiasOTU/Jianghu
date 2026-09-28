@@ -15,6 +15,7 @@ local CollisionGroups = require(ReplicatedStorage.Shared.Movement.CollisionGroup
 local SpatialQueries = require(ReplicatedStorage.Shared.Movement.SpatialQueries)
 local MovementConstants = require(ReplicatedStorage.Shared.Constants.MovementConstants)
 local TraversalMath = require(ReplicatedStorage.Shared.Movement.TraversalMath)
+local FlowRules = require(ReplicatedStorage.Shared.Movement.FlowRules)
 local MovementTuning = require(ReplicatedStorage.Shared.Movement.MovementTuning)
 
 local DebugSnapshot = require(script.Parent.Parent.State.DebugSnapshot)
@@ -142,6 +143,12 @@ local WALLRUN_DEBUG_LOGGING = false
 -- Anchored, not a code bug. Off by default now that it's confirmed.
 local WALLCLING_TRACE_LOGGING = false
 
+-- Temporary capture for the 2026-09-28 "sprint, wall run, leap, land: the
+-- server mirrors Walk" report: the client half of the server's
+-- `DebugFlags.LANDING_DEBUG_LOGGING` lines, printed after each transition's
+-- bookkeeping.
+local LANDING_DEBUG_LOGGING = false
+
 -- Temporary capture for the 2026-09-25 "boost never auto-vaults" report,
 -- paired with SpatialQueries' VAULT_DEBUG_LOGGING: says when a ledge was found
 -- but CanEnter[Vault] still refused it. Flip back to false once diagnosed.
@@ -265,7 +272,10 @@ local function setupCharacter(
 		-- transition.
 		local tierSpeed = TIER_SPEED[fsm.current]
 		if tierSpeed then
-			characterMover:SetSpeed(tierSpeed(TuningSnapshot.Get()))
+			characterMover:SetSpeed(
+				tierSpeed(TuningSnapshot.Get()),
+				fsm.current == MovementStates.Sprint
+			)
 		end
 	end))
 
@@ -312,6 +322,16 @@ local function setupCharacter(
 	-- `StateRules.CanEnter[Sprint]` to admit that resume without re-checking a
 	-- dwell timer that `fsm.current == Airborne` has no way to satisfy.
 	local preAirborneLocomotion: MovementState? = nil
+	-- The Run/Sprint tier the current slide was entered from; a slide jump
+	-- hands it to `preAirborneLocomotion` (docs/MovementSystem.md §4.4).
+	local slideEntryLocomotion: MovementState? = nil
+
+	-- Flow (docs/FLOW.md): only inside a sprint chain (`FlowRules`), gained on
+	-- entering a `FlowBuilding` state in the `fsm.changed` handler, drained
+	-- every Heartbeat. The server keeps its own.
+	local flowChain = false
+	local flow = 0
+	local lastFlowGainAt: number? = nil
 
 	-- HardLanding fall-height tracking (docs/MovementSystem.md §4.4 rework): the peak
 	-- `rootPart.Position.Y` reached since this life last left the ground, nil
@@ -362,6 +382,7 @@ local function setupCharacter(
 		local runDuration = if fsm.current == MovementStates.Run
 			then RunState.GetDuration()
 			else nil
+		local constants = TuningSnapshot.Get()
 		return {
 			moveIntent = input:GetMoveIntent(),
 			grounded = characterMover:IsGrounded(),
@@ -392,7 +413,8 @@ local function setupCharacter(
 			-- whatever the SERVER sees off the same replicated property,
 			-- never a client-only signal the server has no way to check.
 			cameraLocked = not humanoid.AutoRotate,
-			constants = TuningSnapshot.Get(),
+			flowMultiplier = TraversalMath.FlowMultiplier(flow, constants.FlowMaxSpeedBonus),
+			constants = constants,
 			characterMover = characterMover,
 			facingController = facingController,
 			fsm = fsm,
@@ -481,6 +503,24 @@ local function setupCharacter(
 		-- reads nothing off `context` and has no dependency on `Enter` having
 		-- run first, so moving it earlier is free.
 		DebugSnapshot.RecordTransition(DEBUG_STATE_NAMES[next])
+		if LANDING_DEBUG_LOGGING then
+			local intent = context.moveIntent
+			print(
+				string.format(
+					"[Transition] client %s -> %s pre=%s fwd=%s back=%s locked=%s crouch=%s grounded=%s",
+					DEBUG_STATE_NAMES[previous],
+					DEBUG_STATE_NAMES[next],
+					if context.preAirborneLocomotion
+						then DEBUG_STATE_NAMES[context.preAirborneLocomotion]
+						else "nil",
+					tostring(intent.forward),
+					tostring(intent.backward),
+					tostring(context.cameraLocked),
+					tostring(context.crouchHeld),
+					tostring(context.grounded)
+				)
+			)
+		end
 
 		States[next].Enter(context)
 
@@ -496,6 +536,19 @@ local function setupCharacter(
 		local claimName = NETWORK_CLAIM_NAMES[next]
 		if claimName then
 			fireClaim(claimName)
+		end
+
+		-- After `Enter`, so a launch uses the Flow it had going in: the
+		-- server gains at its own later accept, so its bound is never below
+		-- what the client launched at (docs/FLOW.md §3). Touching down outside
+		-- Sprint ends the chain and Flow with it, on the same edge as the server.
+		flowChain = FlowRules.ChainAfter(flowChain, next)
+		if not flowChain then
+			flow = 0
+			lastFlowGainAt = nil
+		elseif FlowRules.Gains(flowChain, next) then
+			flow = TraversalMath.FlowAfterGain(flow, context.constants.FlowGainPerMove)
+			lastFlowGainAt = os.clock()
 		end
 
 		-- DoubleJump bookkeeping (docs/MovementSystem.md §5): consumed the
@@ -553,17 +606,21 @@ local function setupCharacter(
 		-- into Airborne/DoubleJump so it survives an Airborne <-> DoubleJump
 		-- hop (`previous` there is Airborne/DoubleJump itself, neither of
 		-- which is Run/Sprint, so the branch below correctly no-ops and keeps
-		-- whatever was already set). Slide -> SlideJump -> Airborne never sets
-		-- it at all (`previous` there is SlideJump), so a slide-jump always
-		-- lands via the normal Walk/Idle path, never a resumed Run/Sprint --
-		-- deliberately out of scope for this fix. Cleared the instant a
-		-- landing actually resolves, below.
+		-- whatever was already set). Leaving the ground from Slide or
+		-- SlideJump carries the tier the slide was entered from (slide-jump
+		-- landing resume, 2026-09-28), so a slide jump lands back in
+		-- Run/Sprint instead of Walk. Cleared the instant a landing actually
+		-- resolves, below.
+		if next == MovementStates.Slide then
+			slideEntryLocomotion = previous
+		end
 		if next == MovementStates.Airborne or next == MovementStates.DoubleJump then
 			if previous == MovementStates.Run or previous == MovementStates.Sprint then
 				preAirborneLocomotion = previous
+			elseif previous == MovementStates.Slide or previous == MovementStates.SlideJump then
+				preAirborneLocomotion = slideEntryLocomotion
 			end
-		elseif GROUNDED_STATES[next] or next == MovementStates.Vault then
-			-- A vault never lands you back into Run/Sprint (docs/MovementSystem.md §4.8).
+		elseif GROUNDED_STATES[next] then
 			preAirborneLocomotion = nil
 		end
 
@@ -709,6 +766,20 @@ local function setupCharacter(
 	end)
 
 	lifeTrove:Connect(RunService.Heartbeat, function(dt: number)
+		local constants = TuningSnapshot.Get()
+		if flow > 0 then
+			flow = TraversalMath.FlowAfterDecay(
+				flow,
+				os.clock() - (lastFlowGainAt or 0),
+				dt,
+				constants.FlowDecayDelaySeconds,
+				constants.FlowDecayRate
+			)
+		end
+		characterMover:SetFlowMultiplier(
+			TraversalMath.FlowMultiplier(flow, constants.FlowMaxSpeedBonus)
+		)
+
 		-- Grow-only, deliberately BEFORE `Update` below (docs/MovementSystem.md §4.4
 		-- rework): on the exact landing Heartbeat, `characterMover:IsGrounded()`
 		-- has already flipped true by the time this runs, same instant
@@ -806,7 +877,6 @@ local function setupCharacter(
 		-- throttle would skip the height window entirely.
 		if fsm.current == MovementStates.WallBoost then
 			autoVaultAccumulatedDt += dt
-			local constants = TuningSnapshot.Get()
 			local interval = TraversalMath.VaultAutoProbeInterval(
 				MovementConstants.VaultMaxLedgeHeight - MovementConstants.VaultMinLedgeHeight,
 				constants.WallBoostUpwardForce,
@@ -873,6 +943,7 @@ local function setupCharacter(
 			velocity = velocity,
 			rotVelocity = rotVelocity,
 			noclip = noclipActive,
+			flow = flow,
 		})
 	end)
 end

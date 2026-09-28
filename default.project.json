@@ -75,6 +75,9 @@
       "$className": "StarterGui",
       "MovementDebugOverlay": {
         "$path": "Assets/UI/MovementDebugOverlay.model.json"
+      },
+      "FlowBar": {
+        "$path": "Assets/UI/FlowBar.model.json"
       }
     },
     "StarterPlayer": {

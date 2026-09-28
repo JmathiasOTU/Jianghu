@@ -90,7 +90,12 @@ function TransitionClaims.OnRequest(player: Player, claim: Network.ClaimableMove
 		if not session.levelRateLimiter:TryAcquire() then
 			return
 		end
-		if claim == "CrouchDown" then
+		local held = claim == "CrouchDown"
+		if held ~= session.crouchHeld then
+			session.crouchHeldBefore = session.crouchHeld
+			session.crouchChangedAt = os.clock()
+		end
+		if held then
 			session.crouchHeld = true
 		else
 			session.crouchHeld = false

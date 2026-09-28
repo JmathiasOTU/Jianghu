@@ -213,13 +213,15 @@ local Transitions: { [MovementState]: { MovementState } } = {
 	-- Vault (docs/MovementSystem.md §4.8): reachable on Space from the
 	-- airborne family and from a cling or boost (Space does nothing else
 	-- there), never from WallRun (a ledge ahead is a different wall; leap off
-	-- first). Hands to Airborne after its window. No Run/Sprint: a vault never
-	-- lands you running (LandingResolution's `allowResume = false`), and a
-	-- double-tap W mid-vault mustn't start Run (2026-09-25 playtest).
+	-- first). Hands to Airborne after its window. Lands back into Run/Sprint
+	-- like any other airborne move (designer, 2026-09-28: a vault no longer
+	-- cancels a sprint).
 	[MovementStates.Vault] = {
 		MovementStates.Airborne,
 		MovementStates.Idle,
 		MovementStates.Walk,
+		MovementStates.Run,
+		MovementStates.Sprint,
 		MovementStates.CrouchIdle,
 		MovementStates.CrouchWalk,
 		MovementStates.HardLanding,

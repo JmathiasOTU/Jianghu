@@ -7,9 +7,9 @@ local MovementConstants = {
 	RunDoubleTapWindowSeconds = 0.3,
 	SprintThresholdSeconds = 3,
 
-	WalkSpeed = 18,
-	RunSpeed = 28,
-	SprintSpeed = 40,
+	WalkSpeed = 10,
+	RunSpeed = 22,
+	SprintSpeed = 30,
 	JumpPower = 55,
 
 	-- MovementValidationService's server-side speed/delta-position sanity check
@@ -33,7 +33,7 @@ local MovementConstants = {
 	--
 	-- Half of WalkSpeed -- crouched movement should read as clearly slower than
 	-- upright walking, not just a cosmetic pose change.
-	CrouchSpeed = 9,
+	CrouchSpeed = 5,
 	-- LINEAR decay (studs/s lost per second), not exponential: chosen because it
 	-- gives a slide a FIXED, predictable duration for a given entry speed
 	-- (duration = (entrySpeed - CrouchSpeed) / SlideDecayRate) -- a level
@@ -384,7 +384,7 @@ local MovementConstants = {
 	-- Instant upward impulse (locked design: free, instant, then back to
 	-- Airborne) -- ~36.7 studs of rise at default gravity (120^2 / (2 * 196.2),
 	-- see TraversalMath.BallisticRise); recompute if gravity is customized.
-	WallBoostUpwardForce = 120,
+	WallBoostUpwardForce = 100,
 	-- Small push away from the wall so the character doesn't snag on friction
 	-- while rising -- set to 0 if it feels wrong in playtest.
 	WallBoostSeparationSpeed = 12,

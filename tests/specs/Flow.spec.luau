@@ -1,5 +1,5 @@
 --!strict
--- Flow (docs/FLOW.md) raises enforced caps, so the server's copy has to stay
+-- Flow (docs/MovementSystem.md §4.9) raises enforced caps, so the server's copy has to stay
 -- at or above the client's, and the raised bounds still have to bound what
 -- the client actually does.
 local roblox = require("@lune/roblox")

@@ -23,12 +23,12 @@ local SHIFT_LOCK_KEYS: { [Enum.KeyCode]: boolean } = {
 -- Runs right after the default camera script has placed the camera. The
 -- shoulder offset and shake are pure translations in camera space, and the
 -- default script rebuilds its position from the focus every frame, so
--- neither accumulates (docs/MOVEMENT_POLISH_ARCHITECTURE.md §4.2).
+-- neither accumulates (docs/MovementSystem.md §15.4.2).
 local RENDER_STEP_NAME = "CameraPolish"
 local RENDER_PRIORITY = Enum.RenderPriority.Camera.Value + 1
 
 -- Session-long, not per life: the springs keep their motion through a
--- respawn instead of snapping back to base (§4.0).
+-- respawn instead of snapping back to base (§15.4.0).
 local CameraController = {}
 
 local fovSpring = Spring.number(
@@ -52,7 +52,7 @@ local kickDebounce = CueDebounce.new()
 
 -- Our own shift lock, replacing Roblox's default mouse lock (disabled via
 -- StarterPlayer.EnableMouseLockOption in default.project.json), whose offset
--- snaps in one frame (§4.3). Facing stays with FacingController, which keys
+-- snaps in one frame (§15.4.3). Facing stays with FacingController, which keys
 -- off LockCenter like the camera-lock claim does.
 local function setShiftLocked(locked: boolean)
 	shiftLocked = locked
@@ -152,7 +152,7 @@ local function update(dt: number)
 	end
 
 	-- Follows fsm.current rather than fsm.changed: SlideJump/WallLeap re-enter
-	-- the FSM mid-handler, so change events can arrive out of order (§1).
+	-- the FSM mid-handler, so change events can arrive out of order (§15.1).
 	local life = MovementLife.Current()
 	if life then
 		local cue = MovementCues[life.fsm.current]

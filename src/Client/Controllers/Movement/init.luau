@@ -51,6 +51,7 @@ local WallLeapState = require(script.States.WallLeapState)
 local WallClingState = require(script.States.WallClingState)
 local WallBoostState = require(script.States.WallBoostState)
 local VaultState = require(script.States.VaultState)
+local LedgeJumpState = require(script.States.LedgeJumpState)
 
 type MovementState = MovementStates.MovementState
 type ClientMovementContext = ClientMovementContextModule.ClientMovementContext
@@ -81,6 +82,7 @@ local States = {
 	[MovementStates.WallCling] = WallClingState,
 	[MovementStates.WallBoost] = WallBoostState,
 	[MovementStates.Vault] = VaultState,
+	[MovementStates.LedgeJump] = LedgeJumpState,
 }
 
 -- Only Run/Sprint are earned, exploit-relevant transitions that need a server
@@ -243,13 +245,13 @@ local function setupCharacter(
 			AirborneState.GetLastLandingWasMedium
 		)
 	)
-	-- Sounds and particles (docs/MOVEMENT_POLISH_ARCHITECTURE.md §3), played on
+	-- Sounds and particles (docs/MovementSystem.md §15.3), played on
 	-- the FX the server mounted onto this character.
 	local characterFX = lifeTrove:Add(CharacterFX.new(character))
 	lifeTrove:Add(SFXController.new(humanoid, rootPart, fsm, characterMover, characterFX))
 	lifeTrove:Add(VFXController.new(fsm, characterFX))
 	-- Session-long presentation (CameraController) follows each life through
-	-- this, never by reaching into Movement (docs/MOVEMENT_POLISH_ARCHITECTURE.md §4.0).
+	-- this, never by reaching into Movement (docs/MovementSystem.md §15.4.0).
 	MovementLife.Set({
 		humanoid = humanoid,
 		rootPart = rootPart,
@@ -326,7 +328,7 @@ local function setupCharacter(
 	-- hands it to `preAirborneLocomotion` (docs/MovementSystem.md §4.4).
 	local slideEntryLocomotion: MovementState? = nil
 
-	-- Flow (docs/FLOW.md): only inside a sprint chain (`FlowRules`), gained on
+	-- Flow (docs/MovementSystem.md §4.9): only inside a sprint chain (`FlowRules`), gained on
 	-- entering a `FlowBuilding` state in the `fsm.changed` handler, drained
 	-- every Heartbeat. The server keeps its own.
 	local flowChain = false
@@ -369,6 +371,9 @@ local function setupCharacter(
 	-- Automatic vault during a boost (docs/MovementSystem.md §4.8): the
 	-- accumulator for its rise-speed-derived probe throttle.
 	local autoVaultAccumulatedDt = 0
+	-- LedgeJump's probe (docs/MovementSystem.md §4.10): taken on a jump
+	-- takeoff and only live for that one transition attempt.
+	local ledgeDropAhead: boolean? = nil
 
 	-- Wall-leap memory (docs/MovementSystem.md §4.6/§5): the physical wall
 	-- part this life most recently wall-leapt from, nil otherwise -- set on
@@ -403,6 +408,7 @@ local function setupCharacter(
 			lastWallLeapWall = lastWallLeapWall,
 			ledge = ledgeQuery,
 			lastVaultAt = VaultState.GetLastVaultAt(),
+			ledgeDropAhead = ledgeDropAhead,
 			-- Still an open design decision (docs/MovementSystem.md §13/§2) --
 			-- "always available" until a real Qinggong/stamina resource
 			-- exists, same placeholder both sides use.
@@ -466,9 +472,13 @@ local function setupCharacter(
 		lastCameraResyncAt = os.clock()
 	end
 
+	-- The effective level, after the slide-jump crouch-lock (docs/MovementSystem.md
+	-- §7): the server can't tell a slide jump that leaves a ledge from sliding off
+	-- it (the jump label lasts about one frame there), so it doesn't keep its own
+	-- copy of the lock.
 	local function fireCrouchLevel()
 		Network.RequestMovementTransition.Fire(
-			if input:IsCrouchHeld() then "CrouchDown" else "CrouchUp"
+			if input:IsCrouchHeld() and not crouchSuppressed then "CrouchDown" else "CrouchUp"
 		)
 		lastCrouchResyncAt = os.clock()
 	end
@@ -540,7 +550,7 @@ local function setupCharacter(
 
 		-- After `Enter`, so a launch uses the Flow it had going in: the
 		-- server gains at its own later accept, so its bound is never below
-		-- what the client launched at (docs/FLOW.md §3). Touching down outside
+		-- what the client launched at (docs/MovementSystem.md §4.9). Touching down outside
 		-- Sprint ends the chain and Flow with it, on the same edge as the server.
 		flowChain = FlowRules.ChainAfter(flowChain, next)
 		if not flowChain then
@@ -598,6 +608,7 @@ local function setupCharacter(
 		-- has to persist past the landing edge, not just the one frame.
 		if next == MovementStates.SlideJump then
 			crouchSuppressed = true
+			fireCrouchLevel()
 		end
 
 		-- Landing-resume bookkeeping (landing-resume fix): mirrors the
@@ -645,16 +656,40 @@ local function setupCharacter(
 				and previous ~= MovementStates.WallCling
 				and previous ~= MovementStates.WallBoost
 				and previous ~= MovementStates.Vault
+				and previous ~= MovementStates.LedgeJump
 			then
 				peakHeight = rootPart.Position.Y
 			end
 		elseif GROUNDED_STATES[next] then
 			peakHeight = nil
 		end
+
+		-- LedgeJump (docs/MovementSystem.md §4.10): tried once, on the Airborne
+		-- entry of a jump takeoff -- Run/Sprint with the Humanoid jumping (a
+		-- walk-off isn't one), or a slide jump. It's the first airborne frame,
+		-- so the root is still at the edge. Last in this handler, so the
+		-- takeoff's own bookkeeping (preAirborneLocomotion) is already in place.
+		if next == MovementStates.Airborne then
+			local jumped = previous == MovementStates.SlideJump
+				or (
+					(previous == MovementStates.Run or previous == MovementStates.Sprint)
+					and characterMover:IsJumping()
+				)
+			if jumped then
+				ledgeDropAhead =
+					characterMover:QueryLedgeDropAhead(characterMover:GetHorizontalVelocity())
+				if ledgeDropAhead then
+					fsm:RequestTransition(MovementStates.LedgeJump, buildContext())
+				end
+				ledgeDropAhead = nil
+			end
+		end
 	end)
 
 	lifeTrove:Connect(input.RunRequested, function()
-		fsm:RequestTransition(MovementStates.Run, buildContext())
+		if StateRules.CanClaimFrom(MovementStates.Run, fsm.current) then
+			fsm:RequestTransition(MovementStates.Run, buildContext())
+		end
 	end)
 
 	-- WallBoost (docs/MovementSystem.md §4.6 step 5): routed through
@@ -756,13 +791,14 @@ local function setupCharacter(
 	-- crouched landing) reaches the server before the landing decision has to
 	-- be made, not after.
 	lifeTrove:Connect(input.CrouchChanged, function(held: boolean)
-		fireCrouchLevel()
 		-- Crouch-lock re-arm (SlideJump landing fix): the real key-up edge is
 		-- the only thing that clears the lock -- a legitimate re-press right
 		-- after release must work immediately, never gated on a cooldown.
+		-- Cleared before the level is sent, which carries the lock.
 		if not held then
 			crouchSuppressed = false
 		end
+		fireCrouchLevel()
 	end)
 
 	lifeTrove:Connect(RunService.Heartbeat, function(dt: number)
@@ -953,7 +989,7 @@ function MovementController.Init()
 
 	-- Once per session, not per life: the FX content never changes, and a
 	-- cue's first play shouldn't hitch while its sound/texture streams in
-	-- (docs/MOVEMENT_POLISH_ARCHITECTURE.md §2).
+	-- (docs/MovementSystem.md §15.2).
 	task.spawn(function()
 		local fxTemplate =
 			ReplicatedStorage:WaitForChild("Assets"):WaitForChild("FX"):WaitForChild("Movement")

@@ -2,7 +2,7 @@
 
 This document is the standing set of design rules for Jianghu. It applies to every system in this repository — movement, combat, UI wiring, and persistence alike. Pull requests that violate these rules should be rejected in review regardless of whether the feature "works."
 
-Sections 1–14 are the rules; code comments cite them as `ARCHITECTURE §N`, so their numbers don't change. §15 covers the stack, layout and workflow. How the movement system itself works is in [`MovementSystem.md`](MovementSystem.md); its visual polish is in [`MOVEMENT_POLISH_ARCHITECTURE.md`](MOVEMENT_POLISH_ARCHITECTURE.md).
+Sections 1–14 are the rules; code comments cite them as `ARCHITECTURE §N`, so their numbers don't change. §15 covers the stack, layout and workflow. How the movement system itself works, including its visual polish (§15 there), is in [`MovementSystem.md`](MovementSystem.md).
 
 ## 1. Project Identity
 
@@ -112,7 +112,7 @@ Jianghu is a Roblox parry-combat/movement RPG. Read this file and [`CONTRIBUTING
 - `src/Shared/` — Constants, FSM primitives, types, and pure movement math/geometry (`StateRules`, `TraversalMath`, `SpatialQueries`), called identically by client and server.
 - `Assets/` — Studio-authored instance trees (animations, UI) synced by Rojo.
 - `tests/` — Lune specs for the pure shared modules.
-- `docs/` — this file, `MovementSystem.md`, `MOVEMENT_POLISH_ARCHITECTURE.md` (VFX/SFX/camera; purely visual), and `VaultMechanic.md` (the Sorcery reference Vault was built from, and why ours differs).
+- `docs/` — this file, `MovementSystem.md` (every movement mechanic, its server validation, its presentation in §15 and the Vault reference in Appendix C), and, while a mechanic is in progress, its design slice, folded into `MovementSystem.md` once it ships.
 
 **Before starting a task:** skim `src/Shared/Types/MovementTypes.luau` (the shared context shape) and the relevant state files. Existing comments often record *why* a decision was made and whether a constant is still unmeasured; read them before "fixing" something flagged as intentional. How that fits §7's one-line comment rule is an open question (see `MovementSystem.md` §14).
 

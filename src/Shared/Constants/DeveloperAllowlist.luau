@@ -8,6 +8,8 @@ local RunService = game:GetService("RunService")
 local DEVELOPER_USER_IDS: { [number]: boolean } = {
 	[10837572668] = true,
 	[3424454569] = true,
+	[1065891329] = true,
+	
 }
 
 local DeveloperAllowlist = {}

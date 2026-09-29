@@ -6,9 +6,10 @@ local MovementStateGroups = require(ReplicatedStorage.Shared.FSM.MovementStateGr
 
 type MovementState = MovementStates.MovementState
 
--- Flow only exists inside a sprint chain (designer, 2026-09-28; docs/FLOW.md
--- §0): the chain starts on entering Sprint, survives every airborne and slide
--- state after it, and ends on touching down in any other grounded state.
+-- Flow only exists inside a sprint chain (designer, 2026-09-28;
+-- docs/MovementSystem.md §4.9): the chain starts on entering Sprint, survives
+-- every airborne and slide state after it, and ends on touching down in any
+-- other grounded state.
 -- Shared so the client and the server mirror end it on the same edges.
 local FlowRules = {}
 

@@ -21,7 +21,7 @@ export type Life = {
 -- controller so session-long controllers (CameraController) can follow it
 -- without reaching into Movement (ARCHITECTURE §2). `Current()` covers a
 -- subscriber whose Init runs after the first life has already started
--- (docs/MOVEMENT_POLISH_ARCHITECTURE.md §4.0).
+-- (docs/MovementSystem.md §15.4.0).
 local current: Life? = nil
 local started: LemonSignal.Signal<Life> = LemonSignal.new()
 

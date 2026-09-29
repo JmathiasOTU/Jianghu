@@ -102,7 +102,7 @@ end
 -- rubber-band against a cap that only ever assumed flat ground. `slopeAmplification` defaults to 0
 -- for every call site that doesn't have a live ground read to pass.
 --
--- Flow (docs/FLOW.md §4) only exists in a sprint chain, so it scales Sprint
+-- Flow (docs/MovementSystem.md §8.2) only exists in a sprint chain, so it scales Sprint
 -- and WallRun by the live multiplier (the client re-applies it every frame)
 -- and the slide and airborne family by the held one (their speed was fixed at
 -- launch). Never Run or the slow tiers (Flow is always zero there), and never
@@ -123,6 +123,7 @@ local function maxSpeedForState(
 		state == MovementStates.Airborne
 		or state == MovementStates.DoubleJump
 		or state == MovementStates.WallLeap
+		or state == MovementStates.LedgeJump
 	then
 		-- DoubleJump/WallLeap only ever apply a launch impulse -- horizontal
 		-- speed otherwise carries through from whatever tier was active at
@@ -131,8 +132,8 @@ local function maxSpeedForState(
 		-- for more than the one accepting Heartbeat (WallLeap hands straight
 		-- back to Airborne in the same call, docs/MovementSystem.md §8.4) -- this branch only
 		-- matters for the `previousCap` grace snapshot right after one of
-		-- them; WallLeap's (and SlideJump's) real launch speed comes from
-		-- `airborneAllowedSpeed`.
+		-- them; WallLeap's (and SlideJump's and LedgeJump's) real launch speed
+		-- comes from `airborneAllowedSpeed`.
 		return constants.SprintSpeed * Flow.HeldMultiplier(session, constants)
 	elseif state == MovementStates.WallRun then
 		-- Live-capped at the mechanic's OWN tuned speed (docs/MovementSystem.md §8.4),

@@ -564,4 +564,29 @@ function SpatialQueries.QueryLedge(rootCFrame: CFrame, filterInstance: Instance)
 	}
 end
 
+-- LedgeJump's probe (docs/MovementSystem.md §4.10): true when nothing lies
+-- within LedgeJumpProbeCastDistance below a point LedgeJumpProbeForwardDistance
+-- ahead of `rootPosition` along the flattened `direction` (the travel
+-- direction, not facing). Takes a position, not the part, so the server can
+-- probe where the root was at its lift-off. Anything between the root and that
+-- point is a wall or step ahead, not a drop; the check also keeps the down cast
+-- from starting inside it, where a raycast would miss it.
+function SpatialQueries.QueryLedgeDropAhead(
+	rootPosition: Vector3,
+	direction: Vector3,
+	filterInstance: Instance
+): boolean
+	local flat = Vector3.new(direction.X, 0, direction.Z)
+	if flat.Magnitude < MovementConstants.DirectionEpsilon then
+		return false
+	end
+	local params = excluding(supportParams, filterInstance)
+	local ahead = flat.Unit * MovementConstants.LedgeJumpProbeForwardDistance
+	if Workspace:Raycast(rootPosition, ahead, params) then
+		return false
+	end
+	return castDown(rootPosition + ahead, MovementConstants.LedgeJumpProbeCastDistance, params)
+		== nil
+end
+
 return SpatialQueries

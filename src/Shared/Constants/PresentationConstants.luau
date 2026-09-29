@@ -12,7 +12,7 @@ export type FOVKickProfile = {
 	DurationSeconds: number,
 }
 
--- Visual polish numbers (docs/MOVEMENT_POLISH_ARCHITECTURE.md §6). Cosmetic
+-- Visual polish numbers (docs/MovementSystem.md §15.6). Cosmetic
 -- only and never validated server-side, so none of these are in the F4
 -- live-tuning set. Every value is a starting point, not yet tuned in a
 -- playtest.
@@ -21,8 +21,8 @@ local ShakeProfiles: { [string]: ShakeProfile } = {
 	WallLeap = { Magnitude = 0.25, DurationSeconds = 0.2 },
 }
 
--- One-shot FOV punches on top of the state's FOV goal (§4.2). Sorcery's vault
--- kicks +20 and tweens back over 0.5 s (docs/VaultMechanic.md §1.3); smaller
+-- One-shot FOV punches on top of the state's FOV goal (§15.4.2). Sorcery's vault
+-- kicks +20 and tweens back over 0.5 s (docs/MovementSystem.md Appendix C.1.3); smaller
 -- here because our FOV is already raised while sprinting or wall running.
 local FOVKickProfiles: { [string]: FOVKickProfile } = {
 	Vault = { Amount = 10, DurationSeconds = 0.5 },
@@ -35,7 +35,7 @@ local PresentationConstants = {
 	-- Particles emitted by an EnterParticle whose cue row sets no count.
 	DefaultEmitCount = 16,
 
-	-- Attributes shared by the server's FX mount and the client's FX index (§2).
+	-- Attributes shared by the server's FX mount and the client's FX index (§15.2).
 	-- CueAttribute marks every mounted Sound/ParticleEmitter, so the index never
 	-- picks up the character's other sounds; SoundGroupAttribute names the
 	-- SoundService group a template Sound belongs to.
@@ -103,7 +103,7 @@ local PresentationConstants = {
 	ShakeProfiles = ShakeProfiles,
 	FOVKickProfiles = FOVKickProfiles,
 
-	-- Shift lock (§4.3). Springs carried over from the designer's reference
+	-- Shift lock (§15.4.3). Springs carried over from the designer's reference
 	-- implementation: its spring "Speed" is in rad/s, ours is Hz. Offset pulled
 	-- in from the reference's 1.75 (read as too far right in playtest).
 	ShiftLockOffset = Vector3.new(1, 0.25, 0),

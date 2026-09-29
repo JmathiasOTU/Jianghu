@@ -99,7 +99,7 @@ function Context.ForLanding(session: PlayerSession, context: MovementContext): M
 		return context
 	end
 	local landing = table.clone(context)
-	landing.crouchHeld = session.crouchHeldBefore and not session.crouchSuppressed
+	landing.crouchHeld = session.crouchHeldBefore
 	return landing
 end
 
@@ -141,7 +141,7 @@ function Context.Build(session: PlayerSession): MovementContext
 		},
 		grounded = Probes.IsGrounded(session),
 		jumping = humanoidState == Enum.HumanoidStateType.Jumping,
-		crouchHeld = session.crouchHeld and not session.crouchSuppressed,
+		crouchHeld = session.crouchHeld,
 		doubleJumpUsed = session.doubleJumpUsed,
 		runDuration = runDuration,
 		preAirborneLocomotion = session.preAirborneLocomotion,
@@ -183,8 +183,13 @@ function Context.Build(session: PlayerSession): MovementContext
 		-- writes that property locally and it never replicated, so the server
 		-- always read "unlocked". Lying "unlocked" only selects the lenient
 		-- landing path this used to take for everyone; the speed cap still
-		-- applies regardless.
-		cameraLocked = session.cameraLocked,
+		-- applies regardless. A new lock counts one claim lag after its claim:
+		-- the claim leads the facing it snaps (position stream), and read
+		-- against the old unlocked facing it demoted a held Sprint to Run
+		-- (2026-09-28). Unlocking applies at once, as the lenient reading.
+		cameraLocked = session.cameraLocked
+			and session.cameraLockedAt ~= nil
+			and os.clock() - session.cameraLockedAt >= ClaimTiming.ClaimLagSeconds(session),
 		flowMultiplier = Flow.Multiplier(session, constants),
 		constants = constants,
 	}

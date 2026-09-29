@@ -65,6 +65,16 @@
       }
     },
     {
+      "Name": "LedgeJump",
+      "ClassName": "Folder",
+      "Children": [
+        { "Name": "Variant1", "ClassName": "Animation", "Properties": { "AnimationId": "rbxassetid://137786735677269" } },
+        { "Name": "Variant2", "ClassName": "Animation", "Properties": { "AnimationId": "" } },
+        { "Name": "Variant3", "ClassName": "Animation", "Properties": { "AnimationId": "" } },
+        { "Name": "Variant4", "ClassName": "Animation", "Properties": { "AnimationId": "" } }
+      ]
+    },
+    {
       "Name": "Jump",
       "ClassName": "Animation",
       "Properties": {

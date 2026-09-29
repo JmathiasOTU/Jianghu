@@ -24,7 +24,7 @@ local Grounded: { [MovementState]: boolean } = {
 	[MovementStates.HardLanding] = true,
 }
 
--- Entering any of these adds Flow on both sides (docs/FLOW.md §0). WallCling
+-- Entering any of these adds Flow on both sides (docs/MovementSystem.md §4.9). WallCling
 -- is a hold, not a move (the boost from it counts); Run/Sprint never build it.
 local FlowBuilding: { [MovementState]: boolean } = {
 	[MovementStates.SlideJump] = true,
@@ -33,11 +33,12 @@ local FlowBuilding: { [MovementState]: boolean } = {
 	[MovementStates.WallBoost] = true,
 	[MovementStates.Vault] = true,
 	[MovementStates.DoubleJump] = true,
+	[MovementStates.LedgeJump] = true,
 }
 
--- Entering any of these raises the server's held Flow multiplier (docs/FLOW.md
--- §4): the client's horizontal speed there is fixed at launch or slide entry
--- and doesn't follow Flow down as it drains.
+-- Entering any of these raises the server's held Flow multiplier
+-- (docs/MovementSystem.md §8.2): the client's horizontal speed there is fixed
+-- at launch or slide entry and doesn't follow Flow down as it drains.
 local FlowHolding: { [MovementState]: boolean } = {
 	[MovementStates.Slide] = true,
 	[MovementStates.SlideJump] = true,
@@ -46,6 +47,7 @@ local FlowHolding: { [MovementState]: boolean } = {
 	[MovementStates.WallLeap] = true,
 	[MovementStates.WallBoost] = true,
 	[MovementStates.Vault] = true,
+	[MovementStates.LedgeJump] = true,
 }
 
 return {

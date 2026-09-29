@@ -11,7 +11,7 @@ local CueDebounce = {}
 CueDebounce.__index = CueDebounce
 
 -- Skips a one-shot cue replayed within MinCueRetriggerSeconds of its last
--- play, per cue name (docs/MOVEMENT_POLISH_ARCHITECTURE.md §1). Holds no
+-- play, per cue name (docs/MovementSystem.md §15.1). Holds no
 -- connections, so it needs no Trove. `clock` is injectable for tests.
 function CueDebounce.new(clock: (() -> number)?): CueDebounce
 	local self = setmetatable({}, CueDebounce) :: any

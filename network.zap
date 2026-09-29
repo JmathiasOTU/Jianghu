@@ -101,6 +101,7 @@ type MovementStateName = enum {
 	"WallCling",
 	"WallBoost",
 	"Vault",
+	"LedgeJump",
 }
 
 -- One recent speed-sanity correction (Shared/Util/ViolationTracker.luau's
@@ -126,7 +127,7 @@ event MovementDebugState = {
 		runDuration: f32?,
 		violationCount: u16,
 		violations: MovementViolationEntry[0..5],
-		-- The server's own Flow, 0-1 (docs/FLOW.md), shown next to the client's.
+		-- The server's own Flow, 0-1 (docs/MovementSystem.md §4.9), shown next to the client's.
 		flow: f32,
 	},
 }
@@ -207,6 +208,8 @@ type TunableConstantName = enum {
 	"VaultMaxFacingAngleDegrees",
 	"VaultCooldownSeconds",
 	"VaultDoubleJumpBlockSeconds",
+	"LedgeJumpMinEntrySpeed",
+	"LedgeJumpBurstForce",
 	"FlowGainPerMove",
 	"FlowMaxSpeedBonus",
 	"FlowDecayDelaySeconds",
@@ -285,7 +288,7 @@ event RequestSetDebugOverlayOpen = {
 	data: boolean,
 }
 
--- Movement polish (docs/MOVEMENT_POLISH_ARCHITECTURE.md §5) ------------------
+-- Movement polish (docs/MovementSystem.md §15.5) ------------------
 --
 -- Server -> every client except the mover: another player entered a state
 -- whose cue row is "Nearby" (a hard landing, a wall leap), so play that row's

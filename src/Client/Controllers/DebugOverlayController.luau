@@ -77,7 +77,7 @@ local function formatSpeed(speed: number?): string
 	return string.format("%.1f studs/s", speed)
 end
 
--- Flow's 0-1 value (docs/FLOW.md).
+-- Flow's 0-1 value (docs/MovementSystem.md §4.9).
 local function formatFlow(flow: number?): string
 	if not flow then
 		return "—"

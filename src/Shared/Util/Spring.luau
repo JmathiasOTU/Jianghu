@@ -13,7 +13,7 @@ Spring.__index = Spring
 -- Exact step of x'' + 2*zeta*omega*x' + omega^2*x = 0, where x is the offset
 -- from the goal: returns the matrix mapping (offset, velocity) now to
 -- (offset, velocity) after `dt`. Closed form, so stepping is frame-rate
--- independent (docs/MOVEMENT_POLISH_ARCHITECTURE.md §4.1).
+-- independent (docs/MovementSystem.md §15.4.1).
 local function stepCoefficients(
 	zeta: number,
 	omega: number,

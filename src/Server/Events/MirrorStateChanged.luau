@@ -11,7 +11,7 @@ type MovementState = MovementStates.MovementState
 -- changes state, after its own bookkeeping for that change. Lets services
 -- react to server-accepted movement without reaching into the validation
 -- service; today MovementCueService uses it to broadcast Nearby cues
--- (docs/MOVEMENT_POLISH_ARCHITECTURE.md §5).
+-- (docs/MovementSystem.md §15.5).
 --
 -- Arguments: the player, the state entered, the state left. SlideJump and
 -- WallLeap hand off to Airborne inside their own transition, so a listener

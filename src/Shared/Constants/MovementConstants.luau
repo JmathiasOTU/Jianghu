@@ -7,8 +7,8 @@ local MovementConstants = {
 	RunDoubleTapWindowSeconds = 0.3,
 	SprintThresholdSeconds = 3,
 
-	WalkSpeed = 18,
-	RunSpeed = 28,
+	WalkSpeed = 10,
+	RunSpeed = 25,
 	SprintSpeed = 40,
 	JumpPower = 55,
 
@@ -397,8 +397,8 @@ local MovementConstants = {
 	-- side from that side's own cling entry.
 	WallBoostMinClingSeconds = 0.6,
 
-	-- Vault (docs/MovementSystem.md §4.8, docs/VaultMechanic.md): a mantle
-	-- assist for a lip you almost cleared. Starting-point values derived from
+	-- Vault (docs/MovementSystem.md §4.8, Appendix C): a mantle assist for a
+	-- lip you almost cleared. Starting-point values derived from
 	-- that goal and Sorcery's reference, not measured.
 	--
 	-- Structural (SpatialQueries.QueryLedge), not live-tunable: the server's
@@ -434,14 +434,13 @@ local MovementConstants = {
 	-- least this many probes inside the window (TraversalMath.VaultAutoProbeInterval).
 	VaultAutoProbeSamplesPerWindow = 2,
 
-	-- Feel (live-tunable). Sorcery's launch: 15 forward along the camera, 35 up
-	-- (~3.1 studs of rise at default gravity), plus part of the entry momentum.
+	-- Feel (live-tunable). Forward along the camera and up, plus part of the
+	-- entry momentum. Retuned 2026-09-28 from Sorcery's 15 forward / 35 up.
 	VaultForwardSpeed = 70,
 	VaultUpwardSpeed = 50,
 	VaultHorizontalMomentumKeep = 0.4,
 	-- Sorcery adds |vy| / 3, so a fast fall lifts you higher; capped here so
-	-- the server's ceiling has a finite bound. 35 + 20 = JumpPower: a vault
-	-- never out-launches a plain jump.
+	-- the server's ceiling has a finite bound (at most 50 + 20 = 70 up).
 	VaultVerticalMomentumKeep = 1 / 3,
 	VaultMaxMomentumUpward = 20,
 	-- The whole Vault state, mantle then launch, before handing to Airborne:
@@ -460,7 +459,25 @@ local MovementConstants = {
 	-- No DoubleJump this soon after a vault (Sorcery's 0.25 s block).
 	VaultDoubleJumpBlockSeconds = 0.25,
 
-	-- Flow (docs/FLOW.md): a 0-1 resource built by chaining traversal moves
+	-- LedgeJump (docs/MovementSystem.md §4.10): a jump from Run/Sprint right at
+	-- a drop-off adds a forward burst.
+	--
+	-- Structural (SpatialQueries.QueryLedgeDropAhead), not live-tunable: cast
+	-- geometry the server probes with too. The probe looks this far ahead of the
+	-- root along the travel direction...
+	LedgeJumpProbeForwardDistance = 3,
+	-- ...and finds no ground within this far below the root there (9 studs
+	-- below the feet).
+	LedgeJumpProbeCastDistance = 20,
+
+	-- Feel (live-tunable), starting points, not playtested. Real horizontal
+	-- speed needed at takeoff: above Walk's 18, below Run's 28, so any settled
+	-- Run qualifies and one still accelerating doesn't.
+	LedgeJumpMinEntrySpeed = 22,
+	-- Flat forward speed added on top of the takeoff speed. Vertical is untouched.
+	LedgeJumpBurstForce = 20,
+
+	-- Flow (docs/MovementSystem.md §4.9): a 0-1 resource built by chaining traversal moves
 	-- that raises the fast tiers' real speed cap. All four are starting
 	-- points, not playtested (live-tunable).
 	-- Added per qualifying move (MovementStateGroups.FlowBuilding), clamped at 1.

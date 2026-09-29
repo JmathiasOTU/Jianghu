@@ -67,6 +67,8 @@ export type TunableConstantName =
 	| "VaultMaxFacingAngleDegrees"
 	| "VaultCooldownSeconds"
 	| "VaultDoubleJumpBlockSeconds"
+	| "LedgeJumpMinEntrySpeed"
+	| "LedgeJumpBurstForce"
 	| "FlowGainPerMove"
 	| "FlowMaxSpeedBonus"
 	| "FlowDecayDelaySeconds"
@@ -137,6 +139,8 @@ export type EffectiveMovementConstants = {
 	VaultMaxFacingAngleDegrees: number,
 	VaultCooldownSeconds: number,
 	VaultDoubleJumpBlockSeconds: number,
+	LedgeJumpMinEntrySpeed: number,
+	LedgeJumpBurstForce: number,
 	FlowGainPerMove: number,
 	FlowMaxSpeedBonus: number,
 	FlowDecayDelaySeconds: number,
@@ -202,6 +206,8 @@ local TUNABLE_NAMES: { TunableConstantName } = {
 	"VaultMaxFacingAngleDegrees",
 	"VaultCooldownSeconds",
 	"VaultDoubleJumpBlockSeconds",
+	"LedgeJumpMinEntrySpeed",
+	"LedgeJumpBurstForce",
 	"FlowGainPerMove",
 	"FlowMaxSpeedBonus",
 	"FlowDecayDelaySeconds",
@@ -285,6 +291,8 @@ local VALID_RANGES: { [TunableConstantName]: { min: number, max: number } } = {
 	VaultMaxFacingAngleDegrees = { min = 0, max = 89 },
 	VaultCooldownSeconds = { min = 0, max = 10 },
 	VaultDoubleJumpBlockSeconds = { min = 0, max = 5 },
+	LedgeJumpMinEntrySpeed = { min = 0, max = 500 },
+	LedgeJumpBurstForce = { min = 0, max = 200 },
 	FlowGainPerMove = { min = 0, max = 1 },
 	FlowMaxSpeedBonus = { min = 0, max = 2 },
 	FlowDecayDelaySeconds = { min = 0, max = 10 },

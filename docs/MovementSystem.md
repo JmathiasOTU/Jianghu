@@ -1,6 +1,6 @@
 # Movement System
 
-How movement works in Jianghu: every state, the controls, the physics, how the server validates it, and the decisions and measurements behind the numbers. This is the one movement document. It replaces `MOVEMENT.md`, `TRAVERSAL-ROADMAP.md`, `Wall Run & Leap Mechanic Guideline.md`, `WallClimbingPlan.md` and `JIANGHU_MOVEMENT_AUDIT.md` (all in git history before 2026-09-24).
+How movement works in Jianghu: every state, the controls, the physics, how the server validates it, how it looks and sounds, and the decisions and measurements behind the numbers. This is the one movement document. It replaces `MOVEMENT.md`, `TRAVERSAL-ROADMAP.md`, `Wall Run & Leap Mechanic Guideline.md`, `WallClimbingPlan.md` and `JIANGHU_MOVEMENT_AUDIT.md` (in git history before 2026-09-24), and `FLOW.md`, `VaultMechanic.md` and `MOVEMENT_POLISH_ARCHITECTURE.md` (in git history before 2026-09-28; their content is now §4.9, Appendix C and §15). The LedgeJump design slice, `LEDGE_JUMP.md`, is now §4.10.
 
 Code comments cite this file as `docs/MovementSystem.md §N`. Audit IDs in comments (`audit M-004`, `re-audit N-002`) are listed in [Appendix A](#appendix-a-audit-finding-index). The project-wide rules this system follows are in [`ARCHITECTURE.md`](ARCHITECTURE.md), cited as `ARCHITECTURE §N`.
 
@@ -10,11 +10,13 @@ Code comments cite this file as `docs/MovementSystem.md §N`. Audit IDs in comme
 
 ## 1. Overview
 
-- **16 states.** Ground: `Idle`, `Walk`, `Run`, `Sprint`, `CrouchIdle`, `CrouchWalk`, `Slide`, `HardLanding`. Air: `Airborne`, `SlideJump`, `DoubleJump`. Wall: `WallRun`, `WallLeap`, `WallCling`, `WallBoost`, `Vault`. Ladders and swimming use the Humanoid's own states.
+- **17 states.** Ground: `Idle`, `Walk`, `Run`, `Sprint`, `CrouchIdle`, `CrouchWalk`, `Slide`, `HardLanding`. Air: `Airborne`, `SlideJump`, `DoubleJump`, `LedgeJump`. Wall: `WallRun`, `WallLeap`, `WallCling`, `WallBoost`, `Vault`. Ladders and swimming use the Humanoid's own states.
 - **Feel:** fast and fluid, momentum-preserving, generous air control. Speed tiers are the "Fast & fluid" preset chosen 2026-09-13 (Walk 18, Run 28, Sprint 40, JumpPower 55), tuned since in playtests.
 - **Camera:** strafe-style while the camera is locked (Shift Lock or first-person): you face where the camera looks, and Walk picks one of 8 directional animations from input relative to facing. Unlocked, the character turns to face its movement like default Roblox.
 - **Devices:** keyboard only for now (designer decision). Non-keyboard players still must not desync from the server.
 - **Trust model:** the client predicts every move immediately; the server mirrors the FSM independently and corrects position when the client's motion isn't something the mirrored state allows (ARCHITECTURE §3, §9).
+- **Flow:** chaining traversal moves inside a sprint raises the real speed cap, up to 1.5×, then drains (§4.9).
+- **Presentation:** sounds, particles, camera FOV/shake and our own shift lock are data-driven off the FSM and never affect gameplay (§15).
 - **Not built:** Dash, a Qinggong/stamina resource, combat interaction (§14).
 
 ---
@@ -45,9 +47,10 @@ Each client state module (`Client/Controllers/Movement/States/*.luau`) exposes `
 | Path | Role |
 |---|---|
 | `Shared/FSM/MovementStates.luau` | State `Symbol`s |
-| `Shared/FSM/MovementStateGroups.luau`, `MovementStateNames.luau`, `WallClingExitReasons.luau` | Grounded set, debug names, cling exit reasons |
-| `Shared/Movement/StateRules.luau` | Topology + `CanEnter` predicates |
+| `Shared/FSM/MovementStateGroups.luau`, `MovementStateNames.luau`, `WallClingExitReasons.luau` | Grounded set, Flow building/holding sets, debug names, cling exit reasons |
+| `Shared/Movement/StateRules.luau` | Topology, `CanEnter` predicates, and where Run/Sprint can be claimed from (`CanClaimFrom`) |
 | `Shared/Movement/LandingResolution.luau` | Which state a landing resolves to (shared; require-time assert that every landing caller has an edge to every target) |
+| `Shared/Movement/FlowRules.luau` | The Flow sprint chain: when it starts, ends and gains (§4.9) |
 | `Shared/Movement/TraversalMath.luau` | Pure math: launch vectors, slope amplification, bounds (`BallisticRise`, `DoubleJumpMaxRise`, `WallLeapMaxHorizontalSpeed`, `DescentCeiling`, ...) |
 | `Shared/Movement/SpatialQueries.luau` | Pure geometry reads: ground, support, wall run, cling wall, ledge, climbable, water, floor-below |
 | `Shared/Movement/MovementTuning.luau` | Live-tunable subset, ranges, override merge |
@@ -67,6 +70,8 @@ Each client state module (`Client/Controllers/Movement/States/*.luau`) exposes `
 | `Server/State/*.luau` | Per-player tuning overrides, noclip, overlay-open records |
 | `Server/Events/*.luau` | Server-to-server signals: `CharacterTeleported`, `VerticalAllowanceGranted`, `MovementViolation` |
 | `Assets/Animations/Movement.model.json`, `Assets/UI/MovementDebugOverlay.model.json` | Animation instances; the F4 overlay (Studio-authored instance trees) |
+| `Client/Controllers/FlowBarController.luau`, `Assets/UI/FlowBar.model.json` | Developer-only Flow test meter (§4.9) |
+| Presentation modules (`MovementCues`, `SFXController`, `VFXController`, `CameraController`, `MovementCueService`, ...) | Sounds, particles, camera, shift lock (§15.7) |
 
 `Loader.LoadChildren` only requires direct children of `Controllers`/`Services`, so a system with private helper modules uses Rojo's `init.luau` folder convention (`Movement/`).
 
@@ -88,7 +93,7 @@ Each client state module (`Client/Controllers/Movement/States/*.luau`) exposes `
 | W double-tap within `RunDoubleTapWindowSeconds` (0.3 s) | `Run` (from Idle/Walk, grounded) |
 | Stay in `Run` for `SprintThresholdSeconds` (3 s) | `Sprint`, self-triggered by `RunState` (there is no sprint key) |
 | Left Ctrl | **Toggles** crouch (press on, press again off; release does nothing). Crouch from Idle/Walk, `Slide` from Run/Sprint |
-| Space, grounded | Humanoid jump (`JumpPower`); from `Slide` it's a `SlideJump` |
+| Space, grounded | Humanoid jump (`JumpPower`); from `Slide` it's a `SlideJump`. From Run/Sprint (or a slide jump) right at a drop-off, it adds a `LedgeJump` burst (§4.10) |
 | Space, airborne | In order: `WallLeap` (if wall-running), else `WallRun`, else `Vault`, else `WallCling`, else `DoubleJump`. The first legal one wins, so a nearby wall never consumes the double jump |
 | Space, clinging | `Vault`, if a ledge is in reach; nothing otherwise |
 | (automatic) during `WallBoost` | `Vault` as soon as the lip comes into range, no press needed |
@@ -118,7 +123,7 @@ Driven by `Humanoid.WalkSpeed` per tier (Walk 18, Run 28, Sprint 40) and the def
   - Driven by a horizontal-only `LinearVelocity`; `WalkSpeed` is 0 during the slide so the Humanoid doesn't fight it.
   - **Steerable:** the direction follows facing every tick (camera when locked, move direction when unlocked). No turn-rate cap.
   - **Slope amplification:** going downhill on slopes between `SlideSlopeAngleThresholdDegrees` (5°) and `SlideMaxWalkableSlopeDegrees` (8°) adds up to `SlideSlopeAmplificationCap` (12) on top of the decaying speed. It's added to the output only, never fed back into the decay, so slide duration doesn't change with terrain. Ground normal comes from a throttled `QueryGround` (0.1 s).
-- **SlideJump** (Space during Slide): one-tick state. Horizontal = slide direction × min(slide speed + `SlideJumpBoostAmount` (50), 50). Vertical = `SlideJumpUpwardSpeed` (63, about 10 studs of rise vs 7.7 for a normal jump). Both are set explicitly, then it hands to Airborne. Crouch auto-re-entry is suppressed after a slide jump until Ctrl is released. Landing with forward held puts you back in the Run/Sprint tier the slide started from (§4.4).
+- **SlideJump** (Space during Slide): one-tick state. Horizontal = slide direction × min(slide speed + `SlideJumpBoostAmount` (50), 50). Vertical = `SlideJumpUpwardSpeed` (63, about 10 studs of rise vs 7.7 for a normal jump). Both are set explicitly, then it hands to Airborne. Crouch auto-re-entry is suppressed after a slide jump until Ctrl is released (the crouch-lock; the server gets it folded into the crouch level, §7). Landing with forward held puts you back in the Run/Sprint tier the slide started from (§4.4).
   - The explicit 63 exists because slides used to launch at 62-64 st/s as a side effect. The designer kept that height on purpose (§9).
 
 ### 4.3 In the air: Airborne, DoubleJump
@@ -136,7 +141,7 @@ Driven by `Humanoid.WalkSpeed` per tier (Walk 18, Run 28, Sprint 40) and the def
 
 - **Medium landing** (client-only feel): fall height ≥ `MediumLandingHeightThreshold` (60) lands normally but with `WalkSpeed` × 0.7 for 0.55 s.
 - **HardLanding:** `WalkSpeed` 0 and jump blocked for `HardLandingDurationSeconds` (1.11 s, the clip length). Ends early only if the floor disappears. **Server-enforced** (§8.5).
-- Fall height survives Airborne↔DoubleJump/WallRun/WallLeap/WallCling/WallBoost/Vault hops, so a cling partway down a long fall doesn't erase it. Swimming resets it.
+- Fall height survives Airborne↔DoubleJump/WallRun/WallLeap/WallCling/WallBoost/Vault/LedgeJump hops, so a cling partway down a long fall doesn't erase it. Swimming resets it.
 
 ### 4.5 WallRun and WallLeap
 
@@ -189,7 +194,7 @@ Humanoid `Climbing` and `Swimming`, no custom states. The server accepts climbin
 
 ### 4.8 Vault
 
-A mantle assist, not a climb: when a jump comes up just short and the lip is around your chest or head, Space puts you on top. Tall walls are WallCling's job. The Sorcery reference and the reasoning behind every difference from it are in [`VaultMechanic.md`](VaultMechanic.md).
+A mantle assist, not a climb: when a jump comes up just short and the lip is around your chest or head, Space puts you on top. Tall walls are WallCling's job. The Sorcery reference and the reasoning behind every difference from it are in Appendix C.
 
 **Enter:** Space while airborne (Airborne, DoubleJump) or clinging, or **automatically during WallBoost** (designer, 2026-09-25: cling, boost, and the boost carries you over the lip). Either way `SpatialQueries.QueryLedge` must find a ledge and:
 - You're facing it head-on (within `VaultMaxFacingAngleDegrees`, 35°), judged on the direction the probe was cast along.
@@ -205,10 +210,10 @@ A mantle assist, not a climb: when a jump comes up just short and the lip is aro
 - **Depth:** the same ray `VaultMinTopDepth` (1.5) further in must hit within `VaultTopDepthTolerance` (0.5) of the top, so rails and thin walls fail.
 - **Headroom:** the leg footprint swept up `VaultHeadroom` (5) from the top must miss.
 
-**Motion** (one state, two phases; the whole state lasts `VaultDurationSeconds`, 0.32 s, the Vault clip's length):
+**Motion** (one state, two phases; the whole state lasts `VaultDurationSeconds`, 0.4 s; it was the Vault clip's 0.32 s length until the 2026-09-28 retune):
 1. **Mantle** (at most `VaultMantleSeconds`, 0.2 s; shorter when you're already rising faster, so the mantle runs at your own upward speed and a fast boost carries straight over the lip instead of braking): a full-force velocity override carries the root straight up the wall face until the feet are `VaultMantleClearance` (0.5) above the top, then straight across onto it, at one constant speed (`TraversalMath.VaultMantlePoint`; each frame aims for where the path will be at the end of that frame, so it arrives on time). Rising first keeps the body clear of the lip. The rise is the ledge height plus the clearance (up to 6.5 studs); the leg across is at most reach + inset (4.25 studs). Facing is locked into the wall. It replaced a one-frame `PivotTo` snap that read as a teleport (2026-09-25 playtest).
-2. **Launch:** when the mantle ends, one-shot velocity writes along the camera's flattened look: `VaultForwardSpeed` (15) forward plus `VaultHorizontalMomentumKeep` (40%) of the entry horizontal velocity, and `VaultUpwardSpeed` (35) plus |vy| × `VaultVerticalMomentumKeep` (1/3) up, the fall-speed part capped at `VaultMaxMomentumUpward` (20). At most 55 up, the same as a jump.
-3. **Window:** the rest of `VaultDurationSeconds`, then Airborne, which lands on the ledge (a 35 up launch comes back down in about 0.36 s). Landing isn't checked at all until the window ends: the feet pass just above the ledge, and a mid-vault read used to resolve a landing (often a resumed Run) instead of handing to Airborne (2026-09-25 playtest). Jump is blocked for the whole state, so the Space press can't also fire a Humanoid jump.
+2. **Launch:** when the mantle ends, one-shot velocity writes along the camera's flattened look: `VaultForwardSpeed` (70) forward plus `VaultHorizontalMomentumKeep` (40%) of the entry horizontal velocity, and `VaultUpwardSpeed` (50) plus |vy| × `VaultVerticalMomentumKeep` (1/3) up, the fall-speed part capped at `VaultMaxMomentumUpward` (20). At most 70 up. (Sorcery's 15 forward / 35 up were the starting point; retuned 2026-09-28.)
+3. **Window:** the rest of `VaultDurationSeconds`, then Airborne, which lands on the ledge (a 50 up launch comes back down in about 0.5 s). Landing isn't checked at all until the window ends: the feet pass just above the ledge, and a mid-vault read used to resolve a landing (often a resumed Run) instead of handing to Airborne (2026-09-25 playtest). Jump is blocked for the whole state, so the Space press can't also fire a Humanoid jump.
 
 **Keeps your sprint** (designer, 2026-09-28; it used to always land you walking): a vault leaves `preAirborneLocomotion` alone, so its landing resumes Run/Sprint when you're still moving forward, like any other airborne move, and Vault has Run/Sprint edges for it. A Flow sprint chain carries through a vault that lands back in Sprint (§4.9).
 
@@ -216,13 +221,41 @@ A mantle assist, not a climb: when a jump comes up just short and the lip is aro
 
 ### 4.9 Flow
 
-Not a state: a 0-1 value that chaining traversal moves builds up and that raises the fast tiers' real speed cap. Built 2026-09-28, not yet playtested; the design and its reasoning are in [`FLOW.md`](FLOW.md).
+Not a state: a 0-1 value that chaining traversal moves inside a sprint builds up, raising the fast tiers' real, server-enforced speed cap. Built 2026-09-28 from reference footage (Kaizen 2) where chaining wall runs, slides, vaults and leaps visibly raises top speed and it fades once you stop.
 
-- **Sprint only** (designer, 2026-09-28): Flow exists only inside a sprint chain (`FlowRules`). The chain starts on entering Sprint, survives every airborne and slide state after it, and ends on touching down in any other grounded state; Flow drops to zero the moment it ends. Landing back into Sprint keeps it.
-- **Gain:** inside the chain, entering SlideJump, WallRun, WallLeap, WallBoost, Vault or DoubleJump adds `FlowGainPerMove` (0.2), capped at 1 (`MovementStateGroups.FlowBuilding`). WallCling and Sprint itself don't.
-- **Drain:** nothing for `FlowDecayDelaySeconds` (1.5 s) after the last gain, then `FlowDecayRate` (0.33) per second.
-- **Effect:** horizontal speed × `1 + flow × FlowMaxSpeedBonus` (up to 1.5×) for Sprint (`CharacterMover` re-applies it every frame), WallRun (read every tick) and the slide entry clamp. Launches (SlideJump, WallLeap, Vault) aren't multiplied: they build on the speed you had. Nothing vertical changes, and Run/Idle/Walk/Crouch never do (Flow is always zero there).
-- **Server:** keeps its own Flow (`MovementValidationService/Flow.luau`), gained in `TransitionBookkeeping` on its own mirrored transitions and drained in the Heartbeat, never read from the client (§8.2).
+- **Sprint chain** (`Shared/Movement/FlowRules.luau`, shared): starts on entering Sprint, survives every airborne and slide state after it, and ends on touching down in any other grounded state (Walk, Idle, Run, Crouch, HardLanding). Flow only gains inside it and drops to zero the moment it ends; landing back into Sprint (after a vault too) keeps it. Designer, 2026-09-28, after a playtest built Flow from Walk and Run takeoffs.
+- **Gain:** entering SlideJump, WallRun, WallLeap, WallBoost, Vault or DoubleJump (`MovementStateGroups.FlowBuilding`) adds `FlowGainPerMove` (0.2), capped at 1. WallCling is a hold (the boost from it counts). Sprint itself never builds it, so sprinting in a straight line doesn't.
+- **Drain:** nothing for `FlowDecayDelaySeconds` (1.5 s) after the last gain, then `FlowDecayRate` (0.33) per second, full to zero in about 3 s. Linear and closed-form, like `SlideDecayRate`. Only a move's entry counts, so a wall run longer than the delay starts draining mid-run.
+- **Effect:** horizontal speed × `TraversalMath.FlowMultiplier`, `1 + flow × FlowMaxSpeedBonus` (0.5, so up to 1.5×):
+  - **Sprint:** `CharacterMover` re-applies it to `WalkSpeed` every frame (`SetSpeed(speed, true)`), so the bonus drains with Flow instead of sticking at its value on `Enter`.
+  - **WallRun:** `WallRunSpeed` × the multiplier, read every tick.
+  - **Slide:** the entry clamp only (`TraversalMath.SlideCeiling`). The entry velocity already carries the bonus, so scaling the output would count it twice. SlideJump uses the same ceiling, never below the slide's own speed.
+  - **Launches** (SlideJump, WallLeap, Vault) aren't multiplied: they build on the speed you had. Nothing vertical changes, so the vertical ceiling needs nothing. Run, Idle, Walk and Crouch never have Flow.
+  - At full Flow: Sprint 60, WallRun 52.5, slide ceiling 75; the WallLeap bound goes from about 166 to 173.
+- **Server:** keeps its own Flow (`MovementValidationService/Flow.luau`), never read from the client. It gains in `TransitionBookkeeping` after the landing-grace snapshot, and drains in its own Heartbeat step, not in `Mirror.PassiveTransitions` (claim handlers run that too, so it would drain extra). Caps are in §8.2.
+- **Server at or above the client:** the server gains one claim lag after the client, but claim lag varies: a fast claim then a slow one would leave it draining longer between them than the client did. So its drain starts one `ClaimTiming.ClaimLagSeconds` later than the client's, the same idea as the vertical ceiling's late descent. `Flow.spec` simulates jittered arrivals and fails without it. A move the client counts but the server rejects still leaves the client ahead (§14).
+- **Name:** Flow, not momentum, which the codebase already uses for residual velocity (the landing-momentum grace, `VaultHorizontalMomentumKeep`). Separate from `context.qinggong`, which waits on a combat decision.
+- **Debug:** client and server Flow on the F4 Movement tab; the four `Flow*` constants are live-tunable (§10). A developer-only test meter (`FlowBarController` + `Assets/UI/FlowBar.model.json`) draws Flow as a vertical bar on the left edge; remove both files and its `default.project.json` entry to drop it.
+
+### 4.10 LedgeJump
+
+Jump right at a drop-off while moving fast and you get a forward burst instead of just falling off: a deliberate, timed move, the grounded counterpart of SlideJump and WallLeap. Built 2026-09-28 from reference footage. It isn't Vault (a mantle *onto* a ledge you came up short of) and it isn't a passive walk-off boost: walking off an edge stays a plain Airborne fall.
+
+- **Trigger:** a jump from Run or Sprint (designer, 2026-09-28: a movement move, so the speed tiers only), or a slide jump, since Slide is only reached from them. Walk and Idle jumps never ledge jump.
+- **Gates** (`CanEnter[LedgeJump]`): a drop ahead (`context.ledgeDropAhead`, only ever set for a jump takeoff), `preAirborneLocomotion` Run or Sprint, and real horizontal speed ≥ `LedgeJumpMinEntrySpeed` (22). That's real speed, not the tier's label, so any settled Run qualifies and one still accelerating doesn't.
+- **Probe** (`SpatialQueries.QueryLedgeDropAhead`), along the travel direction (velocity, not facing): nothing between the root and a point `LedgeJumpProbeForwardDistance` (3) ahead, and nothing within `LedgeJumpProbeCastDistance` (12, so 9 studs below the feet) under that point. A step or wall ahead isn't a drop, and the first check keeps the down cast from starting inside one, where a raycast would miss it.
+- **When:** the client tries it once, on the Airborne entry of the takeoff: the first airborne frame, with the root still at the edge, after the takeoff's own bookkeeping. The path is Run/Sprint → Airborne → LedgeJump → Airborne in one tick (Slide → SlideJump → Airborne → LedgeJump → Airborne for a slide jump).
+- **Launch:** one tick, like SlideJump: the horizontal velocity plus `LedgeJumpBurstForce` (20) along it (`TraversalMath.LedgeJumpVelocity`), a one-shot write, with `WalkSpeed` set to the launched speed for air control. Vertical is left alone: a plain jump keeps its `JumpPower` launch and a slide jump its 63, so the vertical ceiling needs nothing new.
+- **Landing:** the takeoff already set `preAirborneLocomotion`, so landing with forward held resumes Run or Sprint (§4.4).
+- **Flow:** in `FlowBuilding` and `FlowHolding`. A Sprint ledge jump builds Flow; a Run one doesn't, since Flow only exists in a sprint chain (§4.9).
+- **Server (inferred, never claimed):** the mirror goes Airborne on the state label, which reaches the server 0.15-0.2 s before the positions (§9). A drop probe run then would start 6-8 studs short of the edge at sprint speed and find ground. So:
+  - The mirror's takeoff from Run, Sprint, Slide or SlideJump arms a watch for one `ClaimTiming.ClaimLagSeconds` (`TransitionBookkeeping`).
+  - Each Heartbeat after the mirror, `LedgeJump.ResolveTakeoff` waits until the support probe loses the floor, then judges once. It has to be a jump: the label read Jumping at the takeoff, it came from a slide jump, or the root is now above where it last stood (a walk-off never rises, so a missed jump label is still caught). The drop probe runs from the last grounded root and the first airborne one, which bracket the lift-off. Then the same `CanEnter`.
+  - Accepted: Airborne → LedgeJump → Airborne. The airborne allowance becomes `TraversalMath.LedgeJumpMaxHorizontalSpeed`: the burst on top of the most the character could carry at takeoff (the cap, or the last grounded Heartbeat's cap plus floor speed), kept for the flight. The cap difference is credited back to the last grounded sample, where the burst began.
+  - If the client's double jump reached the mirror first, the mirror's DoubleJump ends early, as for a pending wall claim (§8.4). Any other state in between drops it (§14).
+- **Why Airborne → LedgeJump**, not Run/Sprint → LedgeJump as first drafted: the server can only confirm a ledge jump once its mirror is already Airborne, and both sides take the same edge.
+- **Animation and cues:** a `LedgeJump` folder in `Movement.model.json` of variant clips (`Variant1`-`Variant4`, named in `LocomotionAnimator`'s `LEDGE_JUMP_VARIANTS`), one picked at random per ledge jump and never the same one twice in a row, held after the one-tick state like SlideJump's. A blank variant is skipped; with none authored the plain Jump clip plays. Adding a variant is a new Animation in the folder plus its name in the list. The cue row only holds FOV.
+- **vs WallLeap:** both are a jump-timed forward burst, but from different places (a wall run vs a grounded takeoff at a drop) and they can't overlap.
 
 ---
 
@@ -240,7 +273,7 @@ Topology from `StateRules.Transitions` (`CanEnter` still has to pass). "Grounded
 | CrouchWalk | Idle, Walk, CrouchIdle, Airborne |
 | Slide | CrouchIdle, CrouchWalk, SlideJump, Airborne |
 | SlideJump | Airborne |
-| Airborne | Grounded set, DoubleJump, WallRun, WallCling, Vault |
+| Airborne | Grounded set, DoubleJump, WallRun, WallCling, Vault, LedgeJump |
 | DoubleJump | Airborne, grounded set, Vault |
 | HardLanding | Grounded set (minus itself), Airborne |
 | WallRun | Airborne, grounded set, WallLeap |
@@ -248,6 +281,7 @@ Topology from `StateRules.Transitions` (`CanEnter` still has to pass). "Grounded
 | WallCling | Airborne, WallBoost, grounded set, Vault |
 | WallBoost | Airborne, grounded set, Vault |
 | Vault | Airborne, grounded set |
+| LedgeJump | Airborne |
 
 Every state that can land has an edge to every state `LandingResolution.Resolve` can return; a require-time assert enforces it (a missing edge once stranded both sides in WallRun/WallCling after landing).
 
@@ -263,7 +297,7 @@ Every state that can land has an edge to every state `LandingResolution.Resolve`
 - **Animation:** `LocomotionAnimator` destroys the default `Animate` script, loads the clips from `Assets/Animations/Movement.model.json` (a blank `AnimationId` is skipped, not an error) and crossfades on state changes (`AnimationFadeTimeSeconds`).
   - Walk has 8 directional clips when the camera is locked. Switching direction starts the new clip at the old one's gait phase, so the crossfade doesn't swap feet. Unlocked it always plays Forward, which avoids stutter while `AutoRotate` swings.
   - Airborne plays Jump/Fall from the Humanoid state. Landing overlays `Land` for `LandingAnimationHoldSeconds`; HardLanding plays `LandHard` for its whole state.
-  - One-tick states (SlideJump, WallLeap) are shown with a transient hold.
+  - One-tick states (SlideJump, WallLeap, LedgeJump) are shown with a transient hold.
 - **Collision groups** (`CollisionGroups.luau`): `Character`, `CharacterCrouched` (CrouchIdle/CrouchWalk/Slide/SlideJump), `CrouchPassable`. Crouched characters don't collide with `CrouchPassable`, so level authors put low bars and vents in it.
   - Applied on both sides from each side's own FSM; parts added later (accessories) join the current group.
   - Player-vs-player collision stays on (designer decision).
@@ -278,21 +312,23 @@ All remotes are in `network.zap` (regenerate with `zap network.zap`); every clie
 |---|---|---|---|
 | `RequestMovementTransition` | C→S | `Run`, `Sprint` (state claims); `CrouchDown`/`CrouchUp`, `CameraLocked`/`CameraUnlocked` (level claims) | 5/s for Run/Sprint; 6/s shared by level claims |
 | `ClaimTraversalMove` | C→S | `DoubleJump`, `WallRun`, `WallLeap`, `WallCling`, `WallBoost`, `Vault` | 5/s |
-| `MovementDebugState` | S→C | Mirrored state, run duration, Speed violations (developers, overlay open only) | Unreliable |
+| `MovementDebugState` | S→C | Mirrored state, run duration, Speed violations, server Flow (developers, overlay open only) | Unreliable |
+| `PlayMovementCue` | S→C | Player + state name, to everyone but the mover, for "Nearby" cues (§15.5) | Unreliable |
 | `RequestSetTuning` / `TuningState` | C→S / S→C | One override / the session's effective tuning list | 5/s, dev-only |
 | `RequestSetNoclip` / `NoclipState` | C→S / S→C | Noclip on/off | 2/s, dev-only |
 | `RequestDevTeleport` | C→S | Position (NaN/inf rejected) | 3/s, dev-only |
 | `RequestSetDebugOverlayOpen` | C→S | Overlay open | 5/s, dev-only |
 
-- **What needs a claim.** Only things the server can't see: Run (double-tap), Sprint (dwell), crouch and camera-lock *levels* (no replicated equivalent), and the traversal moves. Idle/Walk/Airborne/landings/slide/slide jump are mirrored passively from replicated Humanoid state, `MoveDirection` and server probes.
+- **What needs a claim.** Only things the server can't see: Run (double-tap), Sprint (dwell), crouch and camera-lock *levels* (no replicated equivalent), and the traversal moves. Idle/Walk/Airborne/landings/slide/slide jump/ledge jump are mirrored passively from replicated Humanoid state, `MoveDirection` and server probes.
 - **Levels, not edges:** crouch and camera lock are sent on every change **and** resent every 1 s (`CLAIM_RESYNC_INTERVAL_SECONDS`), as are Run/Sprint while held. A dropped packet heals within a second. Crouch is sent even mid-air, so a crouched landing is decided correctly.
+- **Crouch is the effective level:** the client folds in its slide-jump crouch-lock (§4.2) and resends when it arms. The server used to keep its own copy, armed when its mirror saw the slide jump, but a slide jump off a ledge shows the Jumping label for about a frame, so the mirror often saw a slide-off instead, missed the lock and landed crouched while the client ran on (fixed 2026-09-28). Sending the effective level trusts the client with nothing new: it can already send any level.
 - **No rejection messages:** the server never tells the client "no". Exits are inferred on both sides from the same geometry and timers.
 
 ---
 
 ## 8. Server validation
 
-`Server/Services/MovementValidationService/`, one `PlayerSession` per character life (own `Trove`, destroyed on death, removal, respawn or leave). The Heartbeat order matters and is documented at the loop in `init.luau`: support probe → root history → fall height → wall probes → passive mirror → buffered claim retries → slide ground → speed check → vertical ceiling → debug broadcast.
+`Server/Services/MovementValidationService/`, one `PlayerSession` per character life (own `Trove`, destroyed on death, removal, respawn or leave). The Heartbeat order matters and is documented at the loop in `init.luau`: support probe → root history → fall height → wall probes → passive mirror → buffered claim retries → ledge-jump takeoff → slide ground → speed check → vertical ceiling → debug broadcast.
 
 | Module | Role |
 |---|---|
@@ -306,6 +342,7 @@ All remotes are in `network.zap` (regenerate with `zap network.zap`); every clie
 | `VerticalCeiling` | Anchor, raise, descent and correction; `VerticalAllowanceGranted` grants (§8.3) |
 | `ClaimTiming` | Claim lag, buffer wait, latency credit (§8.2-§8.4) |
 | `Flow` | The server's own Flow: gain, held multiplier, drain (§4.9, §8.2) |
+| `LedgeJump` | Judges a watched takeoff as a LedgeJump once the positions show the lift-off (§4.10) |
 | `TraversalClaims` / `TransitionClaims` | `ClaimTraversalMove` / `RequestMovementTransition` and their claim buffers (§8.4, §8.1) |
 | `Violations` | Violation trackers and `MovementViolation` (§8.7) |
 | `DebugBroadcast`, `DebugFlags` | The F4 overlay broadcast; every capture/logging switch (§10) |
@@ -313,11 +350,12 @@ All remotes are in `network.zap` (regenerate with `zap network.zap`); every clie
 ### 8.1 Mirror and "grounded"
 
 - **The mirror** is built from the same `StateRules`. Passive transitions (Idle/Walk/Airborne, landings, slide decay, crouch states, Sprint→Run demotion) are decided by the server itself every Heartbeat. Claims are checked with the same `CanEnter`, against the server's own context.
+- **Run/Sprint claims** re-mirror first (support, then the passive mirror), like traversal claims (§8.4), so a landing that has replicated resolves (HardLanding included) before the claim is judged. Then Run is claimable only from Idle/Walk and Sprint only from Run (`StateRules.CanClaimFrom`, the same rule the client's double-tap uses). The other edges into Run/Sprint are landings each side resolves itself; a claim along them used to end a HardLanding lock or a Vault early and skip the mirror's landing resolution (fixed 2026-09-28). The double-jump and takeoff-tier resets happen on every grounded entry (`TransitionBookkeeping`), as on the client, not only in the mirror's landing branches.
 - **Support probe** (`SpatialQueries.QuerySupport`): the R6 leg footprint (2×1, turned with the rig's yaw) swept 4 studs down from the root, collidable non-water geometry only. It's the server's ground truth.
 - **Grounded for the mirror** (`Probes.IsGrounded`) = support **and** a grounded Humanoid label, or support that has lasted a full 0.5 s window while labelled airborne. A client can't fake a landing mid-air (DoubleJump refresh, fall height) or claim to be airborne while standing to keep air caps.
 - **Intent:** `classifyMoveIntent` rebuilds forward/backward/strafe from `rootPart.CFrame` vs `MoveDirection`. Both are client-written, so they only choose mirror tiers; every tier they unlock is still enforced against real displacement. They also arrive on different streams: `MoveDirection` is a Humanoid property and leads the facing (position stream) by about 0.15-0.2 s (§9), so a camera turn while holding W briefly reads as a strafe. A forward reading therefore counts for one `ClaimTiming.ClaimLagSeconds` after it was last seen (`Context.RecordForward`); a real strafe or backpedal outlasts that. Without it, one 0.46 reading demoted a held Sprint to Run and every landing after it resolved to Run (2026-09-28 capture).
 - **Crouch at landing:** the crouch level is a claim and leads the positions a landing is read from, so a crouch change newer than one `ClaimLagSeconds` applies on the Heartbeat after a mirrored landing, not to it (`Context.ForLanding`). Otherwise a Ctrl press just after touching down (a quick hop into a slide) landed the mirror in CrouchWalk where the client had landed in Sprint and slid (2026-09-28 capture).
-- **Sprint:** the server times Run itself, restarting the clock on every entry into Run (including a landing that resumes Run, fixed 2026-09-28; its own entries are backdated one `ClaimLagSeconds`, since it sees the landing that much after the client), backdated by half the measured ping (capped at half the threshold). A Sprint claim that lands milliseconds short of the dwell is buffered and retried. Backpedal demotion only runs while the camera is locked (from the `CameraLocked` level claim), because unlocked, facing deliberately lags movement.
+- **Sprint:** the server times Run itself, restarting the clock on every entry into Run (including a landing that resumes Run, fixed 2026-09-28; its own entries are backdated one `ClaimLagSeconds`, since it sees the landing that much after the client), backdated by half the measured ping (capped at half the threshold). A Sprint claim that lands milliseconds short of the dwell is buffered and retried. Backpedal demotion only runs while the camera is locked (from the `CameraLocked` level claim), because unlocked, facing deliberately lags movement. A new lock counts one `ClaimLagSeconds` after its claim arrives (unlocking applies at once). The claim leads the snapped facing, which rides the position stream, so turning the camera while sprinting unlocked and then locking read as a strafe against the old facing. That dropped the mirror to Run for the whole 3 s dwell (fixed 2026-09-28). The landing decision reads the same delayed lock.
 
 ### 8.2 Horizontal speed budget
 
@@ -330,7 +368,7 @@ All remotes are in `network.zap` (regenerate with `zap network.zap`); every clie
 |---|---|
 | Idle, Walk | 18 |
 | Run | 28 |
-| Sprint, Airborne, DoubleJump, WallLeap, WallBoost, Vault | 40 |
+| Sprint, Airborne, DoubleJump, WallLeap, WallBoost, Vault, LedgeJump | 40 |
 | CrouchIdle, CrouchWalk | 9 |
 | Slide, SlideJump | 50 + slope amplification |
 | WallRun | 35 |
@@ -339,7 +377,7 @@ All remotes are in `network.zap` (regenerate with `zap network.zap`); every clie
 
 - **Flow (§4.9):** Sprint and WallRun caps are multiplied by the server's live Flow multiplier. Slide, SlideJump and the airborne family use the **held** multiplier: the highest since the current slide or flight began, cleared on landing, because the client's speed there was fixed at launch and doesn't drain with Flow. Allowances (WallLeap, SlideJump, Vault) are computed from Flow-raised speeds at the accept and not multiplied again. The server gains one claim lag after the client, and starts draining one `ClaimTiming.ClaimLagSeconds` later than the client, so uneven lag between two claims can't leave it below the client (simulated in `Flow.spec`).
 
-- **Airborne allowance** (`airborneAllowedSpeed`): WallLeap (the exact bound, about 166) and SlideJump (50) raise the air cap for the whole flight, since nothing slows horizontal flight. A Vault raises it only if `VaultMaxHorizontalSpeed` (15 plus 40% of the cap in force before it) is above the cap, which it isn't at shipped tuning.
+- **Airborne allowance** (`airborneAllowedSpeed`): WallLeap (the exact bound, about 166), SlideJump (50) and LedgeJump (the takeoff's carry speed plus `LedgeJumpBurstForce`, §4.10) raise the air cap for the whole flight, since nothing slows horizontal flight. A Vault raises it only if `VaultMaxHorizontalSpeed` (`VaultForwardSpeed` plus 40% of the cap in force before it) is above the cap, which it is at shipped tuning (70 + 0.4 × 40 = 86 against 40).
   - Ends on landing, entering WallRun/WallCling, a verified ladder, water, or a vertical correction.
   - The first real support after the launch's apex starts a 1 s expiry, so a client that never reports landing can't hop along the ground keeping it.
 - **Landing-momentum grace:** after a transition that lowers the cap, the previous cap (allowances included) applies for `LANDING_MOMENTUM_GRACE_SECONDS` (1 s, measured, §9). It doesn't apply to HardLanding.
@@ -402,7 +440,9 @@ ARCHITECTURE §9: a tolerance exists only for a specific, measured, documented c
 | `LANDING_MOMENTUM_GRACE_SECONDS` = 1 s | Measured 2026-09-14 | 4 captured Airborne→Walk landings: every first check fired at 0.500-0.517 s, none needed a second window |
 | `WallRunClaimBufferSeconds` = 0.25 s | Measured 2026-09-19 | Claim-vs-position replication ordering in wall-run/cling playtests; reused wherever the same ordering applies |
 | `ClaimTiming.ClaimLagSeconds` (vertical, HardLanding) | Derived | One-way ping (server-measured) + the claim buffer above, capped at one window |
+| LedgeJump takeoff watch = `ClaimLagSeconds` | Derived, 2026-09-28 | The label that takes the mirror airborne leads the positions that show the lift-off (0.15-0.2 s, below); the window already sized for that ordering |
 | Forward-intent hold (`Context.RecordForward`) = `ClaimLagSeconds` | Derived, 2026-09-28 | `MoveDirection` (Humanoid property) leads facing (position stream) like the state label does (0.15-0.2 s, below). A capture caught a single 0.46 reading while W was held demoting Sprint |
+| Camera-lock delay (`Context.Build`) = `ClaimLagSeconds` | Derived, 2026-09-28 | The lock claim leads the facing snap it causes, which rides the position stream (0.15-0.2 s, below) |
 | Landing crouch delay (`Context.ForLanding`), Run-clock backdate on the mirror's own Run entries, both = `ClaimLagSeconds` | Derived, 2026-09-28 | Claims (crouch level) lead positions; the mirror saw landings 0.13-0.42 s after the client in the same capture (the Sprint claim buffer covers the tail) |
 | Claim latency credit | Derived | Cap difference × (one-way ping + buffered time), capped at one window |
 | `SlideJumpUpwardSpeed` = 63 | Measured 2026-09-24, then fixed by design | `JUMP_LAUNCH_CAPTURE` on a flat baseplate: Idle jumps 56.0-56.9 st/s, Run 56.6-58.2, SlideJump 61.9-63.7 (JumpPower 55). The slide added about 7 st/s (likely the slide pose pushing off the floor, not confirmed). The designer kept the height; the client now sets 63 explicitly |
@@ -423,7 +463,7 @@ ARCHITECTURE §9: a tolerance exists only for a specific, measured, documented c
 - **World:** noclip/fly (Space/Ctrl up/down; the server disables collision and exempts validation), teleport by coordinates or click, 8 session-only waypoints.
 - **Tuning:** one row per live tunable (current value, input, Set/Clear).
 
-**Live tuning:** `MovementTuning.luau` lists the tunables (60 today) with valid ranges. Overrides are per player, dev-only, bounds-checked server-side, applied to both client feel and server enforcement, and cleared on leave. A live change re-applies the current tier's `WalkSpeed` immediately. Adding a tunable touches `MovementConstants`, `MovementTuning` (name + range), the `TunableConstantName` enum in `network.zap`, and a new `Row_*` in the overlay (built in Studio). Validation tolerances are never tunable.
+**Live tuning:** `MovementTuning.luau` lists the tunables (62 today) with valid ranges. Overrides are per player, dev-only, bounds-checked server-side, applied to both client feel and server enforcement, and cleared on leave. A live change re-applies the current tier's `WalkSpeed` immediately. Adding a tunable touches `MovementConstants`, `MovementTuning` (name + range), the `TunableConstantName` enum in `network.zap`, and a new `Row_*` in the overlay (built in Studio). Validation tolerances are never tunable.
 
 **Flags** (all `false` in committed code; flip for a playtest, then flip back):
 
@@ -434,6 +474,7 @@ ARCHITECTURE §9: a tolerance exists only for a specific, measured, documented c
 | `JUMP_LAUNCH_CAPTURE` | Validation `DebugFlags` | Per landing: from-state, peak, time to peak, implied launch speed |
 | `SPEED_SANITY_DEBUG_LOGGING` | Validation `DebugFlags` | Cap changes, rate-limited claims, Sprint dwell overshoot, rejected claims |
 | `WALL_TRAVERSAL_DEBUG_LOGGING` | Validation `DebugFlags` | Rejected WallRun/WallLeap claims, WallRun force-exits |
+| `LANDING_DEBUG_LOGGING` | Validation `DebugFlags` and client `Movement/init.luau` | Every transition on each side (`[Transition] server/client`) with the inputs the landing decision reads: takeoff tier, forward/backward, camera lock, crouch, grounded |
 | `WALLCLING_DEBUG_LOGGING` | SpatialQueries | Why a cling cast was rejected |
 | `WALLRUN_DEBUG_LOGGING`, `WALLCLING_TRACE_LOGGING` | Client `Movement/init.luau` | Client-side wall probe traces |
 | `ANIMATION_LOAD_DEBUG_LOGGING` | LocomotionAnimator | Clip loading |
@@ -446,8 +487,8 @@ Always on in Studio only: `[MovementViolation]` for every correction, `[Traversa
 
 Everything is in `Shared/Constants/MovementConstants.luau`, with the reasoning next to each value. Groups:
 
-- **Tunable (F4):** speed tiers and jump; Run/Sprint timing; crouch/slide; landing thresholds and durations; DoubleJump; slide slope; WallRun/WallLeap feel; WallCling/WallBoost timings and forces; Vault launch, mantle time, duration, facing, cooldown and double-jump block; animation fade/hold.
-- **Structural (not tunable):** cast sizes and reaches (`GroundQueryCastDistance`, `GroundSupportFootprint`, `WallRunSideCast*`, `WallClingDistance`/`CastSize`, `WallDetectMaxUpDot`, `WallClingMaxNormalY`, the `Vault*` ledge geometry: reach, height window, inset, depth, top normal, headroom, mantle clearance), rig facts (`RigRootHeightAboveFeet`, `TerrainVoxelSize`), `DirectionEpsilon`, `ClimbableTag`, `SlideJumpUpwardSpeed`, `WallClingDropSeparationSpeed`.
+- **Tunable (F4):** speed tiers and jump; Run/Sprint timing; crouch/slide; landing thresholds and durations; DoubleJump; slide slope; WallRun/WallLeap feel; WallCling/WallBoost timings and forces; Vault launch, mantle time, duration, facing, cooldown and double-jump block; LedgeJump entry speed and burst; animation fade/hold.
+- **Structural (not tunable):** cast sizes and reaches (`GroundQueryCastDistance`, `GroundSupportFootprint`, `WallRunSideCast*`, `WallClingDistance`/`CastSize`, `WallDetectMaxUpDot`, `WallClingMaxNormalY`, the `Vault*` ledge geometry: reach, height window, inset, depth, top normal, headroom, mantle clearance; `LedgeJumpProbeForwardDistance`/`CastDistance`), rig facts (`RigRootHeightAboveFeet`, `TerrainVoxelSize`), `DirectionEpsilon`, `ClimbableTag`, `SlideJumpUpwardSpeed`, `WallClingDropSeparationSpeed`.
 - **Validation (never tunable):** `SpeedCheckIntervalSeconds`, `SpeedToleranceMultiplier`, `WallRunClaimBufferSeconds`, `WallClingSpeedCeiling`. Network-layer limits (claims per second) live in the services, not here.
 
 A number goes in only once it's a real decision, never as a placeholder. Starting-point values are marked as such in their comments.
@@ -456,7 +497,7 @@ A number goes in only once it's a real decision, never as a placeholder. Startin
 
 ## 12. Tests
 
-`lune run tests/run` (CI runs it after `wally install`). `tests/harness.luau` maps the Rojo tree onto files so shared modules load unmodified. The specs cover StateRules (topology, CanEnter, WallLeap-chain rule), LandingResolution, StateMachine, MovementTuning (name/range parity), TraversalMath, Flow and FlowRules (the sprint chain). Flow's include a simulation that the server's Flow never trails the client's under jittered claim lag, and that the Flow-raised WallLeap and slide bounds still bound the client. That includes simulations proving `DoubleJumpMaxRise`, `DoubleJumpTimeToApex`/`DescentCeiling`, `WallLeapMaxHorizontalSpeed` and the Vault bounds (`VaultMaxRise`, `VaultMaxUpwardSpeed`, `VaultMaxHorizontalSpeed`) bound the client's real motion. `QueryLedge` needs real geometry, so playtests cover it, not specs.
+`lune run tests/run` (CI runs it after `wally install`). `tests/harness.luau` maps the Rojo tree onto files so shared modules load unmodified. The specs cover StateRules (topology, CanEnter, WallLeap-chain rule, LedgeJump gates, claim sources), LandingResolution, StateMachine, MovementTuning (name/range parity), TraversalMath, Flow and FlowRules (the sprint chain, including LedgeJump). Flow's include a simulation that the server's Flow never trails the client's under jittered claim lag, and that the Flow-raised WallLeap and slide bounds still bound the client. That includes simulations proving `DoubleJumpMaxRise`, `DoubleJumpTimeToApex`/`DescentCeiling`, `WallLeapMaxHorizontalSpeed` and the Vault bounds (`VaultMaxRise`, `VaultMaxUpwardSpeed`, `VaultMaxHorizontalSpeed`) and `LedgeJumpMaxHorizontalSpeed` bound the client's real motion. `QueryLedge` and `QueryLedgeDropAhead` need real geometry, so playtests cover them, not specs. Presentation has its own pure specs: `Spring`, `MovementCues`, `CueDebounce`, `MovementStateNames` (network.zap enum parity) and `FootstepPack` (§15).
 
 Not covered: the validation service itself (no Lune access to Roblox physics). Its checks are pure arithmetic on the session; extracting them into a shared pure module would let the specs simulate cheaters against them.
 
@@ -482,6 +523,7 @@ Before pushing: `zap network.zap`, `selene src`, `stylua --check src tests --glo
 | Wall run lean | From animation clips only (no physics tilt) |
 | Vault | A mantle assist: Space at a chest-to-head-high lip, automatic during WallBoost, camera-steered launch, no health scaling, keeps your sprint (§4.8) |
 | Dash | Skipped |
+| LedgeJump | A jump from Run/Sprint (or a slide jump) at a drop-off adds a forward burst; walking off doesn't; vertical unchanged; inferred by the server, never claimed. Separate from WallLeap, the other jump-timed burst, which only leaves a wall run (§4.10) |
 | Flow | Chaining traversal moves raises the fast tiers' real, server-enforced cap (up to 1.5×), decaying after a pause; named Flow, not momentum (§4.9) |
 | WallLatch | A separate system, not part of wall run |
 
@@ -494,19 +536,36 @@ Before pushing: `zap network.zap`, `selene src`, `stylua --check src tests --glo
 - Record the `StreamingMinRadius`/`StreamingTargetRadius` values (ARCHITECTURE §14).
 - Tag real ladders `Climbable`.
 
-**Needs a playtest (Vault, §4.8):** check the mantle's feel (`VaultMantleSeconds` is live-tunable; much shorter than 0.2 s starts to read as a snap again, though a fast boost already mantles at its own speed); check whether the launch after a fast boost still reads as braking: it caps the upward speed at 55 (`VaultUpwardSpeed` + `VaultMaxMomentumUpward`), and raising `VaultVerticalMomentumKeep`/`VaultMaxMomentumUpward` keeps more of the boost (the server bound follows the same tuning); check that the Humanoid doesn't register the ledge as ground right after the mantle, before the launch lifts off (that would end the vault as a landing); check how high above a cling the automatic boost vault still reaches: `WallBoostSeparationSpeed` (12 st/s) carries you away from the wall, out of the 3-stud reach after roughly 0.15-0.2 s (about 15-18 studs of rise) unless holding W pulls you back. `WallBoostSeparationSpeed` is live-tunable to try 0.
+**Needs a playtest (Vault, §4.8):** check the mantle's feel (`VaultMantleSeconds` is live-tunable; much shorter than 0.2 s starts to read as a snap again, though a fast boost already mantles at its own speed); check whether the launch after a fast boost still reads as braking: it caps the upward speed at 70 (`VaultUpwardSpeed` + `VaultMaxMomentumUpward`), and raising `VaultVerticalMomentumKeep`/`VaultMaxMomentumUpward` keeps more of the boost (the server bound follows the same tuning); check that the Humanoid doesn't register the ledge as ground right after the mantle, before the launch lifts off (that would end the vault as a landing); check how high above a cling the automatic boost vault still reaches: `WallBoostSeparationSpeed` (12 st/s) carries you away from the wall, out of the 3-stud reach after roughly 0.15-0.2 s (about 15-18 studs of rise) unless holding W pulls you back. `WallBoostSeparationSpeed` is live-tunable to try 0.
 
-**Needs a playtest (Flow, §4.9):** watch client vs server Flow on the F4 Movement tab (server should read at or above client); check for Speed violations while chaining at full Flow; whether a long WallRun should keep Flow from draining; whether sprinting at +50% for ~4.5 s after a chain is OK (`FLOW.md` §7). All four `Flow*` constants are live-tunable.
+**Needs a playtest (Flow, §4.9):** watch client vs server Flow on the F4 Movement tab (server should read at or above client); check for Speed violations while chaining at full Flow. Open feel questions: should a long WallRun keep Flow from draining (today only entry counts, so it bleeds mid-run)? Is sprinting at +50% for about 4.5 s after a chain OK (stopping or backpedalling already ends the chain)? All four `Flow*` constants are live-tunable.
+
+**Needs a playtest (LedgeJump, §4.10):** add the three remaining clips' `AnimationId`s to `Variant2`-`Variant4` in `Movement.model.json`'s `LedgeJump` folder; check the burst doesn't draw Speed violations, including with incoming replication lag on (the server judges it from the position stream); check whether keeping the jump's own height reads as "diving off a ledge" or wants its own `LedgeJumpUpwardForce` (it would then need a vertical-ceiling raise); check the probe distances against real level geometry (a drop has to be more than 9 studs to count). `LedgeJumpMinEntrySpeed` and `LedgeJumpBurstForce` are live-tunable.
+
+**Needs a playtest (vertical ceiling after a DoubleJump):** a 2026-09-28 capture showed the ceiling re-anchoring to "one jump" *after* an accepted DoubleJump (`raisedBy=0`, `sinceAnchor` later than the accept), likely the support probe touching a ledge while rising past it, which drops the DoubleJump's remaining rise. Capture with `VERTICAL_CEILING_DEBUG_LOGGING` before changing the anchor (a candidate fix: an anchor never lowers a ceiling whose apex is still ahead).
+
+**Presentation (§15):**
+- Exact FOV, shake and stride numbers are starting points; tune in playtests.
+- **Other players' footsteps** still come from Roblox's default `Running` loop (§15.3.2). They could be derived on each client from replicated velocity with no network cost (useful for positional awareness); decide separately.
+- **Camera clipping with shift lock:** the shoulder offset is applied after Roblox's occlusion handling (Poppercam), so against a wall the offset camera can clip into it. The reference behaves the same way. If it shows up, cast from the focus to the offset position and shorten the offset.
+- **Smooth facing in shift lock:** the reference turns the character toward the camera gradually; `FacingController` snaps. Adding it would be a `FacingController` change, and the server's forward check compares facing to movement (§8.1), so a lagging turn would need checking against it first.
+- Cue rows for `WallCling`, `WallBoost`, `DoubleJump`, `SlideJump`, `LedgeJump`, `Airborne`: empty (or FOV-hold only) until someone wants them. A Flow cue (speed-line intensity, an FOV kick) can read `context.flowMultiplier`.
+- **Vault sounds and particles:** its row names `VaultWhoosh` and `VaultDust` (local and Nearby), not authored yet, like the other impact cues. A light `CameraShake` is one more row field if the kick alone feels flat.
+- A volume slider (the `SoundGroup`s are ready) and an effects-quality or reduced-motion setting. Both are new product scope and need a persisted preference (ProfileStore, ARCHITECTURE §13).
+- As more effect files land, extend `FootstepPack.spec.luau` into a spec checking that every name in `MovementCues` is mounted somewhere in the template.
 
 **Residuals (accepted for now):**
 - The ceiling's height stacks rises: a DoubleJump on the way down still allows its full rise on top of the old ceiling (at most about one jump over legit play, never unbounded).
 - Being knocked upward by another player isn't a server-known impulse.
 - A Vault claim delayed past a speed window after its mantle (a resent reliable packet) misses the displacement credit, and that window can correct the mantle.
 - CFrame- or tween-driven moving platforms report zero velocity and get no floor credit. So do client-owned platforms and vehicles.
+- The crouch-lock's `CrouchUp` goes out with the slide jump, and a landing within one claim lag of it still reads the old level (`Context.ForLanding`). A slide jump's flight plus the position lag outlasts that window, so only a very high ping and a landing near the apex could land the mirror crouched.
 - If crouch and jump are pressed within one network leg, the jump can reach the server before the crouch. The flight is then capped at 40 instead of the slide-jump 50. Not seen in playtests.
 - Skimming within about a stud of a surface after a launch's apex, then flying on for over 1 s, loses the airborne allowance.
 - A modified client can claim crouch to use the crouched collision group through `CrouchPassable` geometry.
 - Flow: a move the client counts but the server rejects or never receives leaves the client's Flow ahead of the server's, so its Sprint/WallRun can outrun the cap until the chain ends or the extra drains. The airborne cap uses the held multiplier for any takeoff, even a Walk jump.
+- LedgeJump: a WallRun, WallCling or Vault the mirror enters before its positions show the lift-off drops the ledge jump there. Only the burst before that move and one Flow gain are left unaccounted for, within the speed tolerance. The server is lenient in the other direction: its probes bracket the lift-off, so it can confirm a jump taken a little further from the edge than the client's probe allows, and it judges the speed gate on the launched speed.
+- LedgeJump: a Run/Sprint jump the mirror sees from Walk (a lost Run claim) isn't watched, so its burst is corrected.
 - The camera-locked claim is derived from `not AutoRotate`, which is also false during wall locks. It over-reports; harmless.
 
 **Not built:**
@@ -518,6 +577,271 @@ Before pushing: `zap network.zap`, `selene src`, `stylua --check src tests --glo
 - Gamepad/mobile input.
 
 **Open question:** ARCHITECTURE §7 asks for one-line comments, while the movement code keeps long rationale comments. Undecided.
+
+---
+
+## 15. Presentation: sound, particles, camera and shift lock
+
+How movement gets its juice: sounds, particles, camera FOV, camera shake and our own shift lock. Purely visual: nothing here changes how movement behaves (§15.0).
+
+**Status:** code complete. Footsteps have their sound pack; the other cues have no sounds or particles yet. The camera, FX mount and Nearby replication still need a Studio playtest (two players for Nearby, once impact sounds exist). Open questions are in §14.
+
+### 15.0 Decisions
+
+| Question | Decision |
+|---|---|
+| Can polish affect gameplay (speed, hitboxes, legality)? | **No.** It only reads the movement FSM and never writes to it, `CanEnter` or physics. Anything that affects gameplay (for example a slow-motion parry effect) is a combat decision, routed through `CombatConstants`. |
+| How does a state get its polish? | One data table, `Shared/Presentation/MovementCues.luau`, maps each `MovementState` to its cues. The controllers walk that table generically. **A new state's polish is a new table row, not new code** (§15.1). |
+| Where do the instances come from? | Authored in Studio as one R6 rig template (`Assets/FX/Movement`), which the server mounts onto every character. Nothing rig-attached is built with `Instance.new` (same spirit as ARCHITECTURE §8) (§15.2). |
+| Replication | Each row declares `Replication: "Local" \| "Nearby"`. `"Local"` never leaves the mover's client. `"Nearby"` one-shots are **sent by the server**, driven by its own mirrored FSM, to everyone except the mover. There's no client→server cue request (§15.5). |
+| Shift lock | **Our own implementation**, adapted from the designer's reference code, replacing Roblox's default mouse lock (§15.4.3). |
+| Smoothing | A small in-repo damped spring, `Shared/Util/Spring.luau`, not a Wally dependency. It's a spring rather than `TweenService` so a goal that changes mid-blend (Sprint → Slide → Sprint in under a second) carries its velocity instead of popping (§15.4.1). |
+| Footsteps | Driven by distance travelled, not by state entry. The cue table supplies the sound and stride per state (§15.3.2). |
+| Live-tunable in the F4 overlay? | **No.** That pipeline exists for exploit-relevant physics numbers the server validates (§10). Polish numbers live in `PresentationConstants.luau` and are retuned by editing it. |
+| Who sees what | The mover sees and hears every cue. Bystanders get only `"Nearby"` one-shots. Loops, FOV, FOV kicks and camera shake are never replicated. |
+
+
+### 15.1 The cue table
+
+`Shared/Presentation/MovementCues.luau` is the only place that says which state plays what:
+
+```luau
+export type MovementCueDefinition = {
+	-- SFX
+	EnterSound: string?, -- one-shot on entry
+	LoopSound: string?, -- plays while this is the current state
+	FootstepSound: string?, -- set name; plays <set><FloorMaterial> every FootstepStrideStuds
+	FootstepStrideStuds: number?,
+
+	-- VFX
+	EnterParticle: string?, -- :Emit(EnterParticleCount) on entry
+	EnterParticleCount: number?, -- nil = PresentationConstants.DefaultEmitCount
+	LoopParticle: string?, -- Enabled while this is the current state
+
+	-- Camera
+	TargetFOV: number?, -- FOV spring goal while current; nil = BaseFOV unless HoldsFOV
+	HoldsFOV: boolean?, -- keep the previous goal (mid-air states)
+	CameraShake: string?, -- PresentationConstants.ShakeProfiles key, on entry
+	FOVKick: string?, -- PresentationConstants.FOVKickProfiles key, on entry
+
+	Replication: ("Local" | "Nearby")?, -- nil = "Local"
+}
+```
+
+A state with no row is silent, with base FOV and no shake. Every controller treats that as the correct default, so rows only exist for states that want polish.
+
+**Mid-air FOV.** Airborne, DoubleJump, SlideJump, LedgeJump, WallLeap and Vault set `HoldsFOV`. Without it, every sprint jump would dip FOV back to base mid-air and pump it up again on landing. With it, a jump keeps the FOV it took off with, and a leap off a wall run keeps the wall run's FOV until landing.
+
+**Adding polish to a state:** add or extend its row, and author any new named `Sound`/`ParticleEmitter` in the rig template (§15.2). No controller changes. `tests/specs/MovementCues.spec.luau` checks every row (fields, strides, FOV range, shake profile names, replication values).
+
+#### Reading the table: one-shots vs. sustained cues
+
+`fsm.changed` is **not** a reliable signal for "what state are we in now". SlideJump and WallLeap hand off to Airborne from inside their own `Enter`, so the change fires again while the first change is still being handled. LemonSignal calls the newest connection first, so a handler connected before Movement's main handler receives `(Airborne, WallLeap)` *before* `(WallLeap, WallRun)`. Reading the latest `next` would then leave it on a stale state (the same class of bug as audit M-019). So:
+
+- **One-shots** (`EnterSound`, `EnterParticle`, `CameraShake`) fire from `fsm.changed` on `next`. Order doesn't matter: each event really did enter that state.
+- **Sustained cues** (`LoopSound`, `LoopParticle`, `TargetFOV`) are matched to `fsm.current` every frame: if the wanted loop differs from the active one, stop one and start the other. This is idempotent, and it's how `LocomotionAnimator` already picks its clip.
+
+#### Debounce
+
+One-shots skip a replay of the same cue name within `PresentationConstants.MinCueRetriggerSeconds` (`Shared/Presentation/CueDebounce.luau`, used by the SFX, VFX and camera controllers and, per player, by the server's Nearby broadcast). None of today's one-shot states can oscillate (HardLanding needs a 120-stud fall and locks for 1.11 s; WallLeap needs a WallRun first), so this is only a cheap guard against future rows.
+
+
+### 15.2 Instances: one R6 rig template, mounted by the server
+
+The template syncs to `ReplicatedStorage.Assets.FX.Movement` and mirrors the R6 rig: a folder per body part, holding a folder per existing attachment, holding that attachment's effects:
+
+```
+Movement/
+    HumanoidRootPart/
+        RootAttachment/        HardLandingThud, WallLeapBurst, SlideScrape, WallRunWind, VaultWhoosh (Sounds)
+                               HardLandingDust, WallLeapBurst, WallRunTrail, VaultDust (ParticleEmitters)
+    Left Leg/
+        LeftFootAttachment/    Footstep/ (pack: Plastic, Grass, Metal, Wood, Concrete, Fabric, Sand, Glass)
+                               SlideDust (ParticleEmitter)
+    Right Leg/
+        RightFootAttachment/   Footstep/ (same pack file, mapped again)
+                               SlideDust (ParticleEmitter)
+```
+
+**Authoring.** The template's folders (part → attachment) are declared in `default.project.json`; effects are added as files saved from Studio and mapped into those folders:
+
+1. Build or collect the effects in Studio **outside** the Rojo-synced tree (e.g. in Workspace).
+2. Right-click → *Save to File* into `Assets/FX/` as `.rbxmx`. Sounds alone are simpler as a hand-written `.model.json` (`Assets/FX/Footsteps.model.json` is one; note Rojo 7.7 reads attributes from a lowercase `attributes` key).
+3. Map the file into the right attachment folder in `default.project.json`. The project key becomes the instance's name.
+
+A file can hold a single effect or a **pack**: any container of effects (a Folder, or the `SoundGroup` a toolbox pack ships in). The mount flattens a pack onto the attachment, naming each effect `<pack name><effect name>` (a pack `Footstep` holding `Concrete` mounts as `FootstepConcrete`), because a Sound only plays positionally directly under a part or attachment. Set a `SoundGroup` string attribute (`Footsteps`, `Loops` or `Impacts`) on each Sound, or once on a pack's folder for all its sounds. Emitters can be saved enabled or disabled; the mount turns them off.
+
+Only default R6 attachments are used: `RootAttachment` (HumanoidRootPart), `LeftFootAttachment`/`RightFootAttachment` (legs), `LeftGripAttachment`/`RightGripAttachment` (arms), plus the Torso and Head ones if a cue ever needs them. The same name may appear under several attachments (both feet); a cue then drives every instance with that name.
+
+**Mounting.** `Server/Services/MovementCueService.luau` clones the template onto each character on `CharacterAdded`, moving each attachment folder's children onto the rig's matching attachment. It warns if an attachment is missing, and marks the character so it never mounts twice. Mounting on the server means the instances replicate, so a bystander's client can play a `"Nearby"` cue on someone else's character. A client-side clone would exist only on the mover's client.
+
+- **Sound groups:** `SoundGroup`s live in `SoundService` (declared in `default.project.json`). A Rojo model file can't reference instances outside itself, so each `Sound` names its group in a `SoundGroup` string attribute and the mount assigns it (warning if the group doesn't exist). A future volume slider is then one `SoundGroup.Volume` write.
+- **Roll-off:** every sound is parented under a part/attachment, so it's positional. The mount sets `RollOffMode = InverseTapered` and `RollOffMaxDistance = PresentationConstants.NearbyRollOffMaxDistance` on sounds used by `"Nearby"` rows, so engine falloff does the distance culling (Roblox's default max distance is effectively map-wide).
+
+**Finding instances on the client.** `CharacterFX` is a small per-character index mapping cue name → instances. It only indexes instances the mount tagged with the `MovementCue` attribute, so the character's other sounds are never picked up. It's built from the character's descendants and kept current with `DescendantAdded`/`DescendantRemoving`, so it doesn't matter whether the mount replicates before or after the client starts listening. A name that isn't there yet is skipped silently, just as `LocomotionAnimator` skips a blank `AnimationId`.
+
+**Preload.** `ContentProvider:PreloadAsync` runs once per client session on the template, in a spawned thread from `MovementController.Init`, so a cue's first play doesn't hitch while its content loads. It isn't repeated each life; the content never changes.
+
+
+### 15.3 SFX and VFX controllers
+
+`Client/Controllers/Movement/Presentation/SFXController.luau` and `VFXController.luau` sit next to `FacingController`/`LocomotionAnimator` and follow the same pattern: built per life in `Movement/init.luau`'s `setupCharacter`, own a `Trove`, read the FSM and never write it. Each is a small, direct module. The shared thing is the data (`MovementCues`), not a base class.
+
+#### 15.3.1 Shape
+
+- **On `fsm.changed(next)`:** play `next`'s one-shot (`EnterSound` / `EnterParticle`), debounced (§15.1).
+- **Every frame:** match loops to `fsm.current` (§15.1).
+- **SFX only:** footsteps (§15.3.2), with `PresentationConstants.FootstepPitchJitter` so repeats don't sound identical.
+
+#### 15.3.2 Footsteps
+
+```luau
+-- every Heartbeat
+local cue = MovementCues[fsm.current]
+if not (cue and cue.FootstepSound and characterMover:IsGrounded()) then
+	strideAccumulated = 0
+	return
+end
+strideAccumulated += characterMover:GetHorizontalVelocity().Magnitude * dt
+if strideAccumulated >= cue.FootstepStrideStuds then
+	strideAccumulated = 0
+	-- alternate the LeftFootAttachment / RightFootAttachment instance
+end
+```
+
+**Materials.** Each step plays `<FootstepSound><Humanoid.FloorMaterial>` (`FootstepConcrete`, `FootstepGrass`, ...). For a material the pack has no sound for, it tries that material's alias (`PresentationConstants.FootstepMaterialAliases`, e.g. terrain `Mud` → `Grass`), then `FootstepDefaultMaterial` (`Plastic`), then a plain `<FootstepSound>`. `tests/specs/FootstepPack.spec.luau` loads the pack file and checks that its sound names are real materials, that every alias and the default point at a sound it has, and that its `SoundGroup` exists. Walk, CrouchWalk, Run and Sprint all use the one `Footstep` pack: eight single-step clips, one per surface category, carried over from the designer's previous game along with its material map. The pack is mounted on both feet so consecutive steps alternate instances and each clip has two strides to finish. A separate sprint set would be a second pack and a different row value. Footstep sounds are forced to `Looped = false`, since some packs ship looping sounds.
+
+**Roblox's default footsteps.** `RbxCharacterSounds` gives every character a looping `Running` sound on its root part. `SFXController` mutes it (`Volume = 0`) on the local character only. That script's other sounds (jump, land, swim, climb) are kept, and other players' default running sounds still play.
+
+Distance-based, so cadence scales with real speed without a per-tier timer. The accumulator is also reset on every state change, so switching from Sprint's longer stride to Walk's shorter one doesn't fire an early step. Alternating feet also means one `Sound` isn't restarted every step, which would cut off its tail at sprint cadence (about 6 steps/s).
+
+
+### 15.4 CameraController
+
+`Client/Controllers/CameraController.luau`, a **flat** module directly under `Controllers/` so `Loader.LoadChildren` loads it (a module inside a plain subfolder is never loaded; Appendix B). Unlike the per-life controllers, it lives for the whole session, so its springs keep their motion across respawns instead of snapping FOV back to base.
+
+#### 15.4.0 Following the current life
+
+The camera can't capture one `fsm`/`Humanoid`: `Movement/init.luau` builds a new `StateMachine` every life. It also can't be handed them by Movement directly (ARCHITECTURE §2: controllers don't reach into each other). Instead a small client module, `Client/State/MovementLife.luau`, publishes the current life:
+
+```luau
+MovementLife.Set(life)        -- Movement/init.luau, once per life
+MovementLife.Current(): Life? -- whoever needs it now
+MovementLife.Started          -- LemonSignal<Life>
+-- Life = { humanoid, rootPart, fsm, trove }
+```
+
+`Current()` exists because `Loader.SpawnAll` starts every `Init` at the same time, so Movement's first life can begin before the camera subscribes. The camera handles `Current()` once and then `Started`, and connects its per-life listeners to `life.trove`, so they're torn down with that life.
+
+#### 15.4.1 `Shared/Util/Spring.luau`
+
+A damped harmonic spring with a closed-form (exact) step, so it's frame-rate independent: one 1/30 s step lands in exactly the same place as two 1/60 s steps.
+
+```luau
+Spring.number(dampingRatio, frequencyHz, initial: number): Spring<number>
+Spring.vector3(dampingRatio, frequencyHz, initial: Vector3): Spring<Vector3>
+spring:SetGoal(goal)
+spring:Update(dt) -> position
+spring:Reset(position) -- jump there at rest
+```
+
+Both constructors share one implementation (numbers and `Vector3`s support the same arithmetic). The typed constructors give each caller a concrete type, since Luau can't constrain a generic to "supports `+` and `*`". Each step costs a few `exp`/`sin`/`cos` calls; with two springs per frame, nothing is cached. It's pure math and covered by `tests/specs/Spring.spec.luau`.
+
+#### 15.4.2 FOV and shake
+
+- **FOV:** every frame, the goal is the current row's `TargetFOV`, else unchanged if it `HoldsFOV`, else `BaseFOV`, and the spring's value is written to `Camera.FieldOfView`. The default camera scripts never touch FOV.
+- **FOV kick:** an `FOVKick` cue (fired from `fsm.changed`, debounced) adds `PresentationConstants.FOVKickProfiles[name].Amount` degrees at once, easing back to zero over its duration with the square of the time left (Sorcery's Quad tween). It's added to the spring's output, not pushed into its goal, so the state's own FOV underneath is untouched and the kick can't fight a `HoldsFOV`. Vault uses it (+10 over 0.5 s; Sorcery's is +20, but ours starts from an already raised sprint or wall-run FOV).
+- **Shake:** a `CameraShake` cue (fired from `fsm.changed`, debounced) starts a short random offset from `PresentationConstants.ShakeProfiles[name]` that decays with the square of the time left. It's a pure translation in camera space, so it doesn't need undoing: the default camera script rebuilds its position from the focus every frame and reads only the camera's *direction*, which a translation doesn't change. A rotating shake would drift the camera and would need undoing before the camera script's next update.
+- Shake is a decaying random impulse, not a goal-seeking spring, so it isn't built on `Spring`.
+- FOV, shift-lock offset and shake all run in one render step at `RenderPriority.Camera + 1`, right after the default camera script.
+
+#### 15.4.3 Shift lock (our own)
+
+Adapted from the designer's reference implementation. Roblox's default mouse lock is off (`StarterPlayer.EnableMouseLockOption = false` in `default.project.json`): it applies its shoulder offset inside the camera module in a single frame, so a spring layered on top would stack two offsets.
+
+- **Toggle:** Left/Right Shift (ignoring input the game already handled), only while a life exists. The life ending (death, respawn) unlocks.
+- **Locked:** `MouseBehavior = LockCenter`, re-asserted every frame because the default camera script can release it. `FacingController` and the camera-lock level claim (`not Humanoid.AutoRotate`, §7) key off it, so facing and server validation work unchanged. The mouse icon switches to `ShiftLockMouseIcon`.
+- **Shoulder offset:** `ShiftLockOffset` (1, 0.25, 0; pulled in from the reference's 1.75, which read as too far right), eased in and out by `Spring.vector3` with the reference's damping (0.7) and in/out speeds, and applied as a camera-space translation (§15.4.2). It isn't a root-relative `Humanoid.CameraOffset`, which would swing sideways while WallRun locks facing to the wall tangent. Nothing writes `Humanoid.CameraOffset`.
+- **First person:** no shoulder offset once the head's `LocalTransparencyModifier` passes `FirstPersonHeadTransparency` or the camera is within `FirstPersonHeadDistance` of it.
+- **Not ported from the reference:** its character rotation (facing belongs to `FacingController`; two writers would fight), and its BindableEvent config/toggle hooks (constants live in `PresentationConstants`; add an external toggle when something needs one).
+
+### 15.5 Replication: server-sent "Nearby" cues
+
+```
+server mirror FSM changes state (MovementValidationService, TransitionBookkeeping)
+  → Server/Events/MirrorStateChanged:Fire(player, next, previous)
+  → MovementCueService: MovementCues[next].Replication == "Nearby"?
+  → Network.PlayMovementCue.FireExcept(player, { player = player, state = name })
+  → other clients: NearbyCuePlayer plays that row's EnterSound + EnterParticle on player.Character
+```
+
+```zap
+event PlayMovementCue = {
+	from: Server,
+	type: Unreliable,
+	call: SingleSync,
+	data: struct {
+		player: Instance.Player,
+		state: MovementStateName, -- every state by name; shared with the debug overlay
+	},
+}
+```
+
+- **Server-driven:** the server's own mirror decides HardLanding (from its fall height), WallLeap and Vault (on an accepted claim), so bystanders only see moves the server accepted. There's no client request to validate or rate-limit, and no second cue enum to keep in step with the table: the server filters with the same `MovementCues` rows.
+- **The payload is the state, not a cue name.** The receiver plays that row's `EnterSound` and `EnterParticle`. It never plays `CameraShake` or `FOVKick`: another player's landing doesn't move your camera.
+- **Excluding the mover:** `FireExcept(player, ...)`, because the mover already played the cue locally. As a backstop, the receiver also ignores events about `Players.LocalPlayer`.
+- **Receiver** (`Movement/Presentation/NearbyCuePlayer.luau`, callback set once in `MovementController.Init`, so it works while the local player is dead): skips silently if `player.Character` hasn't streamed in (ARCHITECTURE §14) or the named instance isn't there, and skips rows that aren't `"Nearby"`. It finds the instances with `CharacterFX.Scan`, a one-off lookup using the same `MovementCue` tag rule as the per-life index; cues are rare enough that no live index per remote character is needed.
+- **Enum parity:** `tests/specs/MovementStateNames.spec.luau` checks that network.zap's `MovementStateName` enum and `Shared/FSM/MovementStateNames.luau` list the same states.
+- **Server guard:** a per-player `MinCueRetriggerSeconds` floor on the same state, matching the client's debounce.
+- `Unreliable`: a dropped landing thud is invisible.
+- **No distance culling on the server**: engine roll-off (§15.2) handles distance. Add interest management only if a measured bandwidth number calls for it (ARCHITECTURE §9's "don't pad for a cost you haven't measured" spirit).
+
+
+### 15.6 Constants
+
+`Shared/Constants/PresentationConstants.luau`, one file (like `MovementConstants`), `--!strict`, every polish number (ARCHITECTURE §2). Not in the F4 tuning enum (§15.0).
+
+| Group | Holds |
+|---|---|
+| Cues | `MinCueRetriggerSeconds`, `DefaultEmitCount`, the `CueAttribute`/`SoundGroupAttribute`/`MountedAttribute` names shared by the mount and the index |
+| SFX | `FootstepPitchJitter`, `NearbyRollOffMaxDistance` |
+| Camera | `BaseFOV`, `FOVDampingRatio`, `FOVFrequency`, `ShakeProfiles: { [string]: { Magnitude, DurationSeconds } }`, `FOVKickProfiles: { [string]: { Amount, DurationSeconds } }` |
+| Shift lock | `ShiftLockOffset`, `ShiftLockDampingRatio`, `ShiftLockIn/OutFrequency`, `ShiftLockMouseIcon`, `FirstPersonHeadTransparency`, `FirstPersonHeadDistance` |
+
+All values are starting points, not tuned. Retune from playtests.
+
+
+### 15.7 Module map
+
+```
+src/Shared/Presentation/MovementCues.luau                          the cue table
+src/Shared/Presentation/CueDebounce.luau                           one-shot retrigger floor
+src/Shared/Constants/PresentationConstants.luau                    every polish number
+src/Shared/Util/Spring.luau                                        damped spring
+
+src/Client/State/MovementLife.luau                                 current life, for CameraController
+src/Client/Controllers/CameraController.luau                       FOV, shake, shift lock
+src/Client/Controllers/Movement/Presentation/SFXController.luau    per life
+src/Client/Controllers/Movement/Presentation/VFXController.luau    per life
+src/Client/Controllers/Movement/Presentation/CharacterFX.luau      cue name → instances index (§15.2)
+src/Client/Controllers/Movement/Presentation/NearbyCuePlayer.luau  plays other players' Nearby cues (§15.5)
+
+src/Server/Services/MovementCueService.luau                        mount FX, broadcast Nearby cues
+src/Server/Events/MirrorStateChanged.luau                          server mirror state changes
+
+default.project.json → ReplicatedStorage.Assets.FX.Movement       R6 FX template folders
+Assets/FX/*.rbxmx, *.model.json                                    effects and packs (Footsteps.model.json today)
+
+tests/specs/Spring.spec.luau
+tests/specs/MovementCues.spec.luau
+tests/specs/CueDebounce.spec.luau
+tests/specs/MovementStateNames.spec.luau
+tests/specs/FootstepPack.spec.luau
+```
+
+**Wiring:** `Movement/init.luau` builds `CharacterFX`/`SFXController`/`VFXController` next to `LocomotionAnimator` each life and publishes `MovementLife`; its `Init` preloads the template once and sets the `PlayMovementCue` callback. The validation service fires `MirrorStateChanged` from `TransitionBookkeeping`. `default.project.json` declares the FX template folders, the `SoundService` groups (`Footsteps`, `Loops`, `Impacts`) and `EnableMouseLockOption = false` (§15.4.3).
+
+Not built until a real caller needs it: a pool for effects that aren't attached to a rig (combat clash sparks, projectile impacts at world points). When one arrives: a fixed ring of pre-created, disabled instances, acquired and released, never created/destroyed per effect (ARCHITECTURE §6).
 
 ---
 
@@ -588,3 +912,205 @@ The movement audit (2026-09-24, baseline `7b2adab`) and its re-audit of `49c81f0
 - The replicated Humanoid state label leads the position stream by ~0.15-0.2 s (§9).
 - Humanoid jumps launch slightly above `JumpPower`; a character sliding on a `LinearVelocity` picked up about 7 st/s more (§9).
 - A cling wall must be `Anchored`; an unanchored test wall looks like "cling doesn't work".
+
+---
+
+## Appendix C: Vault reference (Sorcery)
+
+The reference Vault was built from and why Jianghu's differs, kept for the reasoning behind §4.8. C.1 describes Sorcery's vault (from the decompiled client), C.2 lists where Jianghu departs from it, C.3 records the design goal and the decisions made from it. Vault shipped on 2026-09-25; keep §4.8 current, not this appendix.
+
+### C.1 How Sorcery does it
+
+Source: `Sorcery Decomp/src/ReplicatedStorage/Client/Controllers/MovementController.luau`
+- `CheckLedge` (line ~1085): detection
+- `PromptVault` (~1152): gating
+- `GetYLevel` (~1246): ledge height
+- `ClimbVault` (~1264): the motion
+- `Update` (~1023) and `Space` (~1113): input buffering
+
+`ClientUtil.GetHealth` is in `Sorcery Decomp/src/ReplicatedStorage/Client/ClientUtil.luau`.
+
+**Trust model:** entirely client-side. The server only receives `ClientEffectDirect:Fire("ClimbVault")` so it can play effects. Nothing is validated.
+
+#### C.1.1 Detection (`CheckLedge`)
+
+It casts two forward rays from the root part, each 8 studs long along `Root.CFrame.LookVector`, and only hits parts in `workspace.Map`:
+
+```
+              clearance ray (+8) ─────────────────────▶   must MISS
+                                            ┌──────────── ledge top
+   root ●                                   │
+          wall ray (−1) ───────────────────▶│ Pos, Norm   must HIT
+                                            │
+   ◀──────────────── 8 studs ──────────────▶
+```
+
+| Check | Rule |
+|---|---|
+| Wall ray | Origin `Root.Position − (0, 1, 0)`, direction `LookVector × 8`. Must hit. Gives `Wall, Pos, Norm` |
+| Clearance ray | Origin `Root.Position + (0, 8, 0)`, same direction. Must **miss**: the wall ends below +8, so there's a top to get over |
+| Surface | Rejected if `Norm · Y > 0.25`. Floors and gentle slopes don't count; vertical and overhanging walls do |
+
+There's no facing check beyond "the ray goes where the root faces", and no check that the top of the ledge is standable.
+
+**Vault vs climb.** Sorcery's wall climb (`CheckWall`) uses the same wall ray, but the ray at **+12 must hit** (the wall is tall) and a ray **8 studs straight down must miss** (you're well off the ground). A short wall with open space above is a vault; a tall wall is a climb. On Space, climb is tried first, then vault, then double jump.
+
+#### C.1.2 Gating and buffering (`PromptVault`, `Update`, `Space`)
+
+| Gate | Value |
+|---|---|
+| Airborne only | `Humanoid.FloorMaterial == Air` |
+| Cooldown | 0.5 s since the last vault (`LastVault`) |
+| Action gate | `ActionCheck.DodgeCheck` (stunned, attacking, etc.). Checked again after the wind-up, so being hit mid-vault cancels it |
+
+**Buffer (auto-vault).** Pressing Space in the air, a slide jump and a climb jump all set `Variables.CanVault = tick()`. `Update` then calls `PromptVault()` **every frame for 1 s**. If you reach a ledge within a second of jumping, you vault without pressing again. The buffer is cleared once you've been on the ground for more than 0.25 s since the press.
+
+**Lockouts it creates:**
+- A `No Double Jump` tag for 0.25 s.
+- `DoubleJump` returns early if a vault happened in the last 0.1 s. This stops the same Space press from triggering both.
+
+#### C.1.3 Motion (`ClimbVault`)
+
+**Step 0: momentum snapshot** (taken before any movers are cleared):
+```
+Momentum = Velocity × (0.4, 0, 0.4)       -- keep 40% of horizontal speed
+         + (0, |Velocity.Y| / 3, 0)       -- absolute value: a fast fall gives MORE lift
+```
+
+**Step 1: wind-up, 0.05 s.**
+- `Freeze` + `No Rotate` tags. The Climb animation plays with its speed set to 0, so it holds the first frame.
+- A `BodyPosition` (P 25000, D 500, MaxForce 80000) pulls the root toward:
+  - **XZ:** `Pos − Norm × 1.25`, 1.25 studs past the wall face, over the top
+  - **Y:** `GetYLevel()` (below)
+- A `BodyGyro` turns you to face into the wall: `CFrame.lookAt(Root, Root − Norm)`.
+
+`GetYLevel()` estimates the ledge height with two more forward rays (8 studs):
+```
+Y = Root.Y + 3
+if ray at +4 hits: Y = Root.Y + 6
+if ray at +6 hits: Y = Root.Y + 8
+```
+It finds the height in three fixed steps and never looks at where the top surface actually is.
+
+**Step 2: launch, 0.1 s.**
+- Re-run the action gate; abort if it fails.
+- Snap facing to the camera's horizontal direction: `lookAt(Root, Root + camLook × (1, 0, 1))`.
+- A `BodyVelocity` (MaxForce 80000 on every axis) for 0.1 s:
+```
+V = look × (15 × H) + (0, 35 × H, 0) + Momentum
+```
+- The Climb animation continues at 1.6× and stops 0.25 s later.
+- The FOV jumps by 20 and tweens back to 0 over 0.5 s (Quad).
+
+**`H` (health scaling):** `clamp(Health × 3 / MaxHealth, 0.25, 1)`. Above 33% HP the launch is full; below that it scales down linearly, never under 25%.
+
+#### C.1.4 All the numbers
+
+| Name | Value | Where |
+|---|---|---|
+| Ray reach | 8 | wall, clearance, height probes |
+| Wall ray height | −1 | relative to the root |
+| Clearance ray height | +8 | must miss |
+| Max normal up-dot | 0.25 | surface filter |
+| Over-the-top inset | 1.25 | `Pos − Norm × 1.25` |
+| Height steps | +3 / +6 / +8 | probes at +4 / +6 |
+| Cooldown | 0.5 s | `LastVault` |
+| Buffer window | 1 s | `CanVault` |
+| Buffer clear | grounded > 0.25 s | `Update` |
+| No-double-jump tag | 0.25 s | |
+| Wind-up | 0.05 s | BodyPosition P 25000 / D 500 |
+| Launch hold | 0.1 s | BodyVelocity |
+| Forward launch | 15 | × H |
+| Upward launch | 35 | × H |
+| Horizontal momentum kept | 40% | |
+| Vertical momentum kept | abs(vy) / 3 | |
+| FOV kick | +20 → 0 over 0.5 s | |
+| Climb anim speed | 0, then 1.6 | stops after 0.25 s |
+
+#### C.1.5 What not to copy as-is
+
+- **`|vy| / 3` has no upper bound.** A long fall into a ledge launches you higher. That's unbounded vertical gain, and our server's ceiling can't allow it. We keep the term but cap it (C.3).
+- **8-stud reach.** The pull can snap you up to 8 studs toward a wall in 0.05 s, which looks like teleporting and is much longer than our cling cast (3 studs).
+- **Three-step height guess.** It overshoots low ledges and can put you inside geometry.
+- **No standability check.** It will vault onto a sloped roof or a 0.2-stud-thick rail.
+- **Deprecated APIs.** `FindPartOnRayWithWhitelist`, `BodyPosition`, `BodyGyro`, `BodyVelocity`.
+
+We copy the camera-steered launch. We don't copy the auto-vault buffer or the health scaling; both were designer decisions (C.3).
+
+
+### C.2 How Jianghu differs
+
+How Vault works now is in §4.8 (the move) and §8.2-§8.4 (server validation). This lists where it departed from Sorcery as shipped on 2026-09-25; C.3 gives the reasons. Values here are as shipped then (the launch has since been retuned to 70 forward / 50 up and the state to 0.4 s; current numbers are in §4.8).
+
+| | Sorcery | Jianghu |
+|---|---|---|
+| Trust | Client only; the server plays effects | Claimed (`ClaimTraversalMove "Vault"`), re-probed and bounded by the server |
+| Reach | 8 studs | 3 (`VaultReach`) |
+| Height window | Wall at root −1, clear at root +8 | Top 1.5 to 6 above the feet |
+| Ledge height | Three-step guess (+3 / +6 / +8) | Measured by a downward top probe |
+| Standable top | Not checked | Normal Y ≥ 0.7, 1.5 studs deep, 5 studs of headroom (leg footprint) |
+| Onto the ledge | 0.05 s `BodyPosition` pull | A mantle of up to 0.2 s (faster if you're rising faster): up the wall face, then across onto the top |
+| Launch | `BodyVelocity` held 0.1 s | One-shot velocity writes when the mantle ends; the whole state lasts 0.32 s (the clip's length) |
+| Launch direction | Camera | Camera (unchecked by the server; magnitude bounded) |
+| Fall-speed lift | abs(vy) / 3, unbounded | abs(vy) / 3, capped at 20 |
+| Health scaling | `clamp(3·HP/MaxHP, 0.25, 1)` | None |
+| Trigger | Space, plus a 1 s auto-vault buffer | Space; automatic during WallBoost |
+| From | Airborne (any state with `FloorMaterial == Air`) | Airborne, DoubleJump, WallCling, WallBoost; not WallRun |
+| Vault vs climb | Climb first, then vault | Vault first, then cling |
+| Double jump after | Blocked 0.25 s | Blocked 0.25 s; not spent |
+| FOV | +20 kick, tweened back over 0.5 s | +10 kick eased back over 0.5 s, on top of the take-off FOV (`FOVKick` cue) |
+
+
+### C.3 Decisions
+
+#### Design goal
+
+Vault is a **mantle assist**, not a climb. If you're almost over an edge but not quite (your jump came up a little short and the lip is around your chest or head), the vault puts you on top. It is not for scaling tall walls from a distance; WallCling and WallBoost do that. Every decision below follows from this.
+
+#### Decided by the designer (2026-09-25)
+
+| Topic | Decision | Consequence |
+|---|---|---|
+| Launch direction | **Camera-steered**, as in Sorcery | Read at launch. The server bounds the magnitude only |
+| Auto-vault buffer | **No buffer.** Space in the air or while clinging; **automatic during WallBoost** (revised later on 2026-09-25) | The designer wants cling → boost → carried over the lip as one sequence. Automatic stays scoped to the boost: from Airborne/DoubleJump it would snap you onto every low box you jump beside. Sorcery's 1 s post-press buffer isn't copied |
+| Fall-speed bonus | **Keep abs(vy) / 3, capped** at `VaultMaxMomentumUpward` | Gives `VaultMaxRise` a finite bound |
+| Health scaling | **No, deferred** | `Humanoid.Health` is a fixed rig-compatibility shell (`ARCHITECTURE.md` §12) and no real HP system exists yet. Revisit once real HP, or a Qinggong resource, exists |
+| Getting onto the ledge | **Keep the 1.5-6 window.** First a one-frame snap covered by the animation; **revised the same day to a 0.2 s mantle** after a playtest ("you just snap") | The lip is meant to be at chest or head height, so the window stays. Lifting up to 6 studs in one frame read as a teleport no matter the animation |
+
+#### Decided from the goal (2026-09-25)
+
+| Topic | Decision | Why |
+|---|---|---|
+| Reach | **3 studs** (Sorcery: 8) | "Almost over" means you're already at the wall. Matches `WallClingDistance`. The mantle moves you at most reach + inset (4.25 studs) sideways |
+| Height window | Ledge top **1.5 to 6 studs above the feet** (knee to just above the head) | Below knee height you clear it or step up anyway; above head height you're not almost over, so it's a cling |
+| Ledge height | **Measured** with a downward top probe | The feet land exactly on the top; no overshoot or clipping |
+| Standable top | **Required:** top normal Y ≥ 0.7, 1.5 studs of depth, 5 studs of headroom | The assist should only fire where you can actually stand. No vaulting onto rails, steep roofs or under ceilings |
+| Vault vs WallCling | **Vault first** when a standable top is in the window, cling otherwise | They separate cleanly on the clearance cast |
+| From DoubleJump | **Allowed** | Double jumping toward a ledge and coming up short is the main use case |
+| From WallCling | **Allowed, on Space** (Space did nothing while clinging) | Hanging just under a lip and pressing Space to pull up is the same "almost over" case |
+| From WallBoost | **Allowed, automatically** (Space works too) | A boost that runs up past the lip is exactly the case Vault exists for. How high it still reaches, before the boost's separation push carries you out of the 3-stud reach, needs a playtest |
+| From WallRun | **Not allowed** | Wall runs are along side walls; a ledge ahead is a different wall. Leap off, then vault from Airborne |
+| Spends the double jump? | **No**, matching WallCling. Keeps Sorcery's 0.25 s double-jump block | A vault is recovery, not an extra jump; the block stops a quick second press from double jumping over the launch |
+| Launch strength | **Sorcery's 15 forward / 35 up** as starting points; fall-speed lift capped at 20 | 35 up is about 3 studs of rise: enough to clear the lip, not to gain real height. 35 + 20 = 55, the same as a jump |
+
+#### Decided while building (2026-09-25)
+
+Found by checking the plan against the code, before and during implementation.
+
+| Topic | Decision | Why |
+|---|---|---|
+| Wind-up | **None:** the mantle is the travel time, and the launch fires the moment it ends | Sorcery's 0.05 s only existed as travel time for its `BodyPosition`. A pause on the ledge would make `Update`'s grounded check resolve a landing before the launch fired |
+| Mantle motion | **Up the wall face, then across, at one constant speed; each frame aims for where the path will be at the end of that frame** (`TraversalMath.VaultMantlePoint`). **At most 0.2 s, less when already rising faster** (`VaultMantleDuration`), so a fast boost carries over the lip at its own speed rather than braking to about 55 st/s | First built as a one-time `PivotTo` snap, which a playtest found too abrupt. Tracking a timed path arrives exactly on time; a velocity recomputed every tick as (target − position) / T would be exponential decay and never arrive (about 63% at T). Rising before crossing keeps the body off the lip's corner |
+| Mantle clearance | **Feet 0.5 above the top** before crossing | Clears the lip, and keeps the Humanoid from reading the top as floor mid-mantle |
+| Leaving Vault | **Always to Airborne at the end of the window; no landing checks before it; never into Run/Sprint** (no topology edges, `preAirborneLocomotion` cleared on entry, landings resolved without resume) | Playtest: a landing read in the frame of the launch (still taken from before it) resolved to a resumed Run, and a double-tap W could start Run mid-vault; the Run animation broke the flow. A vault is a recovery; you come out walking. **Reversed 2026-09-28:** a vault now keeps your sprint (§4.8) |
+| Launch shape | **One-shot velocity writes** | A constraint followed by a synchronous hand-off would be cleared by `Exit` before physics integrates it, the trap `WallLeapState` documents |
+| Server rise bound | **`VaultMaxRise` = `VaultMaxLedgeHeight` + `VaultMantleClearance` + ballistic rise at the momentum cap**, apex one mantle later | The mantle lifts you before the launch; leaving it out would correct most vaults onto 3-6 stud ledges |
+| Anchor on the ledge | **For one claim lag plus one mantle after an accept, a ground anchor allows the vault's launch speed** | The mantle ends with the feet over ground the support probe sees, which re-anchors the ceiling to "here plus one jump" and would drop the accept's raise |
+| Server ledge probe | **Current root, then the root history over one claim lag** | The mantle moves the replicated root onto the ledge, where no wall is in front of it. Probing where the root was a moment earlier finds the ledge again; each candidate is a real position and runs the full probe. The facing check reads the probe's own cast direction for the same reason |
+| Probe cadence | **Server: claim time and buffered retries only.** Client: on the press, and during WallBoost on a throttle derived from the rise speed (`VaultAutoProbeInterval`) | A vault has no sustain check, so the server never needs to poll. A boost at 120 st/s crosses the 4.5-stud window in about 0.04 s, so a fixed 0.1 s throttle would miss it |
+| Horizontal bound | **15 + 40% of the server's cap before the vault**, raising the airborne allowance only if that exceeds the cap | Tighter than assuming the WallLeap allowance; never binds at shipped tuning |
+| Mantle and the speed check | **An exact displacement credit** of reach + inset, for windows starting within one claim lag plus one mantle of the accept | The leg across is faster than the cap for a short mantle. From a cling (cap 0) the window's budget can't absorb it |
+| Cooldown clock | **Server accept time, backdated by time buffered** | Same as the cling clock; brings the server's cooldown clock as close to the client's as it can see |
+| Headroom | **The leg footprint swept up**, not one ray | A single ray passes beside a pillar the body would overlap |
+| Depth tolerance | **Named constant** `VaultTopDepthTolerance` | `ARCHITECTURE.md` §2: no magic numbers |
+| FOV kick | **+10 over 0.5 s**, a new one-shot `FOVKick` cue field added on top of the held take-off FOV (§15.4.2) | A `TargetFOV` on Vault would have stayed raised through Airborne (`HoldsFOV`) until landing. Smaller than Sorcery's +20 because sprint and wall-run FOV are already raised |

@@ -1,6 +1,6 @@
 --!strict
 -- Catches a malformed cue row here rather than the first time its state fires
--- in a playtest (docs/MOVEMENT_POLISH_ARCHITECTURE.md §1).
+-- in a playtest (docs/MovementSystem.md §15.1).
 local KNOWN_FIELDS = {
 	EnterSound = "string",
 	LoopSound = "string",

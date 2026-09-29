@@ -1,7 +1,7 @@
 --!strict
 -- The footstep pack and its material aliases are maintained separately, so a
 -- renamed clip or a stale alias would only show up as silent steps in a
--- playtest (docs/MOVEMENT_POLISH_ARCHITECTURE.md §3.2).
+-- playtest (docs/MovementSystem.md §15.3.2).
 local fs = require("@lune/fs")
 local roblox = require("@lune/roblox")
 local serde = require("@lune/serde")

@@ -233,4 +233,98 @@ return function(t)
 			})).toBeFalsy()
 		end)
 	end)
+
+	t.describe("LedgeJump", function()
+		local minSpeed = Fixtures.context().constants.LedgeJumpMinEntrySpeed
+		local takeoff = {
+			grounded = false,
+			ledgeDropAhead = true,
+			preAirborneLocomotion = MovementStates.Sprint,
+			horizontalVelocity = Vector3.new(0, 0, -minSpeed),
+		}
+
+		local function with(changes: { [string]: any }): { [string]: any }
+			local overrides = table.clone(takeoff)
+			for key, value in pairs(changes) do
+				overrides[key] = value
+			end
+			return overrides
+		end
+
+		t.it("accepts a jump takeoff from Sprint or Run with a drop ahead", function()
+			t.expect(canEnter(MovementStates.LedgeJump, takeoff)).toBeTruthy()
+			t.expect(
+				canEnter(
+					MovementStates.LedgeJump,
+					with({ preAirborneLocomotion = MovementStates.Run })
+				)
+			).toBeTruthy()
+		end)
+
+		t.it("needs a drop ahead", function()
+			t.expect(canEnter(MovementStates.LedgeJump, with({ ledgeDropAhead = false })))
+				.toBeFalsy()
+			local unprobed = table.clone(takeoff)
+			unprobed.ledgeDropAhead = nil
+			t.expect(canEnter(MovementStates.LedgeJump, unprobed)).toBeFalsy()
+		end)
+
+		t.it("never fires from a Walk or Idle takeoff", function()
+			local walked = table.clone(takeoff)
+			walked.preAirborneLocomotion = nil
+			t.expect(canEnter(MovementStates.LedgeJump, walked)).toBeFalsy()
+		end)
+
+		t.it("needs real speed, not the tier's label", function()
+			t.expect(canEnter(
+				MovementStates.LedgeJump,
+				with({
+					horizontalVelocity = Vector3.new(0, 0, -(minSpeed - 0.01)),
+				})
+			)).toBeFalsy()
+		end)
+
+		t.it("rejects on the ground", function()
+			t.expect(canEnter(MovementStates.LedgeJump, with({ grounded = true }))).toBeFalsy()
+		end)
+
+		t.it("is reached only from Airborne and only leaves to Airborne", function()
+			for state, targets in pairs(StateRules.Transitions) do
+				local reaches = table.find(targets, MovementStates.LedgeJump) ~= nil
+				t.expect(reaches).toBe(state == MovementStates.Airborne)
+			end
+			local out = StateRules.Transitions[MovementStates.LedgeJump]
+			t.expect(#out).toBe(1)
+			t.expect(out[1]).toBe(MovementStates.Airborne)
+		end)
+	end)
+
+	t.describe("claim sources", function()
+		t.it("claims Run only from Idle/Walk and Sprint only from Run", function()
+			for state in pairs(StateRules.Transitions) do
+				local runOk = state == MovementStates.Idle or state == MovementStates.Walk
+				t.expect(StateRules.CanClaimFrom(MovementStates.Run, state)).toBe(runOk)
+				t.expect(StateRules.CanClaimFrom(MovementStates.Sprint, state))
+					.toBe(state == MovementStates.Run)
+			end
+		end)
+
+		t.it("never claims out of a HardLanding lock or a Vault", function()
+			for _, source in ipairs({ MovementStates.HardLanding, MovementStates.Vault }) do
+				t.expect(StateRules.CanClaimFrom(MovementStates.Run, source)).toBeFalsy()
+				t.expect(StateRules.CanClaimFrom(MovementStates.Sprint, source)).toBeFalsy()
+			end
+		end)
+
+		t.it("only claims along real edges", function()
+			for claimed in pairs({ [MovementStates.Run] = true, [MovementStates.Sprint] = true }) do
+				for source in pairs(StateRules.Transitions) do
+					if StateRules.CanClaimFrom(claimed, source) then
+						local targets = StateRules.Transitions[source]
+						t.expect(table.find(targets, claimed) ~= nil).toBeTruthy()
+					end
+				end
+			end
+		end)
+	end)
 end

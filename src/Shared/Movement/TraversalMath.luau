@@ -407,6 +407,26 @@ function TraversalMath.VaultMaxHorizontalSpeed(
 	return forwardSpeed + horizontalKeep * maxEntrySpeed
 end
 
+-- LedgeJump's launch (docs/MovementSystem.md §4.10): the takeoff's own
+-- horizontal velocity with a flat burst added along it. Horizontal only; the
+-- jump's vertical speed is left as the jump made it.
+function TraversalMath.LedgeJumpVelocity(horizontalVelocity: Vector3, burstForce: number): Vector3
+	local flat = Vector3.new(horizontalVelocity.X, 0, horizontalVelocity.Z)
+	if flat.Magnitude < EPSILON then
+		return flat
+	end
+	return flat.Unit * (flat.Magnitude + burstForce)
+end
+
+-- Upper bound on LedgeJump's horizontal launch speed, given the fastest the
+-- character could have been moving when it took off.
+function TraversalMath.LedgeJumpMaxHorizontalSpeed(
+	maxEntrySpeed: number,
+	burstForce: number
+): number
+	return maxEntrySpeed + burstForce
+end
+
 -- The fastest a slide or slide jump goes before slope amplification: the
 -- Sprint tier (raised by Flow) times the slide's entry boost. SlideState and
 -- SlideJumpState clamp to it; the server caps Slide/SlideJump at it.
@@ -418,7 +438,7 @@ function TraversalMath.SlideCeiling(
 	return sprintSpeed * flowMultiplier * entrySpeedMultiplier
 end
 
--- Flow (docs/FLOW.md): one qualifying move's gain, clamped to the 0-1 range.
+-- Flow (docs/MovementSystem.md §4.9): one qualifying move's gain, clamped to the 0-1 range.
 function TraversalMath.FlowAfterGain(flow: number, gainPerMove: number): number
 	return math.min(1, flow + gainPerMove)
 end

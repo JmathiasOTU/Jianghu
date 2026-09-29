@@ -45,10 +45,6 @@ function Mirror.PassiveTransitions(session: PlayerSession)
 	-- otherwise catch this first and skip the boost entirely.
 	if current == MovementStates.Slide and context.jumping then
 		if session.fsm:RequestTransition(MovementStates.SlideJump, context) then
-			-- Crouch-lock (SlideJump landing fix): armed the instant this
-			-- session's mirror enters SlideJump, same edge the client's own
-			-- `crouchSuppressed` arms on -- see the PlayerSession field comment.
-			session.crouchSuppressed = true
 			-- Slide-jump landing resume: lands back in the tier the slide was
 			-- entered from, like the client's SlideJump -> Airborne edge.
 			session.preAirborneLocomotion = session.slideEntryLocomotion
@@ -92,14 +88,8 @@ function Mirror.PassiveTransitions(session: PlayerSession)
 			-- Idle/Walk (docs/MovementSystem.md §4.2) -- a single-tick decision, same
 			-- as AirborneState.Update's own client-side landing logic.
 			local landing = Context.ForLanding(session, context)
-			if session.fsm:RequestTransition(LandingResolution.Resolve(landing), landing) then
-				-- DoubleJump reset (docs/MovementSystem.md §5): mirrors the
-				-- client's own reset on the identical "landed" edge.
-				session.doubleJumpUsed = false
-				-- Landing-resume fix: consumed the instant a landing actually
-				-- resolves, same edge as the doubleJumpUsed reset just above.
-				session.preAirborneLocomotion = nil
-			end
+			-- TransitionBookkeeping resets the double jump and takeoff tier.
+			session.fsm:RequestTransition(LandingResolution.Resolve(landing), landing)
 		end
 		return
 	end
@@ -122,14 +112,7 @@ function Mirror.PassiveTransitions(session: PlayerSession)
 	if current == MovementStates.DoubleJump then
 		if context.grounded then
 			local landing = Context.ForLanding(session, context)
-			if session.fsm:RequestTransition(LandingResolution.Resolve(landing), landing) then
-				session.doubleJumpUsed = false
-				-- Landing-resume fix: same consume-on-landing edge as the
-				-- Airborne branch above -- `preAirborneLocomotion` survives the
-				-- Airborne -> DoubleJump hop untouched (see where it's set,
-				-- below), so this mid-impulse landing still needs to clear it.
-				session.preAirborneLocomotion = nil
-			end
+			session.fsm:RequestTransition(LandingResolution.Resolve(landing), landing)
 			return
 		end
 
@@ -154,10 +137,7 @@ function Mirror.PassiveTransitions(session: PlayerSession)
 	if current == MovementStates.WallRun then
 		if context.grounded then
 			local landing = Context.ForLanding(session, context)
-			if session.fsm:RequestTransition(LandingResolution.Resolve(landing), landing) then
-				session.doubleJumpUsed = false
-				session.preAirborneLocomotion = nil
-			end
+			session.fsm:RequestTransition(LandingResolution.Resolve(landing), landing)
 			return
 		end
 
@@ -250,10 +230,7 @@ function Mirror.PassiveTransitions(session: PlayerSession)
 	if current == MovementStates.WallCling then
 		if context.grounded then
 			local landing = Context.ForLanding(session, context)
-			if session.fsm:RequestTransition(LandingResolution.Resolve(landing), landing) then
-				session.doubleJumpUsed = false
-				session.preAirborneLocomotion = nil
-			end
+			session.fsm:RequestTransition(LandingResolution.Resolve(landing), landing)
 			return
 		end
 
@@ -282,10 +259,7 @@ function Mirror.PassiveTransitions(session: PlayerSession)
 	if current == MovementStates.WallBoost then
 		if context.grounded then
 			local landing = Context.ForLanding(session, context)
-			if session.fsm:RequestTransition(LandingResolution.Resolve(landing), landing) then
-				session.doubleJumpUsed = false
-				session.preAirborneLocomotion = nil
-			end
+			session.fsm:RequestTransition(LandingResolution.Resolve(landing), landing)
 			return
 		end
 
@@ -309,10 +283,7 @@ function Mirror.PassiveTransitions(session: PlayerSession)
 			return
 		end
 		local landing = Context.ForLanding(session, context)
-		if session.fsm:RequestTransition(LandingResolution.Resolve(landing), landing) then
-			session.doubleJumpUsed = false
-			session.preAirborneLocomotion = nil
-		end
+		session.fsm:RequestTransition(LandingResolution.Resolve(landing), landing)
 		return
 	end
 
@@ -474,7 +445,7 @@ function Mirror.PassiveTransitions(session: PlayerSession)
 		session.fsm:RequestTransition(MovementStates.Idle, context)
 	elseif
 		current == MovementStates.Sprint
-		and session.cameraLocked
+		and context.cameraLocked
 		and not context.moveIntent.forward
 	then
 		-- Same demotion condition as SprintState.Update client-side (backpedal or

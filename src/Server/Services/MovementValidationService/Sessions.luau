@@ -41,6 +41,9 @@ export type PlayerSession = {
 	levelRateLimiter: RateLimiter.RateLimiter,
 	-- Shift Lock/first-person, from the client's level claims (audit M-020).
 	cameraLocked: boolean,
+	-- When the latest unlocked -> locked claim arrived; `Context.Build` applies
+	-- a lock only one claim lag later.
+	cameraLockedAt: number?,
 	runEnteredAt: number?,
 	-- The last Heartbeat `classifyMoveIntent` read forward (`Context.RecordForward`).
 	-- MoveDirection (a Humanoid property) reaches the server ahead of the
@@ -122,7 +125,8 @@ export type PlayerSession = {
 	lastTransitionAt: number,
 	-- The one signal in this whole system with no natural replicated
 	-- equivalent (docs/MovementSystem.md §4.2) -- set/cleared by the "CrouchDown"/
-	-- "CrouchUp" claims, never derived. Every resulting FSM consequence
+	-- "CrouchUp" claims, never derived. The client sends its effective level,
+	-- after the slide-jump crouch-lock (docs/MovementSystem.md §7). Every resulting FSM consequence
 	-- (CrouchIdle/CrouchWalk/Slide entry and exit, crouched landing) is then
 	-- mirrored passively off this flag by `Mirror.PassiveTransitions`, the same
 	-- way Idle<->Walk already is off `moveIntent`.
@@ -147,15 +151,6 @@ export type PlayerSession = {
 	-- keeps a double jump pressed at takeoff, while the positions still show
 	-- the ground just below, from refreshing itself.
 	doubleJumpLeftGround: boolean,
-	-- Crouch-lock (SlideJump landing fix) -- mirrors the client's own
-	-- `crouchSuppressed` 1:1: armed the instant this session's mirror enters
-	-- SlideJump, cleared on an accepted "CrouchUp" claim (the server's only
-	-- source for the real key-up edge, same as `crouchHeld` itself). Masked
-	-- into `context.crouchHeld` by `Context.Build` below so the server's own
-	-- passive-transition/landing logic independently arrives at the same
-	-- "don't auto-recrouch after a slide jump" decision the client does,
-	-- never trusting the client's own masked value.
-	crouchSuppressed: boolean,
 	-- Landing-resume fix -- mirrors the client's own `preAirborneLocomotion`
 	-- 1:1: Run/Sprint if that's the tier this session's mirror was in the
 	-- instant it left the ground, nil otherwise. Set in
@@ -168,7 +163,7 @@ export type PlayerSession = {
 	-- from (`TransitionBookkeeping`); the mirror's SlideJump hands it to
 	-- `preAirborneLocomotion`, mirroring the client's `slideEntryLocomotion`.
 	slideEntryLocomotion: MovementState?,
-	-- Flow (docs/FLOW.md, `Flow.luau`): whether the mirror is in a sprint
+	-- Flow (docs/MovementSystem.md §4.9, `Flow.luau`): whether the mirror is in a sprint
 	-- chain (`FlowRules`), the server's own 0-1 value, when it last gained, and
 	-- the multiplier held since the current flight or slide began (nil once
 	-- grounded).
@@ -394,6 +389,17 @@ export type PlayerSession = {
 	-- `displacementCreditUntil` (`SpeedCheck.CreditDisplacement`).
 	displacementCredit: number,
 	displacementCreditUntil: number?,
+	-- The root at the latest support probe that found ground, and when: where
+	-- the position stream last showed the character on its feet.
+	lastSupportedRoot: CFrame?,
+	lastSupportedAt: number?,
+	-- A takeoff from Run/Sprint/Slide/SlideJump that could be a LedgeJump
+	-- (docs/MovementSystem.md §4.10). The mirror goes Airborne on the state
+	-- label, which leads the positions; the positions showing the lift-off
+	-- must arrive by this time (`LedgeJump.ResolveTakeoff`).
+	takeoffWatchUntil: number?,
+	-- The label read Jumping at that takeoff, or it came from a slide jump.
+	takeoffJumped: boolean,
 }
 
 Sessions.ByPlayer = {} :: { [Player]: PlayerSession }

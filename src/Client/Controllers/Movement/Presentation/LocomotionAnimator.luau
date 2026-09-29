@@ -39,6 +39,12 @@ local DIRECTION_NAMES: { string } =
 local ANIMATIONS_ROOT =
 	ReplicatedStorage:WaitForChild("Assets"):WaitForChild("Animations"):WaitForChild("Movement")
 local WALK_FOLDER = ANIMATIONS_ROOT:WaitForChild("Walk")
+local LEDGE_JUMP_FOLDER = ANIMATIONS_ROOT:WaitForChild("LedgeJump")
+
+-- LedgeJump's clips (docs/MovementSystem.md §4.10), one picked at random per
+-- jump so repeats don't look canned. A blank slot is skipped like any other
+-- unauthored clip; adding one is a new Animation in the folder plus its name here.
+local LEDGE_JUMP_VARIANTS: { string } = { "Variant1", "Variant2", "Variant3", "Variant4" }
 
 export type LocomotionAnimator = {
 	Destroy: (self: LocomotionAnimator) -> (),
@@ -227,6 +233,17 @@ function LocomotionAnimator.new(
 	-- fall can last arbitrarily long); Jump/Land/LandHard do not.
 	self._tracks.Jump = loadTrack(animator, ANIMATIONS_ROOT, "Jump", self._trove, false)
 	self._tracks.SlideJump = loadTrack(animator, ANIMATIONS_ROOT, "SlideJump", self._trove, false)
+	-- Only the authored variants, so the random pick never lands on an empty slot.
+	self._ledgeJumpKeys = {} :: { string }
+	for _, variant in ipairs(LEDGE_JUMP_VARIANTS) do
+		local key = "LedgeJump_" .. variant
+		self._tracks[key] = loadTrack(animator, LEDGE_JUMP_FOLDER, variant, self._trove, false)
+		if self._tracks[key] then
+			table.insert(self._ledgeJumpKeys, key)
+		end
+	end
+	self._random = Random.new()
+	self._lastLedgeJumpKey = nil :: string?
 	self._tracks.Fall = loadTrack(animator, ANIMATIONS_ROOT, "Fall", self._trove, true)
 	self._tracks.Land = loadTrack(animator, ANIMATIONS_ROOT, "Land", self._trove, false)
 	self._tracks.LandMedium = loadTrack(animator, ANIMATIONS_ROOT, "LandMedium", self._trove, false)
@@ -348,6 +365,20 @@ function LocomotionAnimator.new(
 			self:_setTransientHold("SlideJump", duration)
 		end
 
+		-- LedgeJump (docs/MovementSystem.md §4.10): one synchronous frame, held
+		-- like SlideJump, with a random authored variant. With none authored,
+		-- the plain Jump clip plays as for any other jump.
+		if previous == MovementStates.LedgeJump then
+			local key = self:_pickLedgeJumpKey()
+			local track = key and self._tracks[key]
+			if key and track then
+				local duration = if track.Length > 0
+					then track.Length
+					else MovementConstants.OneShotAnimationHoldFallbackSeconds
+				self:_setTransientHold(key, duration)
+			end
+		end
+
 		-- WallRun entry (animation wiring 2026-09-18): captured HERE, not read
 		-- live in `_update` -- see `_lastWallRunSide`'s own doc comment above
 		-- for why WallLeap's reentrant self-transition makes a live read
@@ -401,6 +432,28 @@ function LocomotionAnimator.new(
 	end)
 
 	return self
+end
+
+-- A random authored LedgeJump variant, never the one just played while another
+-- exists: back-to-back ledge jumps are where a repeat would show.
+function LocomotionAnimator:_pickLedgeJumpKey(): string?
+	local keys = self._ledgeJumpKeys
+	if #keys == 0 then
+		return nil
+	end
+	local last = self._lastLedgeJumpKey and table.find(keys, self._lastLedgeJumpKey)
+	local index
+	if last and #keys > 1 then
+		-- Uniform over the other keys: draw from one fewer and step over `last`.
+		index = self._random:NextInteger(1, #keys - 1)
+		if index >= last then
+			index += 1
+		end
+	else
+		index = self._random:NextInteger(1, #keys)
+	end
+	self._lastLedgeJumpKey = keys[index]
+	return keys[index]
 end
 
 function LocomotionAnimator:_setTransientHold(key: string, duration: number)

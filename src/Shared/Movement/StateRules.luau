@@ -70,6 +70,7 @@ local Transitions: { [MovementState]: { MovementState } } = {
 		MovementStates.WallRun,
 		MovementStates.WallCling,
 		MovementStates.Vault,
+		MovementStates.LedgeJump,
 	},
 	[MovementStates.CrouchIdle] = {
 		MovementStates.Idle,
@@ -226,6 +227,13 @@ local Transitions: { [MovementState]: { MovementState } } = {
 		MovementStates.CrouchWalk,
 		MovementStates.HardLanding,
 	},
+
+	-- LedgeJump (docs/MovementSystem.md §4.10): entered from Airborne on the
+	-- takeoff that just happened, not from Run/Sprint directly, because the
+	-- server can only confirm it once its position stream shows the lift-off,
+	-- when its own mirror is already Airborne; both sides take the same edge.
+	-- One tick, like SlideJump and WallLeap: the burst, then Airborne.
+	[MovementStates.LedgeJump] = { MovementStates.Airborne },
 }
 
 -- CanEnter: is this transition legal RIGHT NOW, given live context. Shared
@@ -444,12 +452,45 @@ local CanEnter: { [MovementState]: (context: MovementContext) -> boolean } = {
 		local facingAngle = SpatialQueries.facingAngleToWallDegrees(ledge.direction, ledge.normal)
 		return facingAngle <= context.constants.VaultMaxFacingAngleDegrees
 	end,
+
+	-- LedgeJump (docs/MovementSystem.md §4.10): a jump takeoff with a drop
+	-- ahead (`ledgeDropAhead`, which the caller only sets for a jump, never a
+	-- walk-off), left from Run or Sprint (directly, or through a slide jump,
+	-- whose `preAirborneLocomotion` is the tier the slide began in), at a real
+	-- speed rather than the tier's label.
+	[MovementStates.LedgeJump] = function(context: MovementContext): boolean
+		if context.grounded or not context.ledgeDropAhead then
+			return false
+		end
+		local tier = context.preAirborneLocomotion
+		if tier ~= MovementStates.Run and tier ~= MovementStates.Sprint then
+			return false
+		end
+		return context.horizontalVelocity.Magnitude >= context.constants.LedgeJumpMinEntrySpeed
+	end,
 }
+
+-- Where each claimed state can be claimed from (docs/MovementSystem.md §3, §8.1):
+-- the W double-tap starts Run only from Idle/Walk, and the dwell earns Sprint
+-- only from Run. Every other edge into Run/Sprint is a landing, which each side
+-- resolves itself. Without this, a Run request took the landing-only edges
+-- too, ending a HardLanding lock or a Vault early and skipping the server's
+-- landing resolution.
+local ClaimSources: { [MovementState]: { MovementState } } = {
+	[MovementStates.Run] = { MovementStates.Idle, MovementStates.Walk },
+	[MovementStates.Sprint] = { MovementStates.Run },
+}
+
+local function canClaimFrom(claimed: MovementState, current: MovementState): boolean
+	local sources = ClaimSources[claimed]
+	return sources ~= nil and table.find(sources, current) ~= nil
+end
 
 local StateRules = {
 	Transitions = Transitions,
 	CanEnter = CanEnter,
 	HasMoveInput = hasMoveInput,
+	CanClaimFrom = canClaimFrom,
 }
 
 return StateRules

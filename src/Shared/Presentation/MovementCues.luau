@@ -9,7 +9,7 @@ export type CueReplication = "Local" | "Nearby"
 
 -- Names refer to Sounds/ParticleEmitters in the Assets/FX/Movement rig
 -- template. One-shots fire when the state is entered; loops and FOV follow
--- whatever state is current (docs/MOVEMENT_POLISH_ARCHITECTURE.md §1).
+-- whatever state is current (docs/MovementSystem.md §15.1).
 export type MovementCueDefinition = {
 	EnterSound: string?,
 	LoopSound: string?,
@@ -74,6 +74,9 @@ local MovementCues: { [MovementState]: MovementCueDefinition } = {
 		HoldsFOV = true,
 	},
 	[MovementStates.SlideJump] = {
+		HoldsFOV = true,
+	},
+	[MovementStates.LedgeJump] = {
 		HoldsFOV = true,
 	},
 	[MovementStates.Vault] = {

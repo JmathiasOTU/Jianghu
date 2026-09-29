@@ -9,7 +9,7 @@ local Spring = require(ReplicatedStorage.Shared.Util.Spring)
 
 local DebugSnapshot = require(script.Parent.Parent.State.DebugSnapshot)
 
--- Test-only Flow meter (docs/FLOW.md): a vertical bar on the left edge that
+-- Test-only Flow meter (docs/MovementSystem.md §4.9): a vertical bar on the left edge that
 -- fills with the local player's Flow. A placeholder until real HUD work, so
 -- developer-only like the F4 overlay. The instance tree is
 -- Assets/UI/FlowBar.model.json (ARCHITECTURE §8); this only drives it.

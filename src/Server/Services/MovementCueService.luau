@@ -15,8 +15,8 @@ local MirrorStateChanged = require(script.Parent.Parent.Events.MirrorStateChange
 
 type MovementState = MovementStates.MovementState
 
--- Movement FX on the server side (docs/MOVEMENT_POLISH_ARCHITECTURE.md §2,
--- §5): mounts the FX rig template onto every character, and tells every other
+-- Movement FX on the server side (docs/MovementSystem.md §15.2,
+-- §15.5): mounts the FX rig template onto every character, and tells every other
 -- client when a player enters a state whose cue is "Nearby". Cosmetic only;
 -- never touches movement state.
 local MovementCueService = {}

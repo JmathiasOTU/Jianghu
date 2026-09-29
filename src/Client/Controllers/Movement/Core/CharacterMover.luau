@@ -42,6 +42,7 @@ export type CharacterMover = {
 	) -> SpatialQueries.WallRunQueryResult?,
 	QueryClingWall: (self: CharacterMover) -> SpatialQueries.ClingWallHit?,
 	QueryLedge: (self: CharacterMover) -> SpatialQueries.LedgeHit?,
+	QueryLedgeDropAhead: (self: CharacterMover, direction: Vector3) -> boolean,
 	Destroy: (self: CharacterMover) -> (),
 }
 
@@ -113,7 +114,7 @@ function CharacterMover.new(humanoid: Humanoid, jumpPower: number): CharacterMov
 	-- re-applies `_baseSpeed * penalty` every Heartbeat instead of leaving the
 	-- discounted WalkSpeed stuck until the next unrelated transition.
 	self._baseSpeed = 0
-	-- Flow (docs/FLOW.md §5): pushed every frame by Movement/init.luau and
+	-- Flow (docs/MovementSystem.md §4.9): pushed every frame by Movement/init.luau and
 	-- applied only to a speed set as Flow-scaled (Sprint), so the bonus
 	-- drains with Flow instead of sticking at whatever it was on Enter.
 	self._flowScaled = false
@@ -390,6 +391,19 @@ function CharacterMover:QueryLedge(): SpatialQueries.LedgeHit?
 		return nil
 	end
 	return SpatialQueries.QueryLedge(rootPart.CFrame, self._humanoid.Parent :: Instance)
+end
+
+-- LedgeJump's drop-off probe (docs/MovementSystem.md §4.10), same delegation shape.
+function CharacterMover:QueryLedgeDropAhead(direction: Vector3): boolean
+	local rootPart = self._humanoid.RootPart
+	if not rootPart then
+		return false
+	end
+	return SpatialQueries.QueryLedgeDropAhead(
+		rootPart.Position,
+		direction,
+		self._humanoid.Parent :: Instance
+	)
 end
 
 function CharacterMover:Destroy()

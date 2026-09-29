@@ -18,7 +18,7 @@ end
 
 -- Plays another player's Nearby cue (a hard landing, a wall leap) on their
 -- character, from the server's PlayMovementCue broadcast
--- (docs/MOVEMENT_POLISH_ARCHITECTURE.md §5). Only the one-shot sound and
+-- (docs/MovementSystem.md §15.5). Only the one-shot sound and
 -- particle: another player's landing never shakes this camera.
 local NearbyCuePlayer = {}
 

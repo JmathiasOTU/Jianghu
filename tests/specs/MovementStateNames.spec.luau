@@ -1,7 +1,7 @@
 --!strict
 -- network.zap's MovementStateName enum and Shared/FSM/MovementStateNames are
 -- maintained by hand; the debug overlay and PlayMovementCue
--- (docs/MOVEMENT_POLISH_ARCHITECTURE.md §5) both depend on them agreeing.
+-- (docs/MovementSystem.md §15.5) both depend on them agreeing.
 local fs = require("@lune/fs")
 
 local function zapEnum(source: string, typeName: string): { [string]: boolean }

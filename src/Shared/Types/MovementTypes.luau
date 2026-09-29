@@ -127,6 +127,11 @@ export type MoveIntent = {
 -- history because the client's mantle onto the ledge can replicate first.
 -- `lastVaultAt` is each side's own time of its last Vault entry (server-owned
 -- cooldown, ARCHITECTURE §3); nil when there hasn't been one this life.
+-- `ledgeDropAhead` (docs/MovementSystem.md §4.10) is true only in the context
+-- built for a LedgeJump attempt: a jump takeoff whose
+-- SpatialQueries.QueryLedgeDropAhead found a drop. The client probes on the
+-- first airborne frame after a jump; the server once its position stream shows
+-- the lift-off (the state label arrives earlier, §9). nil otherwise.
 -- `qinggong` (§0/§3) is the resource gate any future Qinggong move
 -- reads --
 -- still an open design decision (is this the same Qi pool combat will spend,
@@ -169,9 +174,10 @@ export type MovementContext = {
 	lastWallLeapWall: BasePart?,
 	ledge: SpatialQueries.LedgeHit?,
 	lastVaultAt: number?,
+	ledgeDropAhead: boolean?,
 	qinggong: number,
 	cameraLocked: boolean,
-	-- Flow's live speed factor (docs/FLOW.md), each side from its own Flow value.
+	-- Flow's live speed factor (docs/MovementSystem.md §4.9), each side from its own Flow value.
 	flowMultiplier: number,
 	constants: MovementTuning.EffectiveMovementConstants,
 }

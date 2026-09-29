@@ -3,10 +3,13 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local MovementStates = require(ReplicatedStorage.Shared.FSM.MovementStates)
 local MovementConstants = require(ReplicatedStorage.Shared.Constants.MovementConstants)
+local StateRules = require(ReplicatedStorage.Shared.Movement.StateRules)
 
 local Network = require(script.Parent.Parent.Parent.Network.network)
 local Sessions = require(script.Parent.Sessions)
 local DebugFlags = require(script.Parent.DebugFlags)
+local Probes = require(script.Parent.Probes)
+local Mirror = require(script.Parent.Mirror)
 local Context = require(script.Parent.Context)
 local SpeedCaps = require(script.Parent.SpeedCaps)
 local ClaimTiming = require(script.Parent.ClaimTiming)
@@ -81,7 +84,11 @@ function TransitionClaims.OnRequest(player: Player, claim: Network.ClaimableMove
 	-- so both are idempotent and gated by their own limiter.
 	if claim == "CameraLocked" or claim == "CameraUnlocked" then
 		if session.levelRateLimiter:TryAcquire() then
-			session.cameraLocked = claim == "CameraLocked"
+			local locked = claim == "CameraLocked"
+			if locked and not session.cameraLocked then
+				session.cameraLockedAt = os.clock()
+			end
+			session.cameraLocked = locked
 		end
 		return
 	end
@@ -95,15 +102,9 @@ function TransitionClaims.OnRequest(player: Player, claim: Network.ClaimableMove
 			session.crouchHeldBefore = session.crouchHeld
 			session.crouchChangedAt = os.clock()
 		end
-		if held then
-			session.crouchHeld = true
-		else
-			session.crouchHeld = false
-			-- Crouch-lock re-arm (SlideJump landing fix): mirrors the client's
-			-- own `crouchSuppressed` clear, which happens whenever Ctrl is up --
-			-- a CrouchUp level report IS that fact server-side.
-			session.crouchSuppressed = false
-		end
+		-- Already the effective level: the client folds its slide-jump
+		-- crouch-lock in before sending (docs/MovementSystem.md §7).
+		session.crouchHeld = held
 		return
 	end
 
@@ -119,7 +120,17 @@ function TransitionClaims.OnRequest(player: Player, claim: Network.ClaimableMove
 		return
 	end
 
+	-- Re-mirrored first, like `TraversalClaims.OnClaim`: a claim can arrive
+	-- between Heartbeats, after a landing has replicated but before the mirror
+	-- resolved it (HardLanding included). Then only a double-tap (Run from
+	-- Idle/Walk) or the dwell (Sprint from Run) is claimable; every other edge
+	-- into Run/Sprint is a landing the mirror resolves itself.
+	Probes.UpdateSupport(session)
+	Mirror.PassiveTransitions(session)
 	local claimedState = if claim == "Run" then MovementStates.Run else MovementStates.Sprint
+	if not StateRules.CanClaimFrom(claimedState, session.fsm.current) then
+		return
+	end
 	local context = Context.Build(session)
 	local capBefore = SpeedCaps.EffectiveMaxSpeed(session, context.constants)
 

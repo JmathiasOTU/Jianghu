@@ -79,7 +79,7 @@ local function applyVelocity(
 	wallQuery: SpatialQueries.WallRunQueryResult
 )
 	local tangent = entryTangent :: Vector3
-	-- Read every tick, so the run's speed drains with Flow (docs/FLOW.md §5).
+	-- Read every tick, so the run's speed drains with Flow (docs/MovementSystem.md §4.9).
 	local horizontal = tangent * context.constants.WallRunSpeed * context.flowMultiplier
 
 	local currentOffset = (context.characterMover:GetPosition() - wallQuery.position):Dot(

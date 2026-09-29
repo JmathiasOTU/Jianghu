@@ -28,10 +28,10 @@ SFXController.__index = SFXController
 local DEFAULT_RUNNING_SOUND_NAME = "Running"
 
 -- Plays the local player's movement sounds from MovementCues
--- (docs/MOVEMENT_POLISH_ARCHITECTURE.md §3). Reads the FSM, never writes it.
+-- (docs/MovementSystem.md §15.3). Reads the FSM, never writes it.
 -- One-shots fire on fsm.changed; the loop follows fsm.current, since
 -- SlideJump/WallLeap re-enter the FSM mid-handler and change events can
--- arrive out of order (§1).
+-- arrive out of order (§15.1).
 function SFXController.new(
 	humanoid: Humanoid,
 	rootPart: BasePart,
@@ -133,7 +133,7 @@ function SFXController:_findFootstepSounds(set: string): { Sound }
 end
 
 -- A step every FootstepStrideStuds actually travelled, so cadence follows
--- real speed without a per-tier timer (§3.2). Alternates between the
+-- real speed without a per-tier timer (§15.3.2). Alternates between the
 -- instances found (one per foot, if both feet carry the set).
 function SFXController:_updateFootsteps(dt: number)
 	local cue = MovementCues[self._fsm.current]

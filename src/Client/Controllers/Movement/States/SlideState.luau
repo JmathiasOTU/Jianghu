@@ -78,7 +78,7 @@ function SlideState.Enter(context: ClientMovementContext)
 	-- (TraversalMath.SlideCeiling): residual momentum above SprintSpeed (a
 	-- landing, a slope) must not boost the slide past the cap. Flow raises
 	-- only the clamp: the entry velocity already carries it, so scaling the
-	-- output too would count it twice (docs/FLOW.md §5).
+	-- output too would count it twice (docs/MovementSystem.md §4.9).
 	currentSpeed = math.min(
 		velocity.Magnitude,
 		context.constants.SprintSpeed * context.flowMultiplier

@@ -13,11 +13,11 @@ type MovementState = MovementStates.MovementState
 type EffectiveMovementConstants = MovementTuning.EffectiveMovementConstants
 type PlayerSession = Sessions.PlayerSession
 
--- The server's own Flow (docs/FLOW.md): gained on its own mirrored
+-- The server's own Flow (docs/MovementSystem.md §4.9): gained on its own mirrored
 -- transitions, drained on its own clock, never read from the client. Each
 -- gain lands up to one claim lag after the client's; draining starts that
 -- much later too, so uneven lag between two claims can't leave the server
--- below the client (docs/FLOW.md §3).
+-- below the client (docs/MovementSystem.md §4.9).
 local Flow = {}
 
 function Flow.Multiplier(session: PlayerSession, constants: EffectiveMovementConstants): number

@@ -33,7 +33,7 @@ local function remove(index: { [string]: { any } }, instance: Instance)
 end
 
 -- Cue name -> the Sounds/ParticleEmitters the server mounted on this
--- character (docs/MOVEMENT_POLISH_ARCHITECTURE.md §2). Kept current from
+-- character (docs/MovementSystem.md §15.2). Kept current from
 -- DescendantAdded/Removing, so it doesn't matter whether the mount
 -- replicates before or after this starts listening. Sounds and emitters are
 -- indexed separately because one cue name can be both (WallLeapBurst).

@@ -31,6 +31,16 @@ local TransitionBookkeeping = {}
 -- client's own GROUNDED_STATES in Movement/init.luau).
 local GROUNDED_STATES = MovementStateGroups.Grounded
 
+-- Takeoffs a LedgeJump can come from (docs/MovementSystem.md §4.10): the
+-- speed tiers, and a slide (a slide jump, or one whose jump frame the mirror
+-- missed).
+local LEDGE_JUMP_TAKEOFFS: { [MovementState]: boolean } = {
+	[MovementStates.Run] = true,
+	[MovementStates.Sprint] = true,
+	[MovementStates.Slide] = true,
+	[MovementStates.SlideJump] = true,
+}
+
 -- Run on every transition of a session's mirrored FSM, from its
 -- `fsm.changed` connection (createSession in init.luau).
 function TransitionBookkeeping.OnChanged(
@@ -70,7 +80,7 @@ function TransitionBookkeeping.OnChanged(
 	-- clamped to `SpeedCaps.SlideCeiling` (SlideState.Enter). The server's bound on
 	-- that real speed is the effective cap it allowed in `previous`, grace
 	-- included, so it's read before this handler moves the grace on. Flow
-	-- raises the clamp like the client's (docs/FLOW.md §4).
+	-- raises the clamp like the client's (docs/MovementSystem.md §8.2).
 	if next == MovementStates.Slide then
 		session.slideEntryLocomotion = previous
 		session.slideEntrySpeed = math.min(
@@ -128,10 +138,25 @@ function TransitionBookkeeping.OnChanged(
 			and previous ~= MovementStates.WallCling
 			and previous ~= MovementStates.WallBoost
 			and previous ~= MovementStates.Vault
+			and previous ~= MovementStates.LedgeJump
 		then
 			session.peakHeight = rootPart.Position.Y
 		end
+		-- The label that took the mirror airborne leads the positions (§9),
+		-- so a possible LedgeJump is judged once they show the lift-off
+		-- (`LedgeJump.ResolveTakeoff`), within one claim lag.
+		if LEDGE_JUMP_TAKEOFFS[previous] then
+			session.takeoffWatchUntil = now + ClaimTiming.ClaimLagSeconds(session)
+			session.takeoffJumped = previous == MovementStates.SlideJump
+				or humanoid:GetState() == Enum.HumanoidStateType.Jumping
+		end
 	elseif GROUNDED_STATES[next] then
+		session.takeoffWatchUntil = nil
+		-- On every grounded entry, like the client's `fsm.changed` handler, not
+		-- only in the mirror's landing branches: a stale Sprint takeoff tier
+		-- would let a later Sprint claim skip the Run dwell.
+		session.doubleJumpUsed = false
+		session.preAirborneLocomotion = nil
 		session.peakHeight = nil
 		session.groundLaunchSpeed = nil
 		session.groundRaise = nil

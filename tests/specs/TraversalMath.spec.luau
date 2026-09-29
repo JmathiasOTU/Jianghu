@@ -196,6 +196,41 @@ return function(t)
 		end)
 	end)
 
+	t.describe("LedgeJump", function()
+		local burst = MovementConstants.LedgeJumpBurstForce
+
+		t.it("adds the burst along the takeoff direction, horizontal only", function()
+			local velocity = TraversalMath.LedgeJumpVelocity(Vector3.new(30, 0, 40), burst)
+			t.expect(velocity.Y).toBe(0)
+			t.expect(velocity.Magnitude).toBeCloseTo(50 + burst, 1e-4)
+			t.expect(velocity.Unit:Dot(Vector3.new(0.6, 0, 0.8))).toBeCloseTo(1, 1e-5)
+		end)
+
+		t.it("ignores the vertical part of the takeoff velocity", function()
+			local velocity = TraversalMath.LedgeJumpVelocity(Vector3.new(0, 56, 30), burst)
+			t.expect(velocity.Y).toBe(0)
+			t.expect(velocity.Magnitude).toBeCloseTo(30 + burst, 1e-4)
+		end)
+
+		t.it("adds nothing without horizontal speed", function()
+			t.expect(TraversalMath.LedgeJumpVelocity(Vector3.new(0, 56, 0), burst).Magnitude)
+				.toBe(0)
+		end)
+
+		t.it("is bounded by the entry cap plus the burst", function()
+			local entryCap = 60
+			local bound = TraversalMath.LedgeJumpMaxHorizontalSpeed(entryCap, burst)
+			for step = 0, 60 do
+				local angle = step / 60 * 2 * math.pi
+				for _, speed in ipairs({ 0.5, 22, 40, entryCap }) do
+					local takeoff = Vector3.new(math.cos(angle), 0, math.sin(angle)) * speed
+					local launched = TraversalMath.LedgeJumpVelocity(takeoff, burst).Magnitude
+					t.expect(launched).toBeAtMost(bound + bound * 2 ^ -23)
+				end
+			end
+		end)
+	end)
+
 	t.describe("Vault", function()
 		local forward = MovementConstants.VaultForwardSpeed
 		local upward = MovementConstants.VaultUpwardSpeed

@@ -1,5 +1,5 @@
 --!strict
--- Flow only exists inside a sprint chain (docs/FLOW.md §0).
+-- Flow only exists inside a sprint chain (docs/MovementSystem.md §4.9).
 return function(t)
 	local FlowRules = t.harness.require("ReplicatedStorage", "Shared", "Movement", "FlowRules")
 	local MovementStates = t.harness.require("ReplicatedStorage", "Shared", "FSM", "MovementStates")
@@ -40,6 +40,13 @@ return function(t)
 		t.it("counts a slide jump out of a sprint slide", function()
 			local gains = run({ S.Sprint, S.Slide, S.SlideJump, S.Airborne })
 			t.expect(gains).toBe(1)
+		end)
+
+		t.it("counts a ledge jump off a sprint, not off a run", function()
+			local gains, inChain = run({ S.Sprint, S.Airborne, S.LedgeJump, S.Airborne })
+			t.expect(gains).toBe(1)
+			t.expect(inChain).toBe(true)
+			t.expect((run({ S.Run, S.Airborne, S.LedgeJump, S.Airborne }))).toBe(0)
 		end)
 
 		t.it("never builds from a Walk or Run takeoff", function()

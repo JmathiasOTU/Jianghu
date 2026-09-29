@@ -22,8 +22,8 @@ local VFXController = {}
 VFXController.__index = VFXController
 
 -- Drives the local player's movement particles from MovementCues
--- (docs/MOVEMENT_POLISH_ARCHITECTURE.md §3). Same shape as SFXController:
--- bursts on fsm.changed, the loop follows fsm.current (§1).
+-- (docs/MovementSystem.md §15.3). Same shape as SFXController:
+-- bursts on fsm.changed, the loop follows fsm.current (§15.1).
 function VFXController.new(
 	fsm: StateMachine.StateMachine<
 		MovementState,

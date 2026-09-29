@@ -66,6 +66,10 @@ function Probes.UpdateSupport(session: PlayerSession)
 	local hit = SpatialQueries.QuerySupport(session.rootPart, session.humanoid.Parent :: Instance)
 	local supported = hit ~= nil
 	session.supported = supported
+	if supported then
+		session.lastSupportedRoot = session.rootPart.CFrame
+		session.lastSupportedAt = os.clock()
+	end
 	if hit then
 		session.floorSpeed, session.floorRiseSpeed =
 			trustedFloorVelocity(hit.floor, hit.floorVelocity)

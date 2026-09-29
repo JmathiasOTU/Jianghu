@@ -27,6 +27,7 @@ local TraversalClaims = require(script.TraversalClaims)
 local TransitionClaims = require(script.TransitionClaims)
 local DebugBroadcast = require(script.DebugBroadcast)
 local Flow = require(script.Flow)
+local LedgeJump = require(script.LedgeJump)
 local Context = require(script.Context)
 local ClaimTiming = require(script.ClaimTiming)
 
@@ -69,6 +70,7 @@ local function createSession(player: Player, humanoid: Humanoid, rootPart: BaseP
 		rateLimiter = RateLimiter.new(TRANSITION_CLAIMS_PER_SECOND, 1),
 		levelRateLimiter = RateLimiter.new(LEVEL_CLAIMS_PER_SECOND, 1),
 		cameraLocked = false,
+		cameraLockedAt = nil,
 		runEnteredAt = nil,
 		forwardSeenAt = nil,
 		speedCheckPosition = rootPart.Position,
@@ -106,7 +108,6 @@ local function createSession(player: Player, humanoid: Humanoid, rootPart: BaseP
 		crouchChangedAt = nil,
 		doubleJumpUsed = false,
 		doubleJumpLeftGround = false,
-		crouchSuppressed = false,
 		preAirborneLocomotion = nil,
 		slideEntryLocomotion = nil,
 		flowChain = false,
@@ -150,6 +151,10 @@ local function createSession(player: Player, humanoid: Humanoid, rootPart: BaseP
 		rootHistoryNext = 1,
 		displacementCredit = 0,
 		displacementCreditUntil = nil,
+		lastSupportedRoot = nil,
+		lastSupportedAt = nil,
+		takeoffWatchUntil = nil,
+		takeoffJumped = false,
 	}
 
 	-- The speed window is deliberately NOT reset here (audit M-002): it used to
@@ -288,9 +293,11 @@ function MovementValidationService.Init()
 	-- buffered retry needs to see THIS frame's mirrored state (e.g. a landing
 	-- `Mirror.PassiveTransitions` just resolved), not last frame's. The vertical
 	-- ceiling runs after every claim path, so a rise accepted this frame is
-	-- already credited before it is measured. Flow decays here and nowhere
+	-- already credited before it is measured. A takeoff is judged as a
+	-- LedgeJump after the mirror (which took it airborne) and before the speed
+	-- check (docs/MovementSystem.md §4.10). Flow decays here and nowhere
 	-- else: claim handlers re-run the mirror between Heartbeats, and a decay
-	-- there would drain extra on every claim (docs/FLOW.md §3).
+	-- there would drain extra on every claim (docs/MovementSystem.md §4.9).
 	RunService.Heartbeat:Connect(function(dt: number)
 		for _, session in pairs(Sessions.ByPlayer) do
 			local constants = MovementTuningState.GetEffective(session.player)
@@ -303,6 +310,7 @@ function MovementValidationService.Init()
 			Mirror.PassiveTransitions(session)
 			TraversalClaims.RetryBuffered(session)
 			TransitionClaims.RetryBufferedSprint(session)
+			LedgeJump.ResolveTakeoff(session)
 			Probes.UpdateSlideGroundQuery(session, constants)
 			Flow.Decay(session, constants, dt, ClaimTiming.ClaimLagSeconds(session))
 			SpeedCheck.Enforce(session, constants)

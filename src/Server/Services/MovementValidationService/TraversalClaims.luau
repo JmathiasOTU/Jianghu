@@ -243,7 +243,7 @@ local function acceptWallLeapLaunch(session: PlayerSession, context: MovementCon
 	-- `SpeedCaps.EffectiveMaxSpeed` consults it; cleared on landing (`fsm.changed`).
 	-- The leap launches off WallRun's speed, which Flow raises; this leap's
 	-- own gain is already in, so the server's multiplier is at least the one
-	-- the client ran at (docs/FLOW.md §4).
+	-- the client ran at (docs/MovementSystem.md §8.2).
 	session.airborneAllowanceExpiresAt = nil
 	session.airborneAllowedSpeed = TraversalMath.WallLeapMaxHorizontalSpeed(
 		constants.WallRunSpeed * Flow.Multiplier(session, constants),
